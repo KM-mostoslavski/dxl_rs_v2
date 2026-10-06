@@ -1,0 +1,180 @@
+(
+  type_info: {
+    value_of_zero_radian_position: 2048,
+    value_of_max_radian_position: 4095,
+    value_of_min_radian_position: 0,
+    min_radian: -3.14159265,
+    max_radian: 3.14159265,
+  },
+  unit_info: [
+    {
+      data_name: "Present Velocity",
+      value: 0.0116228475,
+      unit: "rad/s",
+      sign_type: "signed",
+    },
+    {
+      data_name: "Goal Velocity",
+      value: 0.0116228475,
+      unit: "rad/s",
+      sign_type: "signed",
+    },
+  ],
+  control_table: [
+    {
+      address: 0,
+      size: 2,
+      data_name: "Model Number",
+    },
+    {
+      address: 2,
+      size: 1,
+      data_name: "Firmware Version",
+    },
+    {
+      address: 3,
+      size: 1,
+      data_name: "ID",
+    },
+    {
+      address: 4,
+      size: 1,
+      data_name: "Baud Rate",
+    },
+    {
+      address: 5,
+      size: 1,
+      data_name: "Return Delay Time",
+    },
+    {
+      address: 6,
+      size: 2,
+      data_name: "CW Angle Limit",
+    },
+    {
+      address: 8,
+      size: 2,
+      data_name: "CCW Angle Limit",
+    },
+    {
+      address: 11,
+      size: 1,
+      data_name: "Control Mode",
+    },
+    {
+      address: 12,
+      size: 1,
+      data_name: "Temperature Limit",
+    },
+    {
+      address: 13,
+      size: 1,
+      data_name: "Min Voltage Limit",
+    },
+    {
+      address: 14,
+      size: 1,
+      data_name: "Max Voltage Limit",
+    },
+    {
+      address: 15,
+      size: 2,
+      data_name: "Max Torque",
+    },
+    {
+      address: 17,
+      size: 1,
+      data_name: "Status Return Level",
+    },
+    {
+      address: 18,
+      size: 1,
+      data_name: "Shutdown",
+    },
+    {
+      address: 24,
+      size: 1,
+      data_name: "Torque Enable",
+    },
+    {
+      address: 25,
+      size: 1,
+      data_name: "LED",
+    },
+    {
+      address: 27,
+      size: 1,
+      data_name: "D Gain",
+    },
+    {
+      address: 28,
+      size: 1,
+      data_name: "I Gain",
+    },
+    {
+      address: 29,
+      size: 1,
+      data_name: "P Gain",
+    },
+    {
+      address: 30,
+      size: 2,
+      data_name: "Goal Position",
+    },
+    {
+      address: 32,
+      size: 2,
+      data_name: "Moving Speed",
+    },
+    {
+      address: 35,
+      size: 2,
+      data_name: "Torque Limit",
+    },
+    {
+      address: 37,
+      size: 2,
+      data_name: "Present Position",
+    },
+    {
+      address: 39,
+      size: 2,
+      data_name: "Present Speed",
+    },
+    {
+      address: 41,
+      size: 2,
+      data_name: "Present Load",
+    },
+    {
+      address: 45,
+      size: 1,
+      data_name: "Present Voltage",
+    },
+    {
+      address: 46,
+      size: 1,
+      data_name: "Present Temperature",
+    },
+    {
+      address: 47,
+      size: 1,
+      data_name: "Registered Instruction",
+    },
+    {
+      address: 49,
+      size: 1,
+      data_name: "Moving",
+    },
+    {
+      address: 50,
+      size: 1,
+      data_name: "Hardware Error Status",
+    },
+    {
+      address: 51,
+      size: 2,
+      data_name: "Punch",
+    },
+  ],
+)

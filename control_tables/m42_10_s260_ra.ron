@@ -1,0 +1,372 @@
+(
+  type_info: {
+    value_of_zero_radian_position: 0,
+    value_of_max_radian_position: 263187,
+    value_of_min_radian_position: -263187,
+    min_radian: -3.14159265,
+    max_radian: 3.14159265,
+  },
+  unit_info: [
+    {
+      data_name: "Present Velocity",
+      value: 0.0010471976,
+      unit: "rad/s",
+      sign_type: "signed",
+    },
+    {
+      data_name: "Goal Velocity",
+      value: 0.0010471976,
+      unit: "rad/s",
+      sign_type: "signed",
+    },
+    {
+      data_name: "Present Current",
+      value: 1.0,
+      unit: "raw",
+      sign_type: "signed",
+    },
+    {
+      data_name: "Goal Current",
+      value: 1.0,
+      unit: "raw",
+      sign_type: "signed",
+    },
+  ],
+  control_table: [
+    {
+      address: 0,
+      size: 2,
+      data_name: "Model Number",
+    },
+    {
+      address: 2,
+      size: 4,
+      data_name: "Model Information",
+    },
+    {
+      address: 6,
+      size: 1,
+      data_name: "Firmware Version",
+    },
+    {
+      address: 7,
+      size: 1,
+      data_name: "ID",
+    },
+    {
+      address: 8,
+      size: 1,
+      data_name: "Baud Rate",
+    },
+    {
+      address: 9,
+      size: 1,
+      data_name: "Return Delay Time",
+    },
+    {
+      address: 10,
+      size: 1,
+      data_name: "Drive Mode",
+    },
+    {
+      address: 11,
+      size: 1,
+      data_name: "Operating Mode",
+    },
+    {
+      address: 12,
+      size: 1,
+      data_name: "Secondary ID",
+    },
+    {
+      address: 20,
+      size: 4,
+      data_name: "Homing Offset",
+    },
+    {
+      address: 24,
+      size: 4,
+      data_name: "Moving Threshold",
+    },
+    {
+      address: 31,
+      size: 1,
+      data_name: "Temperature Limit",
+    },
+    {
+      address: 32,
+      size: 2,
+      data_name: "Max Voltage Limit",
+    },
+    {
+      address: 34,
+      size: 2,
+      data_name: "Min Voltage Limit",
+    },
+    {
+      address: 36,
+      size: 2,
+      data_name: "PWM Limit",
+    },
+    {
+      address: 38,
+      size: 2,
+      data_name: "Current Limit",
+    },
+    {
+      address: 40,
+      size: 4,
+      data_name: "Acceleration Limit",
+    },
+    {
+      address: 44,
+      size: 4,
+      data_name: "Velocity Limit",
+    },
+    {
+      address: 48,
+      size: 4,
+      data_name: "Max Position Limit",
+    },
+    {
+      address: 52,
+      size: 4,
+      data_name: "Min Position Limit",
+    },
+    {
+      address: 56,
+      size: 1,
+      data_name: "External Port Mode 1",
+    },
+    {
+      address: 57,
+      size: 1,
+      data_name: "External Port Mode 2",
+    },
+    {
+      address: 58,
+      size: 1,
+      data_name: "External Port Mode 3",
+    },
+    {
+      address: 59,
+      size: 1,
+      data_name: "External Port Mode 4",
+    },
+    {
+      address: 63,
+      size: 1,
+      data_name: "Shutdown",
+    },
+    {
+      address: 512,
+      size: 1,
+      data_name: "Torque Enable",
+    },
+    {
+      address: 513,
+      size: 1,
+      data_name: "LED Red",
+    },
+    {
+      address: 514,
+      size: 1,
+      data_name: "LED Green",
+    },
+    {
+      address: 515,
+      size: 1,
+      data_name: "LED Blue",
+    },
+    {
+      address: 516,
+      size: 1,
+      data_name: "Status Return Level",
+    },
+    {
+      address: 517,
+      size: 1,
+      data_name: "Registered Instruction",
+    },
+    {
+      address: 518,
+      size: 1,
+      data_name: "Hardware Error Status",
+    },
+    {
+      address: 524,
+      size: 2,
+      data_name: "Velocity I Gain",
+    },
+    {
+      address: 526,
+      size: 2,
+      data_name: "Velocity P Gain",
+    },
+    {
+      address: 528,
+      size: 2,
+      data_name: "Position D Gain",
+    },
+    {
+      address: 530,
+      size: 2,
+      data_name: "Position I Gain",
+    },
+    {
+      address: 532,
+      size: 2,
+      data_name: "Position P Gain",
+    },
+    {
+      address: 536,
+      size: 2,
+      data_name: "Feedforward 2nd Gain",
+    },
+    {
+      address: 538,
+      size: 2,
+      data_name: "Feedforward 1st Gain",
+    },
+    {
+      address: 546,
+      size: 1,
+      data_name: "Bus Watchdog",
+    },
+    {
+      address: 548,
+      size: 2,
+      data_name: "Goal PWM",
+    },
+    {
+      address: 550,
+      size: 2,
+      data_name: "Goal Current",
+    },
+    {
+      address: 552,
+      size: 4,
+      data_name: "Goal Velocity",
+    },
+    {
+      address: 556,
+      size: 4,
+      data_name: "Profile Acceleration",
+    },
+    {
+      address: 560,
+      size: 4,
+      data_name: "Profile Velocity",
+    },
+    {
+      address: 564,
+      size: 4,
+      data_name: "Goal Position",
+    },
+    {
+      address: 568,
+      size: 2,
+      data_name: "Realtime Tick",
+    },
+    {
+      address: 570,
+      size: 1,
+      data_name: "Moving",
+    },
+    {
+      address: 571,
+      size: 1,
+      data_name: "Moving Status",
+    },
+    {
+      address: 572,
+      size: 2,
+      data_name: "Present PWM",
+    },
+    {
+      address: 574,
+      size: 2,
+      data_name: "Present Current",
+    },
+    {
+      address: 576,
+      size: 4,
+      data_name: "Present Velocity",
+    },
+    {
+      address: 580,
+      size: 4,
+      data_name: "Present Position",
+    },
+    {
+      address: 584,
+      size: 4,
+      data_name: "Velocity Trajectory",
+    },
+    {
+      address: 588,
+      size: 4,
+      data_name: "Position Trajectory",
+    },
+    {
+      address: 592,
+      size: 2,
+      data_name: "Present Input Voltage",
+    },
+    {
+      address: 594,
+      size: 1,
+      data_name: "Present Temperature",
+    },
+    {
+      address: 600,
+      size: 2,
+      data_name: "External Port Data 1",
+    },
+    {
+      address: 602,
+      size: 2,
+      data_name: "External Port Data 2",
+    },
+    {
+      address: 604,
+      size: 2,
+      data_name: "External Port Data 3",
+    },
+    {
+      address: 606,
+      size: 2,
+      data_name: "External Port Data 4",
+    },
+    {
+      address: 168,
+      size: 2,
+      data_name: "Indirect Address 1",
+    },
+    {
+      address: 634,
+      size: 1,
+      data_name: "Indirect Data 1",
+    },
+    {
+      address: 168,
+      size: 2,
+      data_name: "Indirect Address Write",
+    },
+    {
+      address: 634,
+      size: 1,
+      data_name: "Indirect Data Write",
+    },
+    {
+      address: 296,
+      size: 2,
+      data_name: "Indirect Address Read",
+    },
+    {
+      address: 698,
+      size: 1,
+      data_name: "Indirect Data Read",
+    },
+  ],
+)

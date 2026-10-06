@@ -1,0 +1,527 @@
+(
+    type_info: {
+        value_of_zero_radian_position: 0,
+        value_of_max_radian_position: 262144,
+        value_of_min_radian_position: -262144,
+        min_radian: -3.14159265,
+        max_radian: 3.14159265,
+    },
+    unit_info: [
+        {
+            data_name: "Present Velocity",
+            value: 0.0010471976,
+            unit: "rad/s",
+            sign_type: "signed",
+        },
+        {
+            data_name: "Goal Velocity",
+            value: 0.0010471976,
+            unit: "rad/s",
+            sign_type: "signed",
+        },
+        {
+            data_name: "Present Current",
+            value: 1.0,
+            unit: "raw",
+            sign_type: "signed",
+        },
+        {
+            data_name: "Goal Current",
+            value: 1.0,
+            unit: "raw",
+            sign_type: "signed",
+        },
+    ],
+    control_table: [
+        {
+            address: 0,
+            size: 2,
+            data_name: "Model Number",
+        },
+        {
+            address: 2,
+            size: 4,
+            data_name: "Model Information",
+        },
+        {
+            address: 6,
+            size: 1,
+            data_name: "Firmware Version",
+        },
+        {
+            address: 7,
+            size: 1,
+            data_name: "ID",
+        },
+        {
+            address: 8,
+            size: 2,
+            data_name: "Bus Watchdog",
+        },
+        {
+            address: 10,
+            size: 1,
+            data_name: "Secondary(Shadow) ID",
+        },
+        {
+            address: 11,
+            size: 1,
+            data_name: "Protocol Type",
+        },
+        {
+            address: 12,
+            size: 1,
+            data_name: "Baud Rate (Bus)",
+        },
+        {
+            address: 13,
+            size: 1,
+            data_name: "Return Delay Time",
+        },
+        {
+            address: 15,
+            size: 1,
+            data_name: "Status Return Level",
+        },
+        {
+            address: 16,
+            size: 1,
+            data_name: "Registered Instruction",
+        },
+        {
+            address: 32,
+            size: 1,
+            data_name: "Drive Mode",
+        },
+        {
+            address: 33,
+            size: 1,
+            data_name: "Operating Mode",
+        },
+        {
+            address: 34,
+            size: 1,
+            data_name: "Startup Configuration",
+        },
+        {
+            address: 38,
+            size: 2,
+            data_name: "Position Limit Threshold",
+        },
+        {
+            address: 40,
+            size: 4,
+            data_name: "In-Position Threshold",
+        },
+        {
+            address: 44,
+            size: 4,
+            data_name: "Following Error Threshold",
+        },
+        {
+            address: 48,
+            size: 4,
+            data_name: "Moving Threshold",
+        },
+        {
+            address: 52,
+            size: 4,
+            data_name: "Homing Offset",
+        },
+        {
+            address: 56,
+            size: 1,
+            data_name: "Inverter Temperature Limit",
+        },
+        {
+            address: 57,
+            size: 1,
+            data_name: "Motor Temperature Limit",
+        },
+        {
+            address: 60,
+            size: 2,
+            data_name: "Max Voltage Limit",
+        },
+        {
+            address: 62,
+            size: 2,
+            data_name: "Min Voltage Limit",
+        },
+        {
+            address: 64,
+            size: 2,
+            data_name: "PWM Limit",
+        },
+        {
+            address: 66,
+            size: 2,
+            data_name: "Current Limit",
+        },
+        {
+            address: 68,
+            size: 4,
+            data_name: "Acceleration Limit",
+        },
+        {
+            address: 72,
+            size: 4,
+            data_name: "Velocity Limit",
+        },
+        {
+            address: 76,
+            size: 4,
+            data_name: "Max Position Limit",
+        },
+        {
+            address: 84,
+            size: 4,
+            data_name: "Min Position Limit",
+        },
+        {
+            address: 96,
+            size: 4,
+            data_name: "Electronic GearRatio Numerator",
+        },
+        {
+            address: 100,
+            size: 4,
+            data_name: "Electronic GearRatio Denominator",
+        },
+        {
+            address: 104,
+            size: 2,
+            data_name: "Safe Stop Time",
+        },
+        {
+            address: 106,
+            size: 2,
+            data_name: "Brake Delay",
+        },
+        {
+            address: 108,
+            size: 2,
+            data_name: "Goal Update Delay",
+        },
+        {
+            address: 110,
+            size: 1,
+            data_name: "Overexcitation Voltage",
+        },
+        {
+            address: 111,
+            size: 1,
+            data_name: "Normal Excitation Voltage",
+        },
+        {
+            address: 112,
+            size: 2,
+            data_name: "Overexcitation Time",
+        },
+        {
+            address: 132,
+            size: 2,
+            data_name: "Present Velocity LPF Frequency",
+        },
+        {
+            address: 134,
+            size: 2,
+            data_name: "Goal Current LPF Frequency",
+        },
+        {
+            address: 136,
+            size: 2,
+            data_name: "Position FF LPF Time",
+        },
+        {
+            address: 138,
+            size: 2,
+            data_name: "Velocity FF LPF Time",
+        },
+        {
+            address: 152,
+            size: 1,
+            data_name: "Controller State",
+        },
+        {
+            address: 153,
+            size: 1,
+            data_name: "Error Code",
+        },
+        {
+            address: 154,
+            size: 1,
+            data_name: "Error Code History 1",
+        },
+        {
+            address: 155,
+            size: 1,
+            data_name: "Error Code History 2",
+        },
+        {
+            address: 156,
+            size: 1,
+            data_name: "Error Code History 3",
+        },
+        {
+            address: 157,
+            size: 1,
+            data_name: "Error Code History 4",
+        },
+        {
+            address: 158,
+            size: 1,
+            data_name: "Error Code History 5",
+        },
+        {
+            address: 159,
+            size: 1,
+            data_name: "Error Code History 6",
+        },
+        {
+            address: 160,
+            size: 1,
+            data_name: "Error Code History 7",
+        },
+        {
+            address: 161,
+            size: 1,
+            data_name: "Error Code History 8",
+        },
+        {
+            address: 162,
+            size: 1,
+            data_name: "Error Code History 9",
+        },
+        {
+            address: 163,
+            size: 1,
+            data_name: "Error Code History 10",
+        },
+        {
+            address: 164,
+            size: 1,
+            data_name: "Error Code History 11",
+        },
+        {
+            address: 165,
+            size: 1,
+            data_name: "Error Code History 12",
+        },
+        {
+            address: 166,
+            size: 1,
+            data_name: "Error Code History 13",
+        },
+        {
+            address: 167,
+            size: 1,
+            data_name: "Error Code History 14",
+        },
+        {
+            address: 168,
+            size: 1,
+            data_name: "Error Code History 15",
+        },
+        {
+            address: 169,
+            size: 1,
+            data_name: "Error Code History 16",
+        },
+        {
+            address: 170,
+            size: 1,
+            data_name: "Hybrid Save",
+        },
+        {
+            address: 212,
+            size: 4,
+            data_name: "Velocity I Gain",
+        },
+        {
+            address: 216,
+            size: 4,
+            data_name: "Velocity P Gain",
+        },
+        {
+            address: 220,
+            size: 4,
+            data_name: "Velocity FF Gain",
+        },
+        {
+            address: 224,
+            size: 4,
+            data_name: "Position D Gain",
+        },
+        {
+            address: 228,
+            size: 4,
+            data_name: "Position I Gain",
+        },
+        {
+            address: 232,
+            size: 4,
+            data_name: "Position P Gain",
+        },
+        {
+            address: 236,
+            size: 4,
+            data_name: "Position FF Gain",
+        },
+        {
+            address: 240,
+            size: 4,
+            data_name: "Profile Acceleration",
+        },
+        {
+            address: 244,
+            size: 4,
+            data_name: "Profile Velocity",
+        },
+        {
+            address: 248,
+            size: 4,
+            data_name: "Profile Acceleration Time",
+        },
+        {
+            address: 252,
+            size: 4,
+            data_name: "Profile Time",
+        },
+        {
+            address: 256,
+            size: 2,
+            data_name: "Indirect Address 1",
+        },
+        {
+            address: 512,
+            size: 1,
+            data_name: "Torque Enable",
+        },
+        {
+            address: 513,
+            size: 1,
+            data_name: "LED",
+        },
+        {
+            address: 516,
+            size: 2,
+            data_name: "PWM Offset",
+        },
+        {
+            address: 518,
+            size: 2,
+            data_name: "Current Offset",
+        },
+        {
+            address: 520,
+            size: 4,
+            data_name: "Velocity Offset",
+        },
+        {
+            address: 524,
+            size: 2,
+            data_name: "Goal PWM",
+        },
+        {
+            address: 526,
+            size: 2,
+            data_name: "Goal Current",
+        },
+        {
+            address: 528,
+            size: 4,
+            data_name: "Goal Velocity",
+        },
+        {
+            address: 532,
+            size: 4,
+            data_name: "Goal Position",
+        },
+        {
+            address: 541,
+            size: 1,
+            data_name: "Moving Status",
+        },
+        {
+            address: 542,
+            size: 2,
+            data_name: "Realtime Tick",
+        },
+        {
+            address: 544,
+            size: 2,
+            data_name: "Present PWM",
+        },
+        {
+            address: 546,
+            size: 2,
+            data_name: "Present Current",
+        },
+        {
+            address: 548,
+            size: 4,
+            data_name: "Present Velocity",
+        },
+        {
+            address: 552,
+            size: 4,
+            data_name: "Present Position",
+        },
+        {
+            address: 560,
+            size: 4,
+            data_name: "Position Trajectory",
+        },
+        {
+            address: 564,
+            size: 4,
+            data_name: "Velocity Trajectory",
+        },
+        {
+            address: 568,
+            size: 2,
+            data_name: "Present Input Voltage",
+        },
+        {
+            address: 570,
+            size: 1,
+            data_name: "Present Inverter Temperature",
+        },
+        {
+            address: 571,
+            size: 1,
+            data_name: "Present Motor Temperature",
+        },
+        {
+            address: 634,
+            size: 1,
+            data_name: "Indirect Data 1",
+        },
+        {
+            address: 919,
+            size: 1,
+            data_name: "Backup Ready",
+        },
+        {
+            address: 256,
+            size: 2,
+            data_name: "Indirect Address Write",
+        },
+        {
+            address: 634,
+            size: 1,
+            data_name: "Indirect Data Write",
+        },
+        {
+            address: 384,
+            size: 2,
+            data_name: "Indirect Address Read",
+        },
+        {
+            address: 698,
+            size: 1,
+            data_name: "Indirect Data Read",
+        },
+    ],
+)

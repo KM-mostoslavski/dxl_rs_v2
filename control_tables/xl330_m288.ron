@@ -1,0 +1,327 @@
+(
+  type_info: {
+    value_of_zero_radian_position: 2048,
+    value_of_max_radian_position: 4095,
+    value_of_min_radian_position: 0,
+    min_radian: -3.14159265,
+    max_radian: 3.14159265,
+  },
+  unit_info: [
+    {
+      data_name: "Present Velocity",
+      value: 0.0239691227,
+      unit: "rad/s",
+      sign_type: "signed",
+    },
+    {
+      data_name: "Goal Velocity",
+      value: 0.0239691227,
+      unit: "rad/s",
+      sign_type: "signed",
+    },
+    {
+      data_name: "Present Current",
+      value: 1.0,
+      unit: "raw",
+      sign_type: "signed",
+    },
+    {
+      data_name: "Goal Current",
+      value: 1.0,
+      unit: "raw",
+      sign_type: "signed",
+    },
+  ],
+  control_table: [
+    {
+      address: 0,
+      size: 2,
+      data_name: "Model Number",
+    },
+    {
+      address: 2,
+      size: 4,
+      data_name: "Model Information",
+    },
+    {
+      address: 6,
+      size: 1,
+      data_name: "Firmware Version",
+    },
+    {
+      address: 7,
+      size: 1,
+      data_name: "ID",
+    },
+    {
+      address: 8,
+      size: 1,
+      data_name: "Baud Rate",
+    },
+    {
+      address: 9,
+      size: 1,
+      data_name: "Return Delay Time",
+    },
+    {
+      address: 10,
+      size: 1,
+      data_name: "Drive Mode",
+    },
+    {
+      address: 11,
+      size: 1,
+      data_name: "Operating Mode",
+    },
+    {
+      address: 12,
+      size: 1,
+      data_name: "Secondary(Shadow) ID",
+    },
+    {
+      address: 13,
+      size: 1,
+      data_name: "Protocol Type",
+    },
+    {
+      address: 20,
+      size: 4,
+      data_name: "Homing Offset",
+    },
+    {
+      address: 24,
+      size: 4,
+      data_name: "Moving Threshold",
+    },
+    {
+      address: 31,
+      size: 1,
+      data_name: "Temperature Limit",
+    },
+    {
+      address: 32,
+      size: 2,
+      data_name: "Max Voltage Limit",
+    },
+    {
+      address: 34,
+      size: 2,
+      data_name: "Min Voltage Limit",
+    },
+    {
+      address: 36,
+      size: 2,
+      data_name: "PWM Limit",
+    },
+    {
+      address: 38,
+      size: 2,
+      data_name: "Current Limit",
+    },
+    {
+      address: 44,
+      size: 4,
+      data_name: "Velocity Limit",
+    },
+    {
+      address: 48,
+      size: 4,
+      data_name: "Max Position Limit",
+    },
+    {
+      address: 52,
+      size: 4,
+      data_name: "Min Position Limit",
+    },
+    {
+      address: 62,
+      size: 1,
+      data_name: "PWM Slope",
+    },
+    {
+      address: 63,
+      size: 1,
+      data_name: "Shutdown",
+    },
+    {
+      address: 64,
+      size: 1,
+      data_name: "Torque Enable",
+    },
+    {
+      address: 65,
+      size: 1,
+      data_name: "LED",
+    },
+    {
+      address: 68,
+      size: 1,
+      data_name: "Status Return Level",
+    },
+    {
+      address: 69,
+      size: 1,
+      data_name: "Registered Instruction",
+    },
+    {
+      address: 70,
+      size: 1,
+      data_name: "Hardware Error Status",
+    },
+    {
+      address: 76,
+      size: 2,
+      data_name: "Velocity I Gain",
+    },
+    {
+      address: 78,
+      size: 2,
+      data_name: "Velocity P Gain",
+    },
+    {
+      address: 80,
+      size: 2,
+      data_name: "Position D Gain",
+    },
+    {
+      address: 82,
+      size: 2,
+      data_name: "Position I Gain",
+    },
+    {
+      address: 84,
+      size: 2,
+      data_name: "Position P Gain",
+    },
+    {
+      address: 88,
+      size: 2,
+      data_name: "Feedforward 2nd Gain",
+    },
+    {
+      address: 90,
+      size: 2,
+      data_name: "Feedforward 1st Gain",
+    },
+    {
+      address: 98,
+      size: 1,
+      data_name: "Bus Watchdog",
+    },
+    {
+      address: 100,
+      size: 2,
+      data_name: "Goal PWM",
+    },
+    {
+      address: 102,
+      size: 2,
+      data_name: "Goal Current",
+    },
+    {
+      address: 104,
+      size: 4,
+      data_name: "Goal Velocity",
+    },
+    {
+      address: 108,
+      size: 4,
+      data_name: "Profile Acceleration",
+    },
+    {
+      address: 112,
+      size: 4,
+      data_name: "Profile Velocity",
+    },
+    {
+      address: 116,
+      size: 4,
+      data_name: "Goal Position",
+    },
+    {
+      address: 120,
+      size: 2,
+      data_name: "Realtime Tick",
+    },
+    {
+      address: 122,
+      size: 1,
+      data_name: "Moving",
+    },
+    {
+      address: 123,
+      size: 1,
+      data_name: "Moving Status",
+    },
+    {
+      address: 124,
+      size: 2,
+      data_name: "Present PWM",
+    },
+    {
+      address: 126,
+      size: 2,
+      data_name: "Present Current",
+    },
+    {
+      address: 128,
+      size: 4,
+      data_name: "Present Velocity",
+    },
+    {
+      address: 132,
+      size: 4,
+      data_name: "Present Position",
+    },
+    {
+      address: 136,
+      size: 4,
+      data_name: "Velocity Trajectory",
+    },
+    {
+      address: 140,
+      size: 4,
+      data_name: "Position Trajectory",
+    },
+    {
+      address: 144,
+      size: 2,
+      data_name: "Present Input Voltage",
+    },
+    {
+      address: 146,
+      size: 1,
+      data_name: "Present Temperature",
+    },
+    {
+      address: 168,
+      size: 2,
+      data_name: "Indirect Address 1",
+    },
+    {
+      address: 224,
+      size: 1,
+      data_name: "Indirect Data 1",
+    },
+    {
+      address: 168,
+      size: 2,
+      data_name: "Indirect Address Write",
+    },
+    {
+      address: 224,
+      size: 1,
+      data_name: "Indirect Data Write",
+    },
+    {
+      address: 180,
+      size: 2,
+      data_name: "Indirect Address Read",
+    },
+    {
+      address: 230,
+      size: 1,
+      data_name: "Indirect Data Read",
+    },
+  ],
+)
