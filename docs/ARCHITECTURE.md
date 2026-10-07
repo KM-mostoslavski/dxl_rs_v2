@@ -47,7 +47,7 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 - **Bulk read failure**:
   - `read_*(ids, &mut buf) -> Result<(), Error>`: strict, like the SDK. Any failure fails the call.
   - `read_*_partial(ids, &mut buf)`: per-slot result, reports which actuators failed. Only exists behind the opt-in `partial-reads` feature ("use at your own risk"). On P2 a failed sync group fails all its slots.
-  - Features only add API, never change an existing method's behaviour.
+  - Features should add API rather than change an existing method's behaviour. Not binding during alpha: breaking changes are allowed until 1.0.
 - **Codegen**: a generator (`cargo xtask`) turns `control_tables/*.ron` into plain `.rs` files that are committed. No `build.rs`, no proc macro: zero codegen at build time, readable code, and table changes show up in diffs.
 - **Model families are Cargo features** (`ax`, `mx`, `x-series`, …; all on by default) to cut compile time and size. Autoscan finding a compiled-out model returns `UnsupportedModel { model_number, feature }`, so a missing feature fails loudly.
 - **Status replies (same as SDK / v1)**: RX is cleared before every TX. Unicast instructions wait for their status packet (factory default Status Return Level 2). Broadcast instructions (sync write) never wait. No Status Return Level tracking.

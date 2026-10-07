@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exhaustive control-table analysis for dxl_rs v2 API design.
 
-Parses every docs/control_table_ron/*.ron, extracts the control_table
+Parses every control_tables/*.ron, extracts the control_table
 (address,size,data_name) triples, and computes:
   - exact-duplicate groups (identical tables)
   - per-register presence/address/size consistency across all models
@@ -137,7 +137,7 @@ def main():
 
     w("# dxl_rs Control-Table Analysis")
     w()
-    w(f"Generated from `docs/control_table_ron/*.ron` — **{n_models} models** "
+    w(f"Generated from `control_tables/*.ron` — **{n_models} models** "
       f"(excludes `dynamixel.ron` model-number map).")
     w()
     w(f"- Protocol 1 (CW/CCW Angle Limit): "
