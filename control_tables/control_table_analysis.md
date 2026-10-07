@@ -1,6 +1,6 @@
 # dxl_rs Control-Table Analysis
 
-Generated from `docs/control_table_ron/*.ron` — **72 models** (excludes `dynamixel.ron` model-number map).
+Generated from `control_tables/*.ron` — **72 models** (excludes `dynamixel.ron` model-number map).
 
 - Protocol 1 (CW/CCW Angle Limit): **6**
 - Protocol 2: **66**
