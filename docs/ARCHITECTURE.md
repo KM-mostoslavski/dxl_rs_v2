@@ -34,6 +34,7 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 - **IDs**: user-facing API uses the firmware ID as a newtype `Id` (0..=252 on both protocols: P2's range; P1 also allows 253, dropped so `Id` needs no protocol parameter; 254 is broadcast). Array index stays internal.
 - **Multi-actuator targets**: `impl IntoIterator<Item = Id>`. Covers ranges and sparse lists alike.
 - **Control table location**: the `ActuatorKind` variant *is* the model. Registers are associated `const`s on the model type, so no pointer and no copy.
+- **Firmware-dependent tables**: when a model's control table changes with firmware (XL330/XC330 before v53 have fewer Indirect registers at other addresses), each table is its own model type. `dynamixel.ron` lists a model's tables by first firmware version (`from_fw`); autoscan reads Firmware Version to pick one.
 - **Actuator cache**: `Id`, torque state, and the real limits read from EEPROM.
 - **Construction**: `bus.autoscan()` is the default path and instantiates what it finds. Declaring (`Id`, model) by hand is for when you want to check the robot matches what you expect (missing or wrong model = error at startup, and no full ID sweep).
 - **Limits**: read from EEPROM at init. Never silently fall back to table defaults.
@@ -61,3 +62,4 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 ## Not implemented yet
 
 - **MX on Protocol 1 firmware** (e.g. MX-64 = model 310): required, but the 1.0 tables are missing from `control_tables/`. Autoscan returns `UnsupportedModel` until they're added.
+- **AX-12+, AX-18F, XW430-T200**: tables exist in `control_tables/` but have no model number in `dynamixel.ron`, so codegen skips them (with a warning).
