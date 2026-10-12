@@ -49,7 +49,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Install libudev (serialport)
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      - run: cargo llvm-cov --workspace --ignore-filename-regex 'src/models/' --fail-under-lines 70
+      - run: cargo llvm-cov --workspace --ignore-filename-regex 'src/models(\.rs|/)' --fail-under-lines 70
 
   codegen:
     name: generated models up to date
@@ -61,7 +61,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask codegen
-      - name: Fail if src/models/ differs from the control tables
+      - name: Fail if the generated models differ from the control tables
         run: |
-          git add --intent-to-add src/models
-          git diff --exit-code -- src/models
+          git add --intent-to-add src/models.rs src/models
+          git diff --exit-code -- src/models.rs src/models

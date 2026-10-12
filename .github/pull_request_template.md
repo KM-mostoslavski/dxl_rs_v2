@@ -14,6 +14,6 @@
 - [ ] `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass
 - [ ] `cargo test` passes; line coverage ≥ 70 % (`cargo llvm-cov`)
 - [ ] `no_std` build passes (`--no-default-features --features ax,mx,x-series,y-series,pro --target thumbv7em-none-eabihf`)
-- [ ] `cargo xtask codegen` leaves `src/models/` unchanged
+- [ ] `cargo xtask codegen` leaves `src/models.rs` and `src/models/` unchanged
 - [ ] Public methods documented
 - [ ] Docs updated if behaviour or setup changed

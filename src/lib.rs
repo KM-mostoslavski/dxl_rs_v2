@@ -2,6 +2,7 @@
 //!
 //! The design lives in `docs/ARCHITECTURE.md`.
 #![no_std]
+#![warn(clippy::mod_module_files)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
