@@ -53,7 +53,7 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 - **Status replies (same as SDK / v1)**: RX is cleared before every TX. Unicast instructions wait for their status packet (factory default Status Return Level 2). Broadcast instructions (sync write) never wait. No Status Return Level tracking.
 - **Write confirmation**: never implicit. Sync writes are fire-and-forget; read-back verification is a separate call the user makes when, and if, they want it.
 
-- **Raw register access**: allowed, but bypasses caches and checks. The caller owns the consequences.
+- **Raw register access**: opt-in `raw-registers` feature, off by default. Escape hatch for unwrapped registers and debugging, not the intended path. Raw writes bypass checks and can desync the cache. The two API tiers (generic `ActuatorKind`, concrete model types) are the normal way to reach model-specific features.
 - **Autoscan stays the default** (boot-time cost only). P2 uses broadcast ping (one round-trip); P1 pings IDs one by one. Scans the bus's configured baud only.
 
 - **Fault detection**: every received status packet's error byte is checked (P2 alert bit 7; P1 per-bit errors). A set fault marks the actuator faulted, torque cache = off, and returns a typed hardware error. Free (data is already parsed). Limit: sync writes get no reply, so write-only loops only see faults on their next read.
