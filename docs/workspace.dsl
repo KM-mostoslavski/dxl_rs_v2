@@ -23,7 +23,7 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
                 bus = component "Bus<P, T, N>" "Owns actuators in heapless::Vec<ActuatorKind, N>; timeouts/retries config." "Rust struct, generic on Protocol + Transport" {
                     tags "Api"
                 }
-                handle = component "ActuatorRef" "Short-lived borrowed handle from bus.actuator(id); torque-off guard, raw register access." "Rust struct borrowing &mut Bus" {
+                handle = component "ActuatorRef" "Short-lived borrowed handle from bus.actuator(id); torque-off guard; raw register access only behind the opt-in raw-registers feature." "Rust struct borrowing &mut Bus" {
                     tags "Api"
                 }
                 multi = component "Multi-actuator ops" "Easy (strategy picked by P) and explicit sync/bulk ops grouped by (addr, size); caller-owned buffers." "Rust impl blocks on Bus<P, T>" {

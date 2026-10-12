@@ -31,7 +31,7 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 - **User picks the abstraction level** for multi-actuator ops:
   - *Easy*: `bus.read_positions(ids)` / `bus.write_goal_positions(..)` on every `Bus<P, T>`. The strategy (sync/bulk vs. sequential, `(addr, size)` grouping) is picked by `P` at compile time. Writes: sync write on P1 and P2. Reads: sync read on P2, sequential on P1.
   - *Explicit*: `bus.sync_write(..)` (P1 + P2), `bus.sync_read(..)` (`impl Bus<P2, T>` only). Unsupported on a protocol = method absent = compile error.
-- **IDs**: user-facing API uses the firmware ID as a newtype `Id` (0..=252; 253/254 reserved). Array index stays internal.
+- **IDs**: user-facing API uses the firmware ID as a newtype `Id` (0..=252 on both protocols: P2's range; P1 also allows 253, dropped so `Id` needs no protocol parameter; 254 is broadcast). Array index stays internal.
 - **Multi-actuator targets**: `impl IntoIterator<Item = Id>`. Covers ranges and sparse lists alike.
 - **Control table location**: the `ActuatorKind` variant *is* the model. Registers are associated `const`s on the model type, so no pointer and no copy.
 - **Actuator cache**: `Id`, torque state, and the real limits read from EEPROM.
@@ -53,7 +53,7 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 - **Status replies (same as SDK / v1)**: RX is cleared before every TX. Unicast instructions wait for their status packet (factory default Status Return Level 2). Broadcast instructions (sync write) never wait. No Status Return Level tracking.
 - **Write confirmation**: never implicit. Sync writes are fire-and-forget; read-back verification is a separate call the user makes when, and if, they want it.
 
-- **Raw register access**: allowed, but bypasses caches and checks. The caller owns the consequences.
+- **Raw register access**: opt-in `raw-registers` feature, off by default. Escape hatch for unwrapped registers and debugging, not the intended path. Raw writes bypass checks and can desync the cache. The two API tiers (generic `ActuatorKind`, concrete model types) are the normal way to reach model-specific features.
 - **Autoscan stays the default** (boot-time cost only). P2 uses broadcast ping (one round-trip); P1 pings IDs one by one. Scans the bus's configured baud only.
 
 - **Fault detection**: every received status packet's error byte is checked (P2 alert bit 7; P1 per-bit errors). A set fault marks the actuator faulted, torque cache = off, and returns a typed hardware error. Free (data is already parsed). Limit: sync writes get no reply, so write-only loops only see faults on their next read.

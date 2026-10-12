@@ -7,3 +7,9 @@
 extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
+
+mod error;
+mod id;
+
+pub use error::{Error, ValidationError};
+pub use id::Id;
