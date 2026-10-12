@@ -22,8 +22,8 @@ jobs:
       - name: Install libudev (serialport)
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets
-      - run: cargo test
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace
 
   no-std:
     name: no_std build
@@ -35,7 +35,7 @@ jobs:
           targets: thumbv7em-none-eabihf
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --no-default-features --target thumbv7em-none-eabihf
+      - run: cargo clippy --no-default-features --features ax,mx,x-series,y-series,pro --target thumbv7em-none-eabihf
 
   coverage:
     name: coverage (>= 70 % lines)
@@ -49,4 +49,19 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Install libudev (serialport)
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      - run: cargo llvm-cov --fail-under-lines 70
+      - run: cargo llvm-cov --workspace --ignore-filename-regex 'src/models/' --fail-under-lines 70
+
+  codegen:
+    name: generated models up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask codegen
+      - name: Fail if src/models/ differs from the control tables
+        run: |
+          git add --intent-to-add src/models
+          git diff --exit-code -- src/models
