@@ -11,3 +11,6 @@ alloc = []
 [dependencies]
 serialport = { version = "4.9.0", optional = true }
 thiserror = { version = "2.0.18", default-features = false }
+
+[workspace]
+members = ["xtask"]
