@@ -16,7 +16,7 @@ pub enum Error {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ValidationError {
-    /// The ID is outside `0..=252` (253 and 254 are reserved by the protocol).
+    /// The ID is outside `0..=252`; see [`Id::MAX`](crate::Id::MAX).
     #[error("invalid actuator id {0}: must be in 0..=252")]
     InvalidId(u8),
 }

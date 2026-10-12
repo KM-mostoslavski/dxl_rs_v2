@@ -4,14 +4,20 @@ use crate::error::{Error, ValidationError};
 
 /// Firmware ID of an actuator, guaranteed to be in `0..=252`.
 ///
-/// 253 and 254 are reserved by the protocol (254 is broadcast), so they can't
-/// be an `Id`. This is the ID set in the actuator's EEPROM, not a position in
-/// the bus.
+/// This is the ID set in the actuator's EEPROM, not a position in the bus.
+/// See [`Id::MAX`] for why the range stops at 252.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(u8);
 
 impl Id {
-    /// Highest ID an actuator can have.
+    /// Highest ID an actuator can have on either protocol.
+    ///
+    /// Protocol 2 allows 0..=252; Protocol 1 allows 0..=253. 254 is broadcast
+    /// on both. One range for both protocols keeps `Id` free of a protocol
+    /// type parameter, at the cost of ID 253 on Protocol 1.
+    ///
+    /// Sources: <https://emanual.robotis.com/docs/en/dxl/protocol2/>,
+    /// <https://emanual.robotis.com/docs/en/dxl/protocol1/>
     pub const MAX: u8 = 252;
 
     /// Creates an `Id`, or returns [`ValidationError::InvalidId`] if `id` is
