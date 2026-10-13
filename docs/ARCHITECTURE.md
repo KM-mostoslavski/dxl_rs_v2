@@ -12,7 +12,7 @@ API         Bus<P, T, N>  ──owns──▶  heapless::Vec<ActuatorKind, N>
              │  bus.sync_read(..)                         (explicit: P2 only)
 Models      Xm430W350, Mx64, …   ◀── generated from control_tables/*.ron (const data)
 Protocol    P1 | P2              packet encode/decode, checksum/CRC
-Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by default)
+Transport   T: Transport                    raw bytes, RX clear, timeouts (serialport by default)
 ```
 
 ## Decisions
@@ -41,9 +41,9 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 - **Torque off by default**. Enabling it is always an explicit call. Goal writes while off return `ActuatorIsOff` (no model-specific side effects such as AX auto-enabling torque).
 - **Capacity**: `Bus<P, T, const N: usize = 32>` stores `heapless::Vec<ActuatorKind, N>`. `N` is set per bus (e.g. `Bus<P2, _, { robot::ARM_MOTORS }>`) and is an upper bound, not an exact count; going over it at scan time is an error. Default `std` feature enables `alloc` (`Vec`, no cap) and `serialport`; no_std users set `default-features = false`.
 - **Units**: SI newtypes where they make sense, raw access always available.
-- **Errors**: `thiserror` (no_std), split into transport / protocol / status packet / validation.
-- **Transport**: `embedded-io` blocking `Read + Write`; `serialport` through the std adapter by default.
-- **Timeouts / retries**: configurable on the bus, with defaults.
+- **Errors**: `thiserror` (no_std), split into transport / protocol / status packet / validation. `Error` stays `Copy` and non-generic: transport errors keep only their `embedded_io::ErrorKind` (`TimedOut` becomes `TransportError::Timeout`).
+- **Transport**: own `Transport` trait = `embedded-io` blocking `Read + Write` + `clear_rx` + `set_timeout`. Plain `Read + Write` can't clear RX or take a timeout, which the status-reply and timeout rules need. `SerialTransport` (std) wraps `serialport` and is the default. Half-duplex direction pins (DE/RE) are the implementor's job, inside `write`/`flush`.
+- **Timeouts / retries**: configurable on the bus, with defaults. The bus owns the values and pushes them with `Transport::set_timeout` before each transaction; the transport enforces them (it has the clock).
 - **Bulk read output**: caller-owned `&mut` buffer, reused across cycles. No allocation, no per-cycle storage.
 - **Bulk read failure**:
   - `read_*(ids, &mut buf) -> Result<(), Error>`: strict, like the SDK. Any failure fails the call.
@@ -63,3 +63,4 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 
 - **MX on Protocol 1 firmware** (e.g. MX-64 = model 310): required, but the 1.0 tables are missing from `control_tables/`. Autoscan returns `UnsupportedModel` until they're added.
 - **AX-12+, AX-18F, XW430-T200**: tables exist in `control_tables/` but have no model number in `dynamixel.ron`, so codegen skips them (with a warning).
+- **`HalfDuplex<T, Pin>` helper**: a ready-made `Transport` wrapper that drives a DE/RE pin through `embedded-hal`. Until then, MCU users toggle the pin in their own `Transport` impl.
