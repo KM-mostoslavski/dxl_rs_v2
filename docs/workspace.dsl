@@ -47,7 +47,7 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
                 protocol = component "Protocol P1 | P2" "Packet encode/decode, checksum/CRC, status replies; RX cleared before TX, broadcast never waits." "Rust, compile-time generic" {
                     tags "Core"
                 }
-                transport = component "Transport" "Raw byte I/O over T: Read + Write; serialport std adapter by default." "embedded-io (blocking)" {
+                transport = component "Transport" "Transport trait: embedded-io Read + Write plus clear_rx and set_timeout; SerialTransport (serialport) by default." "embedded-io (blocking)" {
                     tags "Core"
                 }
                 errors = component "Errors" "Transport / protocol / status packet / validation, ActuatorIsOff, UnsupportedModel." "thiserror (no_std)" {
@@ -77,7 +77,7 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         maintainer -> dxl.tables "Edits"
         dxl.xtask -> dxl.tables "Parses" "serde + ron"
         dxl.xtask -> dxl.lib "Writes generated model sources into" ".rs files, committed"
-        dxl.lib -> port "Sends and receives bytes via" "embedded-io Read + Write"
+        dxl.lib -> port "Sends and receives bytes via" "Transport (embedded-io)"
         port -> actuators "Drives" "half-duplex TTL / RS-485"
 
         # Component-level relationships
@@ -89,7 +89,7 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         dxl.lib.bus -> dxl.lib.handle "Lends"
         dxl.lib.bus -> dxl.lib.scan "Builds its actuator list with"
         dxl.lib.bus -> dxl.lib.protocol "Is generic over" "P: Protocol"
-        dxl.lib.bus -> dxl.lib.transport "Is generic over" "T: Read + Write"
+        dxl.lib.bus -> dxl.lib.transport "Is generic over; pushes timeouts to" "T: Transport"
         dxl.lib.handle -> dxl.lib.kind "Dispatches to"
         dxl.lib.handle -> dxl.lib.protocol "Sends unicast instructions via"
         dxl.lib.handle -> dxl.lib.units "Takes and returns"

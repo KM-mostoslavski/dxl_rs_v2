@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 default = ["std", "ax", "mx", "x-series", "y-series", "pro"]
-std = ["alloc", "dep:serialport", "thiserror/std"]
+std = ["alloc", "dep:serialport", "embedded-io/std", "thiserror/std"]
 alloc = []
 # Model families: each compiles in the actuator models of one product line.
 ax = []
@@ -15,6 +15,7 @@ y-series = []
 pro = []
 
 [dependencies]
+embedded-io = { version = "0.7.1", default-features = false }
 serialport = { version = "4.9.0", optional = true }
 thiserror = { version = "2.0.18", default-features = false }
 

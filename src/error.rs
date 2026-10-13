@@ -1,5 +1,7 @@
 //! Crate errors, split by where they come from.
 
+use crate::transport::TransportError;
+
 /// Every error this crate returns.
 ///
 /// Each variant is one category from `docs/ARCHITECTURE.md`; match on the
@@ -10,6 +12,10 @@ pub enum Error {
     /// A value was rejected before anything was sent on the bus.
     #[error(transparent)]
     Validation(#[from] ValidationError),
+
+    /// The bytes didn't make it to or from the bus.
+    #[error(transparent)]
+    Transport(#[from] TransportError),
 
     /// An actuator reported a model number this build can't drive.
     ///
