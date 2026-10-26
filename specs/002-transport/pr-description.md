@@ -32,9 +32,9 @@ tests and coverage without hardware. Spec: `specs/002-transport/spec.md`.
 
 ## Architecture
 Follows docs/ARCHITECTURE.md and the SRS, with these deviations:
-- **Transport bound is `Read + Write + ReadReady`**, not "any `Read + Write`". The same decision
-  as the protocol module, approved by the architect on 2026-10-26. SRS §7 and the constitution's
-  Technical Constraints still need the architect's wording update.
+- **Transport bound is `Read + Write + ReadReady`**, with the bus holding the `Clock`. This matches
+  SRS 3.3, 4.4, §7 and FR-1.1, constitution 1.1.0 and docs/ARCHITECTURE.md, all amended
+  2026-10-26 (the ARCHITECTURE.md change is in this PR).
 - **Cross-module edits**: `src/lib.rs` (core: `mod transport` and re-exports) and `Cargo.toml`
   (ci: `embedded-io` 0.7, `std` → `embedded-io/std`, new `mock` feature).
 - **Panics in the public mock**: scripting past capacity, `assert_sent` and `assert_done`

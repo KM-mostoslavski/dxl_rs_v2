@@ -12,7 +12,7 @@ API         Bus<P, T, N>  ──owns──▶  heapless::Vec<ActuatorKind, N>
              │  bus.sync_read(..)                         (explicit: P2 only)
 Models      Xm430W350, Mx64, …   ◀── generated from control_tables/*.ron (const data)
 Protocol    P1 | P2              packet encode/decode, checksum/CRC
-Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by default)
+Transport   T: embedded_io::{Read, Write, ReadReady}   raw bytes (serialport by default)
 ```
 
 ## Decisions
@@ -42,7 +42,7 @@ Transport   T: embedded_io::{Read, Write}   raw bytes, timeouts (serialport by d
 - **Capacity**: `Bus<P, T, const N: usize = 32>` stores `heapless::Vec<ActuatorKind, N>`. `N` is set per bus (e.g. `Bus<P2, _, { robot::ARM_MOTORS }>`) and is an upper bound, not an exact count; going over it at scan time is an error. Default `std` feature enables `alloc` (`Vec`, no cap) and `serialport`; no_std users set `default-features = false`.
 - **Units**: SI newtypes where they make sense, raw access always available.
 - **Errors**: `thiserror` (no_std), split into transport / protocol / status packet / validation.
-- **Transport**: `embedded-io` blocking `Read + Write`; `serialport` through the std adapter by default.
+- **Transport**: `embedded-io` blocking `Read + Write` plus non-blocking `ReadReady`; the bus polls `ReadReady` against a `Clock` to enforce timeouts (plain `read` blocks without bound). `SerialTransport` (`serialport`) through the std adapter by default; `MockTransport` behind the `mock` feature.
 - **Timeouts / retries**: configurable on the bus, with defaults.
 - **Bulk read output**: caller-owned `&mut` buffer, reused across cycles. No allocation, no per-cycle storage.
 - **Bulk read failure**:

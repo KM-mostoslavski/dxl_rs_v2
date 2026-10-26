@@ -212,11 +212,9 @@ contract fails to compile with an error naming the missing capability.
 
 ## Assumptions
 
-- **Recorded deviation (approved by the architect 2026-10-26, see spec 001 plan)**: SRS §7 and the
-  constitution's Technical Constraints say the transport is any blocking `Read + Write`. The
-  protocol layer also needs a non-blocking "input pending" check, plus a separate `Clock`, so
-  waits are bounded without relying on the transport. FR-001 follows that decision. SRS §7 and
-  the constitution text still need the matching amendment.
+- The transport contract is `Read + Write + ReadReady`, and the bus bounds waits with its own
+  `Clock` (SRS 3.3, 4.4, §7 and FR-1.1; constitution 1.1.0 Technical Constraints; amended by the
+  architect 2026-10-26). FR-001 follows them.
 - The `Clock` stays in the protocol module; this module does not move or redefine it.
 - The protocol module's private test fake (`src/protocol/fake.rs`) is not replaced in this
   feature: that file is outside `src/transport/` (no-go). Migrating protocol tests to the mock

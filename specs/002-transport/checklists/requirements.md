@@ -35,5 +35,5 @@
   user-facing constraints from the SRS and constitution, not implementation choices. The same
   convention as spec 001.
 - Resolved 2026-10-26: FR-011 (public, `mock` feature) and FR-012 (bytes only; simulated actuator later).
-- Recorded deviation (Assumptions): the transport contract needs "input pending" as well as
-  read/write, unlike SRS §7. Approved by the architect 2026-10-26 (spec 001 plan).
+- Transport contract `Read + Write + ReadReady`: SRS §7 and constitution 1.1.0 amended
+  2026-10-26, so this is no longer a deviation.

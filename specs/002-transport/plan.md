@@ -65,11 +65,11 @@ with three helper types.
 | V. Committed, Data-Driven Codegen | Not touched. | N/A |
 | VI. Typed, Static, Panic-Free API | `open_native` concrete port, no `dyn`. Errors are `std::io::Error` / `ErrorKind` (typed kinds) mapped by the existing `io_error`. No panic in `read`/`write`/`flush`/`read_ready`. | PASS, with one justified exception (mock test helpers, see Complexity Tracking) |
 | VII. DX First | Desktop setup is one line: `SerialTransport::open("/dev/ttyUSB0", 1_000_000)?`. HAL UARTs need no wrapper. `MockTransport::new(&time)` infers its defaults. Every public item documented. | PASS |
-| Technical Constraints: "any blocking `embedded_io::{Read, Write}`" | Contract adds `ReadReady`. | **DEVIATION**: approved by the architect 2026-10-26 (plan 001); wording amendment to SRS §7 and the constitution is still pending. |
+| Technical Constraints: transport is `embedded_io::{Read, Write, ReadReady}` (constitution 1.1.0) | Contract is exactly that bound, with a blanket impl. | PASS (amended 2026-10-26; was a deviation) |
 | Workflow: one module per PR | Touches `src/lib.rs` (core) and `Cargo.toml` (ci). | **DEVIATION**: see Complexity Tracking. |
 
-Post-design re-check (after Phase 1): unchanged. Everything passes except the two recorded
-deviations and the mock-helper panic exception.
+Post-design re-check (after Phase 1): unchanged. Everything passes except the recorded
+cross-module deviation and the mock-helper panic exception.
 
 ## Project Structure
 
@@ -118,6 +118,5 @@ transport files, the `lib.rs` lines and the `Cargo.toml` lines of this plan are 
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
-| Contract `Read + Write + ReadReady` vs SRS/constitution "any `Read + Write`" | Bus-enforced timeouts need a non-blocking readiness check (plan 001, R-1). | Bare `Read + Write` hangs on a silent actuator. A custom trait with `set_timeout` (old `feature/transport`) moves timeouts into the transport, against SRS 4.4, and forces every MCU user to write an impl. Approved 2026-10-26. |
 | Edits to `src/lib.rs` (core) and `Cargo.toml` (ci) in a transport PR | `mod transport` and re-exports must live in `lib.rs`; the `mock` feature and `embedded-io` dependency must live in `Cargo.toml`. | No alternative: a module cannot be wired in without its parent declaring it. Called out in the PR's Architecture section. |
 | Panics in the public mock: over-capacity scripting and `assert_sent` / `assert_done` | Test setup errors must fail at the test's own line with a readable message (spec edge case, FR-009). | Returning `Result` from every scripting call makes tests noisy and still ends in `unwrap()`. The non-panicking `check_sent` / `unread` exist alongside. Paths the crate drives (`read`, `write`, `flush`, `read_ready`) never panic. |
