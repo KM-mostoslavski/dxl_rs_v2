@@ -29,7 +29,7 @@ Behaviour the docs require of an implementor (not checkable by the compiler):
 
 | Operation | Maps to | Errors |
 |---|---|---|
-| `open(path, baud)` | `serialport::new(path, baud)` + 8 data bits, no parity, 1 stop bit, no flow control, timeout 1 ms, `.open_native()` | `serialport::Error` (`NoDevice`, `InvalidInput`, `Io(kind)`) |
+| `open(path, baud)` | `serialport::new(path, baud)` + 8 data bits, no parity, 1 stop bit, no flow control, timeout 1 ms, `.open_native()` | `serialport::Error` (Unix: missing `Io(NotFound)`, busy `NoDevice`, bad baud `InvalidInput`) |
 | `From<NativePort>` | wraps as-is | none |
 | `into_inner` / `port_mut` | gives the port back / borrows it for extra settings | none |
 | `read_ready` | `bytes_to_read()? > 0` | `serialport::Error` → `std::io::Error` |
@@ -90,7 +90,7 @@ A silent line is a mock with nothing scripted.
 |---|---|
 | `read_ready` | `Err(fail)` if set; else `eof` or readable bytes exist |
 | `read(buf)` | `Err(fail)` if set; else copies `min(buf.len(), readable)` bytes, or 0 |
-| `write(buf)` | `Err(fail)` if set; else appends `min(buf.len(), TX − len)` bytes. 0 when full, which `write_all` reports as `WriteZero`. |
+| `write(buf)` | `Err(fail)` if set; else appends `min(buf.len(), TX − len)` bytes; `Err(ErrorKind::WriteZero)` when full and `buf` is non-empty. embedded-io 0.7 forbids `Ok(0)` for a non-empty buffer, and its `write_all` panics on it. |
 | `flush` | `Err(fail)` if set; else `flushes += 1` |
 
 **Inspection**:

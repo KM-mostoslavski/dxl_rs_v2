@@ -73,8 +73,8 @@ The docs note that the timeout only matters for the race above.
 - `serialport::Error` from `bytes_to_read()` converts through serialport's
   `From<serialport::Error> for io::Error`: `NoDevice` → `NotFound`, `InvalidInput` →
   `InvalidInput`, `Io(k)` → `k`.
-- `open()` returns `serialport::Result<SerialTransport>`. That error is typed (`NoDevice`,
-  `InvalidInput`, `Io`) and happens at startup, outside any bus call, so it is not wrapped in the
+- `open()` returns `serialport::Result<SerialTransport>`. That error is typed (on Unix: a missing port is
+  `Io(NotFound)`, a busy port `NoDevice` from `EBUSY`, a rejected baud `InvalidInput`) and happens at startup, outside any bus call, so it is not wrapped in the
   crate `Error` (US1 scenario 2).
 - The mock's error type is `embedded_io::ErrorKind` itself. It implements `embedded_io::Error`,
   is `Copy`, and needs no allocation.
@@ -133,7 +133,7 @@ diff; whichever PR merges second drops its copy.
 **Decision**:
 - The serial adapter is tested on a Unix pseudo-terminal pair (`TTYPort::pair()`, serialport
   `tty.rs` line 292): bytes cross the link, `read_ready` is false then true, `read` on an empty
-  line returns `TimedOut` within 2 ms, flush returns, opening a missing path gives `NoDevice`,
+  line returns `TimedOut` within 2 ms, flush returns, opening a missing path gives `Io(NotFound)`,
   and `From<TTYPort>` keeps the timeout. Gated `cfg(all(test, unix))`.
 - The mock gets unit tests for every gate, failure and check (SC-003).
 - A compile-only `no_std` check with `--features mock` on `thumbv7em-none-eabihf` (SC-002), plus a

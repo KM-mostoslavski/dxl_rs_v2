@@ -14,8 +14,14 @@ mod error;
 mod id;
 pub mod models;
 mod register;
+mod transport;
 
 pub use actuator::Actuator;
 pub use error::{Error, ValidationError};
 pub use id::Id;
 pub use models::ActuatorKind;
+#[cfg(feature = "std")]
+pub use transport::SerialTransport;
+pub use transport::Transport;
+#[cfg(feature = "mock")]
+pub use transport::{Mismatch, MockTime, MockTransport};

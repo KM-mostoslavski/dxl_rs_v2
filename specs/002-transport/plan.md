@@ -58,7 +58,7 @@ with three helper types.
 
 | Principle | Check | Status |
 |---|---|---|
-| I. no_std and Heap-Free | Contract and mock use only `core` + `embedded-io`; mock storage is fixed arrays; `SerialTransport` is `cfg(feature = "std")`; a counting-allocator test proves the mock allocates nothing. | PASS |
+| I. no_std and Heap-Free | Contract and mock use only `core` + `embedded-io`; mock storage is fixed arrays; `SerialTransport` is `cfg(feature = "std")`; the no_std build without `alloc` proves the mock cannot allocate (tasks T015). | PASS |
 | II. Absent Over Failing | A type without `ReadReady` is not a `Transport`: compile error (`compile_fail` doctest). `SerialTransport` is absent without `std`, the mock absent without `mock`. | PASS |
 | III. Nothing Hidden | No retries, no clock, no implicit flush or clear in the transport; RX clearing and timeouts stay in the protocol/bus (FR-5.2, FR-1.4). An already-open port's settings are used unchanged. | PASS |
 | IV. e-Manual Is the Only Source | No Dynamixel protocol facts in this module (FR-012). | N/A |
@@ -99,9 +99,9 @@ src/
     ├── serial.rs        # #[cfg(feature = "std")] SerialTransport over NativePort
     │                    # (TTYPort | COMPort), open / From / into_inner / port_mut,
     │                    # Read + Write + ReadReady; pty tests #[cfg(all(test, unix))]
-    ├── mock.rs          # #[cfg(any(test, feature = "mock"))] MockTransport, MockTime,
-    │                    # Mismatch; unit tests
-    └── no_alloc.rs      # #[cfg(test)] counting allocator: mock does zero allocations
+    └── mock.rs          # #[cfg(any(test, feature = "mock"))] MockTransport, MockTime,
+                         # Mismatch; unit tests. Zero allocation proven statically by the
+                         # no_std, no-alloc build (tasks T015)
 Cargo.toml               # + embedded-io dep, std → embedded-io/std, mock = [] (ci, cross-module)
 ```
 

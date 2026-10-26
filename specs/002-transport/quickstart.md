@@ -30,13 +30,13 @@ heap (FR-002, FR-010, SC-002).
 | Spec item | Test lives in | Expected |
 |---|---|---|
 | US1-1, US1-3 | `src/transport/serial.rs` (pty pair) | bytes written and flushed on one end read back identically on the other |
-| US1-2 | `serial.rs` | `open("/dev/does-not-exist", 1_000_000)` is `Err` with kind `NoDevice` |
+| US1-2 | `serial.rs` | `open("/dev/does-not-exist", 1_000_000)` is `Err` with kind `Io(NotFound)` (busy port: `NoDevice`) |
 | US1-4, SC-004 | `serial.rs` | `read_ready()` is `Ok(false)` on an idle line; `read` on an idle line returns `TimedOut` in < 2 ms |
 | US1-6, FR-004 | `serial.rs` | a port from `TTYPort::pair()` keeps its own timeout after `From` |
 | US2-1…4, FR-008 | `src/transport/mock.rs` | each gate opens exactly when scripted; injected kind and end of stream reach the caller |
 | US2-5, FR-009 | `mock.rs` | `check_sent` reports the first differing offset, and length differences |
 | US2-6 | `mock.rs` | `unread()` > 0 and `assert_done` panics when a reply was never read |
-| FR-010, SC-002 | `src/transport/no_alloc.rs` | a full script/run/inspect cycle performs 0 allocations |
+| FR-010, SC-002 | no_std clippy line of §1 | the mock compiles with neither `std` nor `alloc`, so it cannot allocate |
 | US3-2 | `compile_fail` doctest on `Transport` | a type without `ReadReady` does not satisfy `Transport` |
 
 ## 3. Use the mock from an application crate
