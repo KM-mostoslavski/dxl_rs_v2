@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "presets": {
+    "ov-policy": {
+      "version": "0.1.0",
+      "source": "local",
+      "manifest_hash": "sha256:cc4314e7a657d6f7367f4551b256f82ec636ad334de619b11b9d2b29833278c2",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {},
+      "registered_skills": {},
+      "installed_at": "2026-10-26T12:31:03.163804+00:00"
+    }
+  }
+}
