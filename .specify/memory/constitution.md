@@ -1,10 +1,10 @@
 <!-- ov-policy -->
 <!--
 Sync Impact Report
-- Version change: 1.0.0 → 1.1.0
-- Modified principles: none
-- Modified sections: Technical Constraints (transport contract is `Read + Write + ReadReady`
-  with bus-held `Clock`; opt-in `mock` feature)
+- Version change: 1.1.0 → 1.2.0
+- Modified principles: IV (online verification deferred to first use per model; unverified
+  tables flagged explicitly; dual-protocol models get tables for both, Protocol 2 default)
+- Modified sections: Development Workflow (control-table PR rule)
 - Added sections: none
 - Removed sections: none
 - Templates: none need updates
@@ -55,10 +55,12 @@ Rationale: a HAL that drives motors must never surprise the caller about what re
 
 - Every control-table entry and every capability claim (register address, size, access, range,
   unit, default, supported instructions, protocol, firmware-dependent layout, model number)
-  MUST be verified against the official ROBOTIS e-Manual (`emanual.robotis.com`), looked up
-  online when it is written or changed.
+  MUST come from the official ROBOTIS e-Manual (`emanual.robotis.com`).
 - Memory, third-party SDKs and other models' tables are not a source.
-- Each `.ron` table records the e-Manual URL and verification date it was checked against.
+- Online verification is done per model when that model is first needed. A verified `.ron`
+  table records the e-Manual URL and verification date; every other table is flagged
+  explicitly as unverified, and stays usable.
+- A model that supports both protocols has tables for both; Protocol 2 is the default.
 
 Rationale: a wrong address or size silently corrupts actuator state or EEPROM.
 
@@ -116,7 +118,8 @@ Rationale: an awkward API is not worth shipping sooner.
   (`cargo llvm-cov`, generated models excluded and tested through `xtask`).
 - Commits and PRs carry no AI co-authorship or attribution (`Co-Authored-By`, `Assisted-by`,
   "Generated with"). Agent work is identified by the dedicated agent account that makes it.
-- A PR touching `control_tables/` cites the e-Manual URL and verification date (Principle IV).
+- A PR that verifies or changes a control table cites the e-Manual URL and verification date
+  (Principle IV).
 - The protocol layer is tested against the e-Manual packet examples with a mock transport, no
   hardware required.
 
@@ -134,4 +137,4 @@ Rationale: an awkward API is not worth shipping sooner.
 - Every plan (`/speckit-plan` Constitution Check) and every PR review verifies compliance with
   these principles; any exception is justified in writing in the plan or PR.
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-26
+**Version**: 1.2.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-27
