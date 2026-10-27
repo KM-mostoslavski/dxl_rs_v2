@@ -1,10 +1,10 @@
 <!-- ov-policy -->
 <!--
 Sync Impact Report
-- Version change: 1.1.0 → 1.2.0
-- Modified principles: IV (online verification deferred to first use per model; unverified
-  tables flagged explicitly; dual-protocol models get tables for both, Protocol 2 default)
-- Modified sections: Development Workflow (control-table PR rule)
+- Version change: 1.2.0 → 1.3.0
+- Modified principles: VI (errors gain a `setup` category: unsupported model, too many
+  actuators, declared actuator missing or of another model, Id not on the bus)
+- Modified sections: none
 - Added sections: none
 - Removed sections: none
 - Templates: none need updates
@@ -80,7 +80,7 @@ Rationale: zero build-time codegen, auditable output, and new models without new
   and ranges; a raw-register form of each stays reachable.
 - Dispatch is static: no `dyn`, no vtables; `ActuatorKind` recovers the model by `match`.
 - No panic on the happy path or on any I/O or hardware error; those are `Result`s with typed
-  `thiserror` (no_std) errors split into transport, protocol, status and validation.
+  `thiserror` (no_std) errors split into transport, protocol, status, validation and setup.
 - The only allowed panic is the SRS 5.0 marker `unimplemented!("SRS <id>: <question>")` for a
   point the spec leaves open; where a wrong guess could corrupt actuator state or EEPROM,
   `compile_error!` is used instead.
@@ -137,4 +137,4 @@ Rationale: an awkward API is not worth shipping sooner.
 - Every plan (`/speckit-plan` Constitution Check) and every PR review verifies compliance with
   these principles; any exception is justified in writing in the plan or PR.
 
-**Version**: 1.2.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-27
+**Version**: 1.3.0 | **Ratified**: 2026-10-26 | **Last Amended**: 2026-10-27
