@@ -29,6 +29,7 @@ deferred to the first use of a model, and every table not yet verified says so (
   flagged.
 - Q: Which models are verified first? → A: AX-12 (AX-12A, and AX-12+, which also needs its
   model number mapped) and MX-64 (MX-64(2.0) and MX-64 on Protocol 1).
+- Q: Which per-register attributes does this feature add to the ~4,900 rows? → A: (a) access (R/RW) and memory area (EEPROM/RAM) on every table: simple fields for development, possibly enough for production; range, default and unit later, per model on verification.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -242,14 +243,11 @@ longer warns about skipped files.
   e-Manual, so no tool has to infer it from register names.
 - **FR-006**: Each verified model MUST record the instructions the e-Manual lists as supported
   (ping, read, write, sync and bulk instructions and the others the page lists), per protocol.
-- **FR-007**: Each register row MUST carry these attributes from the e-Manual, in addition to
-  name, address and size: [NEEDS CLARIFICATION: Today the ~4,900 register rows across the 72
-  `.ron` tables carry only name, address and size; SRS FR-7.2 also lists access (R / RW),
-  memory area (EEPROM / RAM), range, default and unit. Which does this feature add: (a) access
-  and memory area only, (b) all five, or (c) none for now? With verification deferred,
-  attributes would be added per model when it is verified. Recommended: (a) for all tables now,
-  since codegen and the bus need access and area for the torque guard and the EEPROM limit
-  reads; range, default and unit per model as each is verified.]
+- **FR-007**: Each register row in every table MUST carry, in addition to name, address and
+  size, two simple fields from the e-Manual: access (R or RW) and memory area (EEPROM or RAM).
+  Codegen and the bus need them for the torque guard and the EEPROM limit reads. Range, default
+  and unit (the rest of the SRS FR-7.2 list) are added per model when it is verified, and are
+  out of scope here.
 - **FR-008**: The model map MUST be able to give, per model, a separate list of firmware-ordered
   tables per protocol, MUST allow the same table to serve both protocols, and MUST mark
   Protocol 2 as the default for every model that supports both.

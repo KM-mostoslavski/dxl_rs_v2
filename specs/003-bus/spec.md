@@ -18,6 +18,7 @@ FR-6.2, FR-6.3, FR-6.5, FR-8, NFR-1, NFR-2; delivery steps 4, 5, 6, 9, 10. Desig
 - Q: Q1: is the time source part of the bus's type or carried another way? → A: A fourth type parameter with a default (system clock under std): zero bytes for a stateless clock, no indirect call, works with an owned hardware timer.
 - Q: Q2: is autoscan available in no_std? → A: Yes, if possible; checked: it needs no allocation (broadcast ping, P1 sweep, model lookup, fixed-capacity list), so it is available.
 - Q: Q4: one combined torque/fault state or two flags? → A: One combined state (off / on / faulted) in one byte; flags cost padding and a low memory footprint is preferred.
+- Q: Where is the one-byte torque/fault state stored? → A: Not in the actuator structs (that adds padding): in a bus-owned array of one byte per slot, beside the actuator list.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -392,7 +393,8 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 **Torque and fault state**
 
 - **FR-024**: The bus MUST expose, per actuator, one combined state: torque off, torque on, or
-  faulted (faulted always means off). It is stored in one byte per actuator; no fault report
+  faulted (faulted always means off). It is stored in one byte per actuator, in a bus-owned
+  array beside the actuator list, never inside the actuator structs (no padding); no fault report
   is kept: the call that saw the fault returns it, and Hardware Error Status can be read
   again. This replaces SRS 3.3's two flags (deviation), for the smallest actuator footprint.
 - **FR-025**: Any reply that reports a hardware fault MUST mark that actuator faulted with

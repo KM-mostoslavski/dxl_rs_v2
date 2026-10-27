@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -34,10 +34,13 @@
 - The product is a library, so `Position`, `Id`, the `Actuator` trait, `no_std` and the
   microcontroller target are user-facing names and constraints from the SRS and constitution,
   not implementation choices. Same convention as specs 001 and 002.
-- Two [NEEDS CLARIFICATION] markers remain, for `/speckit-clarify`:
-  - FR-010: does the `Actuator` trait carry I/O operations, or only describe the model?
-  - FR-016: where Init failures go (inside `Validation`, a new `Setup` category, or top level).
+- No [NEEDS CLARIFICATION] markers remain. Resolved in Clarifications, session 2026-10-27:
+  - FR-010: the `Actuator` trait only describes the model; I/O lives on `ActuatorRef` in `bus`.
+  - FR-016: Init failures go in a new `Setup` category, which also takes `UnsupportedModel`
+    (breaking change, accepted during alpha).
+  - FR-008/FR-009: torque and fault state are one 1-byte state enum stored by `bus` beside the
+    actuator list, not in the actuator cache (deviation from SRS 3.3, noted in Assumptions).
 - Flagged for the architect (not markers, defaults taken in Assumptions): `Register` keeps
   address and size only (SRS 3.3 lists access, range, unit); AX `type_info` looks inconsistent
   (tables module); the trait extension needs a generated-code change (xtask sequencing).
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- All items pass; the spec is ready for `/speckit-plan`.

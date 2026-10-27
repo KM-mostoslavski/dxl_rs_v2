@@ -17,6 +17,8 @@ FR-3.7, FR-6.4, NFR-3, NFR-4; delivery steps 1 and 5. Paths: `src/lib.rs`, `src/
 ### Session 2026-10-27
 
 - Q: Does the `Actuator` trait carry the I/O operations or only describe the model? → A: It only describes the model (registers, scale, cache); I/O lives on `ActuatorRef` in the bus (single responsibility).
+- Q: Where do torque state and fault state live? → A: In one combined 1-byte state enum (torque off, torque on, faulted; faulted always means off), not in the actuator structs, to keep memory low (no padding). Core defines the enum and its rules; the bus stores one byte per actuator slot in its own array beside the actuator list. No fault report is kept per actuator. This replaces the two flags of SRS 3.3.
+- Q: Where do Init failures that are not transport, protocol or status errors go? → A: Option B: a new `Setup` category beside `Transport`, `Protocol`, `Status` and `Validation`. It holds more than `N` actuators found, a declared actuator missing, a declared actuator answering with another model, a target `Id` not on the bus, and `UnsupportedModel { model_number, feature }`, which moves from a top-level `Error` variant into `Setup` (breaking change, fine during alpha).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -62,31 +64,38 @@ recorded limits. No bus involved.
 ### User Story 2 - Write code once that works on any actuator model (Priority: P1)
 
 A developer writes a function that takes "any actuator" and uses what all models share: its
-`Id`, model number and name, its torque state and fault state, its position limits, and where
-its torque, goal position, present position and limit registers are. The same function works
-on an XM430, an AX-12A or a PRO model, and on the closed enum that holds any of them. Calls
-resolve at compile time.
+`Id`, model number and name, its position limits, and where its torque, goal position, present
+position and limit registers are. The same function works on an XM430, an AX-12A or a PRO
+model, and on the closed enum that holds any of them. Calls resolve at compile time.
+
+Torque and fault state are not part of the actuator. They are one small state value per
+actuator (torque off, torque on, or faulted), defined here with its rules and stored by the
+`bus` module beside the actuator list. This keeps each actuator small.
 
 **Why this priority**: FR-3.2 is Tier 1 of the API (SRS 4.2). The `bus` module's
 `ActuatorRef` and every multi-actuator op are generic over models through it. Without it each
 model needs its own code path.
 
 **Independent Test**: A generic test function, run over every compiled-in model, reads the
-common registers and position scale and checks them against the model's control table; it
-records limits and toggles cached torque and fault state, and checks the cache rules.
+common registers and position scale and checks them against the model's control table, and
+records limits in the cache. A separate test drives the state value through every change and
+checks its rules.
 
 **Acceptance Scenarios**:
 
 1. **Given** an XM430-W350 and an AX-12A, **When** the same generic function asks each for its
    goal position register, **Then** it gets address 116 (4 bytes) and address 30 (2 bytes).
-2. **Given** a freshly created actuator of any model, **When** its cache is read, **Then**
-   torque state is off, fault state is clear and limits are not yet known.
-3. **Given** an actuator with torque state on, **When** a fault is recorded, **Then** fault
-   state is set and torque state is off.
-4. **Given** an AX model, whose limits are the CW and CCW Angle Limit registers, **When** the
+2. **Given** a freshly created actuator of any model, **When** its cache is read, **Then** it
+   holds its `Id`, limits are not yet known, and it holds no torque or fault state.
+3. **Given** a new state value, **When** it is read, **Then** it is torque off.
+4. **Given** a state value of torque on, **When** a fault is recorded, **Then** it becomes
+   faulted in one step, and faulted counts as off.
+5. **Given** a state value of faulted, **When** torque on is requested, **Then** the change
+   is refused and the value stays faulted.
+6. **Given** an AX model, whose limits are the CW and CCW Angle Limit registers, **When** the
    generic function asks for the minimum and maximum position limit registers, **Then** it gets
    them under the same names as for an X-series model.
-5. **Given** the closed enum holding any model, **When** a common operation is called on it,
+7. **Given** the closed enum holding any model, **When** a common operation is called on it,
    **Then** it gives the same answer as the model inside it.
 
 ---
@@ -94,13 +103,14 @@ records limits and toggles cached torque and fault state, and checks the cache r
 ### User Story 3 - Handle every failure by its category (Priority: P2)
 
 A developer matches one error type from every fallible call. They first match the category
-(transport, protocol, status, validation, unsupported model), then the detail. Each message
+(transport, protocol, status, validation, setup), then the detail. Each message
 says which actuator it is about, when one is involved. The errors work the same in `no_std`
 and `std` builds.
 
 **Why this priority**: FR-6.4 is Decided. Most categories already exist (see Assumptions);
 the gap is the validation errors the `bus` module needs (`ActuatorIsOff`, out of limits, bad
-buffer) and a home for Init failures.
+buffer) and the new `Setup` category for Init failures, which also takes in the existing
+unsupported model error.
 
 **Independent Test**: Build each error, match it by category, compare it, copy it, and check
 its message text. No bus involved.
@@ -115,6 +125,10 @@ its message text. No bus involved.
    first and the detail second, and a new variant added later does not break their match.
 4. **Given** a `no_std` build, **When** an error is created and compared, **Then** it needs no
    allocation.
+5. **Given** a declared actuator 5 that does not answer at Init, **When** the error is shown,
+   **Then** it is in the setup category and the message names actuator 5.
+6. **Given** a model number the build does not support, **When** the error is matched,
+   **Then** it is found under the setup category, not at the top level.
 
 ---
 
@@ -153,9 +167,15 @@ check they come out unchanged and that out-of-limit ticks are refused.
   (see Assumptions).
 - Limits read from EEPROM with the minimum above the maximum: recording them fails with a
   validation error, so Init fails (FR-2.6).
-- A fault is recorded while torque state is already off: fault state is set; torque stays off.
-- Torque is set on in the cache while fault state is set: refused by the cache, so the
-  "faulted means torque off" rule cannot be broken from outside.
+- A fault is recorded while the state is already torque off: it becomes faulted, which is
+  still off.
+- A fault is recorded while the state is already faulted: it stays faulted.
+- Torque on is requested while the state is faulted: refused by the state rules, so the
+  "faulted means off" rule cannot be broken from outside.
+- A fault is cleared: faulted becomes torque off, never torque on. Clearing a state that is not
+  faulted changes nothing.
+- The status report that caused a fault is not kept: the call that saw it returns it in its
+  error, and Hardware Error Status can be read again.
 - A status packet carries an ID byte that is not a valid `Id` (corrupted): the protocol error
   keeps the raw byte (existing behaviour, kept).
 - `Id` 253 on Protocol 1 stays invalid (existing decision, kept).
@@ -192,12 +212,15 @@ check they come out unchanged and that out-of-limit ticks are refused.
 
 **Actuator cache**
 
-- **FR-008**: The module MUST provide the per-actuator cache record of SRS 3.3: `Id`, torque
-  state, fault state and limits. A new cache has torque state off, fault state clear and no
-  limits.
-- **FR-009**: Recording a fault MUST set torque state off in the same step. Setting torque
-  state on while fault state is set MUST be refused. Clearing fault state is a separate,
-  explicit step.
+- **FR-008**: The module MUST provide the per-actuator cache record, held in each actuator:
+  `Id` and limits. A new cache has no limits. The cache MUST NOT hold torque state or fault
+  state (deviation from SRS 3.3, see Assumptions).
+- **FR-009**: The module MUST provide one actuator state type, one byte in size, with three
+  states: torque off, torque on, faulted. Faulted always means off. A new state is torque off.
+  Recording a fault MUST give faulted in one step, from any state. Requesting torque on while
+  faulted MUST be refused. Clearing a fault is a separate, explicit step that gives torque off.
+  Core defines the type and its rules only; the `bus` module stores one state per actuator slot
+  in its own array beside the actuator list. No fault report is stored per actuator.
 
 **`Actuator` trait (FR-3.2, OQ-2)**
 
@@ -222,17 +245,18 @@ check they come out unchanged and that out-of-limit ticks are refused.
 **Errors (FR-6.4)**
 
 - **FR-014**: The crate MUST keep one error enum, matched by category first: `Transport`,
-  `Protocol`, `Status`, `Validation`, and `UnsupportedModel`.
+  `Protocol`, `Status`, `Validation`, and `Setup`.
 - **FR-015**: `Validation` MUST cover, besides the existing invalid `Id`: an actuator whose
-  torque state is off (`ActuatorIsOff`, naming the `Id`); a tick outside the limits (FR-006);
+  state is torque off or faulted (`ActuatorIsOff`, naming the `Id`); a tick outside the limits (FR-006);
   limits not yet known (FR-007); limits recorded with minimum above maximum (FR-005); a value
   that is not finite or does not fit its register (FR-003, FR-013); and a buffer whose length
   does not match the target count (both numbers given).
-- **FR-016**: Init failures that are neither transport, protocol nor status errors MUST each
-  have a typed error: more than `N` actuators found (FR-1.2), a declared actuator missing, a
-  declared actuator answering with another model (FR-2.5), and a target `Id` not on the bus.
-  [NEEDS CLARIFICATION: Where do these go? Options: inside `Validation`; a new `Setup` category
-  (adds to the FR-6.4 list); or top-level variants beside `UnsupportedModel`.]
+- **FR-016**: A new `Setup` category MUST hold every Init failure that is neither a transport,
+  protocol nor status error, each as a typed error: more than `N` actuators found (FR-1.2), a
+  declared actuator missing, a declared actuator answering with another model (FR-2.5), a
+  target `Id` not on the bus, and an unsupported model (`UnsupportedModel { model_number,
+  feature }`). `UnsupportedModel` moves from a top-level `Error` variant into `Setup`; this is
+  a breaking change, accepted during alpha.
 - **FR-017**: Every error MUST be copyable and comparable, need no allocation, display a
   message that names the actuator when one is involved, and be open to new variants without
   breaking a user's match.
@@ -254,12 +278,17 @@ check they come out unchanged and that out-of-limit ticks are refused.
   control table.
 - **Limits**: minimum and maximum position in raw ticks, read from EEPROM at Init. Unknown
   until recorded.
-- **Actuator cache**: per actuator, `Id`, torque state (on/off), fault state (set/clear) and
-  limits. Rule: fault set means torque off.
+- **Actuator cache**: per actuator, held in its model type: `Id` and limits. No torque or
+  fault state.
+- **Actuator state**: one byte per actuator: torque off, torque on, or faulted (faulted means
+  off). Starts torque off; a fault gives faulted in one step; torque on from faulted is refused.
+  Defined in core, stored by the `bus` module in an array beside the actuator list.
 - **`Actuator` trait**: what every model shares (identity, the four OQ-2 registers, position
   scale, cache).
 - **Register**: one control-table location: address and size, with byte encoding of a raw value.
-- **Error**: one enum by category; `Validation` holds every "rejected before sending" case.
+- **Error**: one enum by category (`Transport`, `Protocol`, `Status`, `Validation`, `Setup`);
+  `Validation` holds every "rejected before sending" case; `Setup` holds every Init failure
+  that is not transport, protocol or status, including unsupported model.
 
 ## Success Criteria *(mandatory)*
 
@@ -278,12 +307,15 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - **SC-006**: The `no_std` CI build passes with core compiled in; core contains zero dynamic
   dispatch and zero allocation.
 - **SC-007**: Core reaches at least 70 % line coverage without hardware.
+- **SC-008**: The actuator state type is exactly one byte, and the actuator cache record holds
+  no torque or fault field.
 
 ## Assumptions
 
 - **Already built (PR #3, on `dev`)**: `Id` (`0..=252`, const-checked, `TryFrom<u8>`);
-  `Error` with `Validation(ValidationError::InvalidId)` and
-  `UnsupportedModel { model_number, feature }`; the `Actuator` trait with `id`, `model_number`
+  `Error` with `Validation(ValidationError::InvalidId)` and a top-level
+  `UnsupportedModel { model_number, feature }` (this feature moves it into `Setup`, FR-016;
+  a breaking change, accepted during alpha); the `Actuator` trait with `id`, `model_number`
   and `name`, implemented by every generated model type and by `ActuatorKind`; and a
   crate-private `Register` with address and size, emitted by codegen as associated consts.
   The plan covers only the gaps against FR-001 to FR-020.
@@ -303,15 +335,19 @@ check they come out unchanged and that out-of-limit ticks are refused.
   (`min_radian: 0.0` with the zero at tick 512) looks inconsistent and needs that check.
 - **Other SI newtypes** (velocity, current, voltage, temperature) are out of scope until the
   trait grows past OQ-2. Degree helpers on `Position` are not added now.
-- **Torque and fault state** stay two fields as in SRS 3.3 (bool plus flag). The `TorqueState`
-  enum of the bus proposal (`specs/ideas/bus-proposal.md`, Q4) is not adopted here; if the
-  architect adopts it, the cache record changes in the `bus` spec.
-- **Fault state is a flag.** The status report that set it is returned in the error of the
-  call that saw it (FR-6.2); the cache does not store it.
+- **Deviation from SRS 3.3 (architect, 2026-10-27)**: SRS 3.3 puts torque state and fault
+  state as two flags in each actuator's cache. This spec replaces them with one combined
+  1-byte state (torque off, torque on, faulted) kept outside the actuator structs, because
+  flags inside each struct add padding and low memory use comes first. The `bus` module holds
+  the per-slot state array; SRS 3.3, FR-2.7 and FR-6.2 wording about "the cache" maps to that
+  array.
+- **No fault report is kept.** The status report that caused a fault is returned in the error
+  of the call that saw it (FR-6.2); Hardware Error Status can be read again. Neither the state
+  nor the cache stores it.
 - **Register** carries address and size only. SRS 3.3 also lists access, range and unit, but
   the RON tables hold no access field yet, and range and unit are carried by typed values and
   the position scale. This is a known gap against SRS 3.3, flagged for the architect.
-- **I/O stays in the `bus` module**: torque writes, goal writes, reads, fault detection
+- **I/O stays in the `bus` module**: the per-slot state array, torque writes, goal writes, reads, fault detection
   (FR-6.2), `clear_fault` and the "goal while off" guard (FR-3.4) use core types but are not
   built here. Whether the limit check applies in extended position or wheel mode (bus proposal
   R3) is decided there.
