@@ -50,7 +50,8 @@ parameter users must name, for no gain, because exactly one native type exists p
   calls `read` after `read_ready` is true, so `read` returns at once and the timeout never delays
   a reply; it bounds a read racing an empty buffer (FR-005).
 - `write` goes to the port, and a write that accepted nothing for a non-empty buffer becomes
-  `io::ErrorKind::WriteZero` (embedded-io forbids `Ok(0)`; R-9). `flush` is `tcdrain` on Unix,
+  `io::ErrorKind::TimedOut` (embedded-io forbids `Ok(0)`, and it is how Windows reports a write
+  timeout; R-9). `flush` is `tcdrain` on Unix,
   which blocks until the bytes have left the host UART buffer (US1 scenario 3).
 
 **Rationale**: serialport uses the one port timeout for more than reads: it bounds the wait for
@@ -64,7 +65,8 @@ writes and interrupted flushes into fake timeouts. The builder default of 0 ms f
 moment the OS buffer is full.
 
 **Already-open ports (FR-004)**: `From<NativePort>` keeps the user's settings, timeout included.
-The docs note that the timeout only matters for the race above.
+The docs note that this timeout bounds read races, the wait for the OS to accept written bytes
+and the Unix flush-retry window, so a few tens of milliseconds is a good value.
 
 ## R-4 Errors
 
@@ -77,8 +79,9 @@ The docs note that the timeout only matters for the race above.
   `From<serialport::Error> for io::Error`: `NoDevice` → `NotFound`, `InvalidInput` →
   `InvalidInput`, `Io(k)` → `k`.
 - `open()` returns `serialport::Result<SerialTransport>`. That error is typed (on Unix: a missing port is
-  `Io(NotFound)`, a busy port `NoDevice` from `EBUSY`, a rejected baud `InvalidInput`) and happens at startup, outside any bus call, so it is not wrapped in the
-  crate `Error` (US1 scenario 2).
+  `Io(NotFound)`, a busy port `NoDevice` from `EBUSY`; Linux drivers usually round an
+  unsupported baud instead of failing) and happens at startup, outside any bus call, so it is
+  not wrapped in the crate `Error` (US1 scenario 2).
 - The mock's error type is `embedded_io::ErrorKind` itself. It implements `embedded_io::Error`,
   is `Copy`, and needs no allocation.
 
@@ -166,7 +169,8 @@ An adversarial review of PR #6 (four reviewers, each batch checked by a skeptic)
 this branch fixed:
 
 - `SerialTransport::write` could hand `Ok(0)` to embedded-io (a Windows write timeout reports
-  that way), and `write_all` panics on it. It now maps to `WriteZero`, unit-tested through the
+  that way), and `write_all` panics on it. It now maps to `TimedOut` (the contract's timeout
+  kind), unit-tested through the
   private `accepted` helper.
 - The 1 ms port timeout also bounded writes and flush retries, and the docs said otherwise. Now
   50 ms, with docs on `PORT_TIMEOUT` and `From` saying what it bounds (R-3).
@@ -186,7 +190,16 @@ this branch fixed:
 - Duplicated `#[cfg(unix)]`/`#[cfg(windows)]` signatures now use the private `NativePort` alias.
 - New tests: open configures 8N1 without flow control; a busy port is `NoDevice`; a reply scripted
   after an exchange waits for the next send; `reply_at` needs both the send and the time.
-- `compile_fail` doctest pinned to `E0277`. MSRV corrected to 1.85 (edition 2024).
+- `compile_fail` doctest pinned to `E0277`. Stable rustdoc does not check error codes (only
+  nightly does), so on stable CI it still accepts any compile error; a trybuild UI test with the
+  `bus` module's compile-fail suite will pin it for real. MSRV corrected to 1.85 (edition 2024).
+
+A second adversarial pass over the fix commit confirmed all fixes and caught: a zero-byte write
+mapped to `WriteZero` instead of the contract's `TimedOut` (fixed), SC-005 still promising
+"bus timeout + 2 ms" against the 50 ms port timeout (revised), leftover `InvalidInput` baud
+claims in data-model/R-4 and the spec edge case (fixed), the `From` doc overstating what the
+timeout bounds for `flush` (reworded), and a `TTYPort` intra-doc link that breaks rustdoc on
+Windows (now plain text).
 
 Rejected by the skeptics (not changed): a silent mock `read` returning `Ok(0)` (only `read_ready`
 gated reads happen in the crate), a one-shot `fail_with` (the bus owns retries; can be added with

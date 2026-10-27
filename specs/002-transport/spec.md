@@ -125,8 +125,9 @@ contract fails to compile with an error naming the missing capability.
   automatic direction control): out of scope; the docs state that the transport must not echo.
 - The mock runs out of scripted capacity: the test fails loudly at setup, never inside the
   code under test.
-- The adapter is opened at a baud rate the OS or device does not support: a typed error at
-  open, not on the first exchange.
+- The adapter is opened at a baud rate the OS or device does not support: Linux drivers usually
+  round it instead of failing; any error the OS does report comes back as a typed error at open,
+  not on the first exchange (revised 2026-10-27, research R-9).
 
 ## Clarifications
 
@@ -207,8 +208,9 @@ contract fails to compile with an error naming the missing capability.
   read ends within the adapter's port timeout (50 ms), so the bus's reply timeout stays in charge.
   Measured on the NFR-5 reference host (revised 2026-10-27, see research R-9).
 - **SC-005**: No transport failure (missing port, unplugged device, OS timeout, partial write)
-  causes a panic or a wait longer than the bus timeout plus 2 ms, across a test that injects
-  each failure.
+  causes a panic or a wait longer than the larger of the bus timeout and the adapter's port
+  timeout (50 ms), plus 2 ms, across a test that injects each failure (revised 2026-10-27,
+  research R-9).
 - **SC-006**: The module reaches at least 70 % line coverage without real hardware.
 
 ## Assumptions

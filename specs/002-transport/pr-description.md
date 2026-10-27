@@ -15,8 +15,8 @@ tests and coverage without hardware. Spec: `specs/002-transport/spec.md`.
   wrapper needed. A type without `ReadReady` fails to compile (`compile_fail` doctest).
 - `SerialTransport::open(path, baud)` opens 8N1 with no flow control through
   `serialport::open_native()`, so the port is a concrete `TTYPort` or `COMPort`: no `dyn`, no
-  `Box`. `read_ready` is `bytes_to_read() > 0`. `write` maps an `Ok(0)` for a non-empty buffer to
-  `WriteZero`. The port timeout is 50 ms: it bounds write waits, flush retries and a read racing
+  `Box`. `read_ready` is `bytes_to_read() > 0`. `write` maps an `Ok(0)` for a non-empty buffer (how Windows
+  reports a write timeout) to `TimedOut`. The port timeout is 50 ms: it bounds write waits, flush retries and a read racing
   an empty buffer, never a reply, because the bus reads only after `read_ready`.
   `From<TTYPort | COMPort>` wraps a port the user opened, keeping its settings.
 - `embedded_io` and (under `std`) `serialport` are re-exported, so users need no version-matched
@@ -64,7 +64,10 @@ Follows docs/ARCHITECTURE.md and the SRS, with these deviations:
   the `Ok(0)` write panic path, the 1 ms timeout (now 50 ms), mock replies gating on the first
   send instead of the next, CI never building `mock`, unpublished module docs, missing
   re-exports, a noisy `Debug`, flaky sub-millisecond timing tests, and a wrong baud-error doc.
-  Details in `specs/002-transport/research.md` R-9 and tasks T029–T037.
+  A second adversarial pass verified every fix and caught five leftovers, also fixed (T038).
+  Details in `specs/002-transport/research.md` R-9 and tasks T029–T038.
+- **Known limit**: the `compile_fail,E0277` pin is only enforced by nightly rustdoc; stable CI
+  accepts any compile error there. The bus module's trybuild suite will pin it.
 
 ## Checklist
 - [x] `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass (also with `--features mock`); `cargo doc` with `-D warnings` passes with and without default features

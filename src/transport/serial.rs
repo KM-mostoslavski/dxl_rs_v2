@@ -69,7 +69,7 @@ impl SerialTransport {
             .map(Self::from)
     }
 
-    /// The underlying OS port ([`serialport::TTYPort`] on Unix,
+    /// The underlying OS port (`serialport::TTYPort` on Unix,
     /// `serialport::COMPort` on Windows), for settings this type does not
     /// cover.
     pub fn port_mut(&mut self) -> &mut NativePort {
@@ -83,20 +83,22 @@ impl SerialTransport {
 }
 
 /// Wraps a port the caller already opened, keeping its settings. Its timeout
-/// bounds write and flush waits as well as read races, so a few tens of
-/// milliseconds is a good value.
+/// bounds a read that races an empty buffer, the wait for the OS to accept
+/// written bytes and, on Unix, the retry window of an interrupted flush, so a
+/// few tens of milliseconds is a good value.
 impl From<NativePort> for SerialTransport {
     fn from(port: NativePort) -> Self {
         Self { port }
     }
 }
 
-/// Maps a write that accepted nothing to [`io::ErrorKind::WriteZero`]:
-/// `embedded-io` forbids `Ok(0)` for a non-empty buffer, and its `write_all`
-/// panics on it. A Windows port reports a write timeout that way.
+/// Maps a write that accepted nothing to [`io::ErrorKind::TimedOut`]: a
+/// Windows port reports a write timeout as `Ok(0)`, which `embedded-io`
+/// forbids for a non-empty buffer (its `write_all` panics on it), and the
+/// transport contract reports timeouts as `TimedOut`.
 fn accepted(written: usize, buf: &[u8]) -> io::Result<usize> {
     if written == 0 && !buf.is_empty() {
-        Err(io::ErrorKind::WriteZero.into())
+        Err(io::ErrorKind::TimedOut.into())
     } else {
         Ok(written)
     }
@@ -133,10 +135,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn accepting_nothing_is_write_zero() {
+    fn accepting_nothing_is_a_timeout() {
         assert_eq!(
             accepted(0, &[1]).unwrap_err().kind(),
-            io::ErrorKind::WriteZero
+            io::ErrorKind::TimedOut
         );
         assert_eq!(accepted(0, &[]).unwrap(), 0);
         assert_eq!(accepted(2, &[1, 2, 3]).unwrap(), 2);
