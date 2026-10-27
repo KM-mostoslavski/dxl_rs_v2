@@ -44,10 +44,7 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
                 units = component "Typed values" "Id (0..=252), Position and SI newtypes with ranges; raw access kept." "Rust newtypes" {
                     tags "Core"
                 }
-                protocol = component "Protocol P1 | P2" "Packet encode/decode, checksum/CRC, status replies; RX cleared before TX, broadcast never waits." "Rust, compile-time generic" {
-                    tags "Core"
-                }
-                transport = component "Transport" "Raw byte I/O over T: Read + Write; serialport std adapter by default." "embedded-io (blocking)" {
+                transport = component "Transport" "Raw byte I/O over T: Read + Write + ReadReady; serialport std adapter by default." "embedded-io 0.7 (blocking)" {
                     tags "Core"
                 }
                 errors = component "Errors" "Transport / protocol / status packet / validation, ActuatorIsOff, UnsupportedModel." "thiserror (no_std)" {
@@ -70,6 +67,12 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         actuators = softwareSystem "Dynamixel actuators" "Half-duplex TTL / RS-485 bus, Protocol 1 or 2 firmware." "Dynamixel hardware" {
             tags "External"
         }
+        emanual = softwareSystem "ROBOTIS e-Manual" "Official Dynamixel docs (emanual.robotis.com); the only accepted source for control tables and capabilities." "Website" {
+            tags "External"
+        }
+        ci = softwareSystem "GitHub Actions CI" "Builds and tests the workspace, no_std check, coverage gate, codegen diff check." "GitHub Actions" {
+            tags "External"
+        }
 
         # Container-level relationships
         app -> dxl.lib "Scans, reads and writes actuators via" "Rust API"
@@ -77,8 +80,11 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         maintainer -> dxl.tables "Edits"
         dxl.xtask -> dxl.tables "Parses" "serde + ron"
         dxl.xtask -> dxl.lib "Writes generated model sources into" ".rs files, committed"
-        dxl.lib -> port "Sends and receives bytes via" "embedded-io Read + Write"
+        dxl.lib -> port "Sends and receives bytes via" "embedded-io Read + Write + ReadReady"
         port -> actuators "Drives" "half-duplex TTL / RS-485"
+        maintainer -> emanual "Verifies every table entry against" "HTTPS, online lookup"
+        ci -> dxl.lib "Builds, tests and measures coverage of" "cargo test / clippy / llvm-cov"
+        ci -> dxl.xtask "Reruns codegen and fails on diff" "cargo xtask codegen"
 
         # Component-level relationships
         app -> dxl.lib.bus "Creates, configures and autoscans" "Rust API"
@@ -88,21 +94,14 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         dxl.lib.bus -> dxl.lib.kind "Owns actuators as"
         dxl.lib.bus -> dxl.lib.handle "Lends"
         dxl.lib.bus -> dxl.lib.scan "Builds its actuator list with"
-        dxl.lib.bus -> dxl.lib.protocol "Is generic over" "P: Protocol"
-        dxl.lib.bus -> dxl.lib.transport "Is generic over" "T: Read + Write"
+        dxl.lib.bus -> dxl.lib.transport "Is generic over" "T: Read + Write + ReadReady"
         dxl.lib.handle -> dxl.lib.kind "Dispatches to"
-        dxl.lib.handle -> dxl.lib.protocol "Sends unicast instructions via"
         dxl.lib.handle -> dxl.lib.units "Takes and returns"
         dxl.lib.multi -> dxl.lib.models "Reads register addresses from"
-        dxl.lib.multi -> dxl.lib.protocol "Encodes sync/bulk instructions via"
         dxl.lib.multi -> dxl.lib.units "Takes and returns"
-        dxl.lib.scan -> dxl.lib.protocol "Pings via"
         dxl.lib.scan -> dxl.lib.kind "Instantiates by model number"
         dxl.lib.scan -> dxl.lib.errors "Fails with UnsupportedModel"
         dxl.lib.kind -> dxl.lib.models "Wraps one variant per"
-        dxl.lib.protocol -> dxl.lib.transport "Writes and reads packets via"
-        dxl.lib.protocol -> dxl.lib.fault "Hands status error byte to"
-        dxl.lib.protocol -> dxl.lib.errors "Reports protocol / status errors as"
         dxl.lib.fault -> dxl.lib.kind "Marks actuator faulted in"
         dxl.lib.fault -> dxl.lib.errors "Raises hardware error as"
         dxl.lib.handle -> dxl.lib.errors "Returns ActuatorIsOff / validation as"
@@ -110,17 +109,30 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         dxl.lib.transport -> port "Reads and writes bytes on" "embedded-io / serialport"
         dxl.xtask -> dxl.lib.models "Generates"
         dxl.xtask -> dxl.lib.kind "Generates"
+
+        // C3/C4 per module (docs/c4/<module>.dsl)
+        // ov:includes:begin
+        !include c4/bus.dsl
+        !include c4/ci.dsl
+        !include c4/core.dsl
+        !include c4/protocol.dsl
+        !include c4/tables.dsl
+        !include c4/transport.dsl
+        !include c4/xtask.dsl
+        // ov:includes:end
     }
 
     views {
+        systemContext dxl "SystemContext" "dxl_rs_v2 and the people and systems around it." {
+            include *
+        }
+
         container dxl "Containers" "dxl_rs_v2 containers and their environment." {
             include * actuators
-            autoLayout lr
         }
 
         component dxl.lib "LibraryComponents" "Layers of the dxl_rs_v2 library crate." {
             include *
-            autoLayout tb
         }
 
         styles {
