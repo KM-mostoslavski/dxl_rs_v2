@@ -11,6 +11,13 @@
 FR-7.3, FR-7.5, NFR-7, NFR-8, and the generated side of FR-2.3 and FR-3.2. Delivery step 3.
 No-go: any hand-written file under `src/` other than the `pub mod models;` line in `src/lib.rs`.
 
+## Clarifications
+
+### Session 2026-10-27
+
+- Q: Do the generated `Actuator` impls perform wire operations or only supply per-model data? → A: Only per-model data; I/O is the bus's job (single responsibility).
+- Q: A mapped table lacks protocol-support data: fail or generate as "protocols unknown"? → A: Codegen fails and names the table; it is a priority issue for the table maintainers.
+
 ## User Scenarios & Testing *(mandatory)*
 
 The "users" of this module are the crate maintainer, who adds and fixes actuator models, and
@@ -234,9 +241,8 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   module declares, and `ActuatorKind` MUST implement the trait by delegating with `match`
   (FR-3.2). The scope of those impls follows SRS OQ-2 meanwhile: torque, goal position,
   present position and limits, plus today's `id`, `model_number` and `name`.
-  [NEEDS CLARIFICATION: Do the generated `Actuator` impls perform the wire operations
-  themselves (torque, goal, present position, limits, given a bus link), or only supply
-  per-model data (registers, scale, cache) that the bus uses for I/O?]
+  The generated impls only supply per-model data (registers, scale, cache); they perform no
+  I/O, which the bus does through `ActuatorRef` (single responsibility).
 - **FR-011**: Each model type MUST expose, as compile-time data, the registers that serve the
   common operations: Torque Enable, Goal Position, Present Position; the position limits in
   min/max or CW/CCW form, with the form named; and the hardware-fault register or "none".
@@ -244,9 +250,9 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   address.
 - **FR-012**: Each model type MUST expose the protocols it supports (P1, P2 or both), taken
   only from explicit control-table data, never inferred from registers or family.
-  [NEEDS CLARIFICATION: When a mapped table lacks protocol-support data, should codegen fail
-  (this feature then waits for a tables PR verifying all 69 tables against the e-Manual), or
-  generate the model as "protocols unknown" so Setup rejects it with an error?]
+  When a mapped table lacks protocol-support data, codegen MUST fail and name the table: the
+  gap is for the table maintainers to fix first, so this feature depends on a tables PR that
+  records the protocol of every mapped table (not on full e-Manual verification).
 - **FR-013**: Each model type MUST expose its position scale (zero, minimum and maximum raw
   values and radians) from the table's `type_info`.
 - **FR-014**: Generated code MUST allocate nothing, use no `dyn`, and contain no panic path

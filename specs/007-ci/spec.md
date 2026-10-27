@@ -11,6 +11,13 @@
 diff check; delivery step 5. Paths: `.github/workflows/**`, `Cargo.toml`. No-go: `src/**`,
 `control_tables/**`, and every path in `.aiignore` (including `.github/workflows/ov-*.yml`).
 
+## Clarifications
+
+### Session 2026-10-27
+
+- Q: Also link a minimal firmware binary in the no_std check? → A: No, building the library is enough; linking a firmware binary is a TODO for later.
+- Q: Declare and enforce a minimum supported Rust version? → A: No hard requirement for now; use the current toolchain on the maintainer's machine (rustc 1.97.1). User Story 6 deferred.
+
 ## User Scenarios & Testing *(mandatory)*
 
 CI already runs most of the constitution's gates (see Assumptions). This feature closes the gaps
@@ -43,8 +50,8 @@ is the binding constraint. A lint-only check is weaker than the stated promise.
    `alloc` features, **When** CI runs, **Then** the no_std build fails and names the item.
 3. **Given** the `alloc` feature on and `std` off, **When** CI runs, **Then** the build for the
    microcontroller target passes.
-4. **Given** FR-003 is in scope and a minimal firmware program calls the crate's public API,
-   **When** CI runs, **Then** that program links for the microcontroller target.
+4. *(TODO, later feature)* **Given** a minimal firmware program that calls the crate's public
+   API, **When** CI runs, **Then** that program links for the microcontroller target.
 
 ---
 
@@ -145,7 +152,9 @@ code; only the Windows check turns red.
 
 ---
 
-### User Story 6 - The oldest supported Rust version is stated and checked (Priority: P3)
+### User Story 6 - The oldest supported Rust version is stated and checked (Deferred)
+
+*Deferred on 2026-10-27: no hard Rust version requirement for now (FR-010).*
 
 A user on an older stable toolchain reads the crate's minimum Rust version from its metadata and
 can trust that CI built the crate with it. Today the minimum (1.85, the edition 2024 floor)
@@ -198,10 +207,8 @@ declared minimum; the minimum-version check turns red.
   features off and nothing else enabled, with `alloc` alone, and with every model family plus
   `mock`. A build without `std` and `alloc` MUST fail if any reachable code allocates (NFR-1,
   constitution I).
-- **FR-003**: The no_std check MUST [NEEDS CLARIFICATION: also link a minimal firmware binary
-  that calls the public API on `thumbv7em-none-eabihf`? This needs a small test program outside
-  this module's paths (`.github/workflows/**`, `Cargo.toml`). Default if unanswered: library
-  build only (FR-002).]
+- **FR-003**: The no_std check builds the library only (FR-002). TODO for a later feature:
+  link a minimal firmware binary that calls the public API on `thumbv7em-none-eabihf`.
 - **FR-004**: CI MUST build the crate with no optional feature, with each feature declared in
   `Cargo.toml` alone, with the defaults, and with all features. Features that need `std` are
   built on the host; all others also on the microcontroller target. A newly declared feature
@@ -216,9 +223,10 @@ declared minimum; the minimum-version check turns red.
   deliberate commit.
 - **FR-009**: CI MUST build the crate with default features and run every test that needs no
   serial device on Linux, Windows and macOS (SRS 4.3).
-- **FR-010**: The crate MUST [NEEDS CLARIFICATION: declare and enforce a minimum supported Rust
-  version (1.85, the edition 2024 floor) in `Cargo.toml` and a CI job, or support latest stable
-  only until 1.0? Default if unanswered: latest stable only; User Story 6 is dropped.]
+- **FR-010**: The crate declares no minimum supported Rust version for now and CI builds with
+  latest stable. Development uses the maintainer's current toolchain (rustc 1.97.1 on
+  2026-10-27). User Story 6 is deferred; spec notes claiming an MSRV of 1.85 are not a
+  requirement.
 - **FR-011**: Workflows MUST run with read-only repository permissions and no secrets, so fork
   PRs get the same checks. No PR-controlled code may run on a self-hosted runner.
 - **FR-012**: A newer push to the same PR MUST cancel the older, still-running CI run.

@@ -12,6 +12,12 @@ FR-3.7, FR-6.4, NFR-3, NFR-4; delivery steps 1 and 5. Paths: `src/lib.rs`, `src/
 `src/error.rs`, `src/actuator.rs`, `src/register.rs`, `src/units.rs`, `src/units/**`. No-go:
 `src/models.rs`, `src/models/**` unless a task names them.
 
+## Clarifications
+
+### Session 2026-10-27
+
+- Q: Does the `Actuator` trait carry the I/O operations or only describe the model? → A: It only describes the model (registers, scale, cache); I/O lives on `ActuatorRef` in the bus (single responsibility).
+
 ## User Scenarios & Testing *(mandatory)*
 
 The "users" of this module are robot application developers and embedded firmware developers
@@ -199,10 +205,9 @@ check they come out unchanged and that out-of-limit ticks are refused.
   (existing); the locations of the Torque Enable, Goal Position, Present Position, and minimum
   and maximum position limit registers; the position scale; and read and write access to the
   cache. Models whose limit registers have other names (AX/MX CW and CCW Angle Limit) map them
-  to minimum and maximum. [NEEDS CLARIFICATION: Does the `Actuator` trait itself carry the I/O
-  operations (enable/disable torque, set goal position, read present position) by taking a
-  borrowed link to the bus, or does it only describe the model (registers, scale, cache) while
-  those operations live on `ActuatorRef` in the `bus` module?]
+  to minimum and maximum. The trait only describes the model (registers, scale, cache); it
+  performs no I/O. Enabling torque, setting a goal and reading a position live on `ActuatorRef`
+  in the `bus` module (single responsibility).
 - **FR-011**: The closed `ActuatorKind` enum MUST implement the trait by `match` over its
   variants. No dynamic dispatch, and no runtime lookup from `Id` or model number to a register
   address (NFR-4). The generated model types implement the trait through `cargo xtask`.
