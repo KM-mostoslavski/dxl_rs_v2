@@ -11,7 +11,7 @@ Build the `transport` module. It has three parts:
 - **Contract**: a public `Transport` trait, `embedded_io` `Read + Write + ReadReady`, with a
   blanket impl, so any HAL UART works unwrapped.
 - **Std adapter**: `SerialTransport` over serialport's native port type, with no `dyn`. It opens
-  by path and baud (8N1, 1 ms poll bound) or wraps an already-open port, and its "input pending"
+  by path and baud (8N1, 50 ms port timeout) or wraps an already-open port, and its "input pending"
   check is `bytes_to_read`.
 - **Mock**: allocation-free, public behind an opt-in `mock` feature. Bytes come in by script,
   outgoing bytes are recorded, timing is gated on flushes plus a shared `MockTime`, failures and
@@ -21,7 +21,7 @@ Timeouts stay with the bus. The transport has no clock and no retries.
 
 ## Technical Context
 
-**Language/Version**: Rust stable, edition 2024. MSRV ≥ 1.81 (`embedded-io` 0.7).
+**Language/Version**: Rust stable, edition 2024. MSRV ≥ 1.85 (edition 2024).
 
 **Primary Dependencies**: `embedded-io` 0.7 (no default features; `std` forwards
 `embedded-io/std`). `serialport` 4.9 (existing, optional, `std` only; `open_native`, `TTYPort` /
@@ -42,8 +42,8 @@ mock, no heap).
 
 **Project Type**: library crate (workspace with `xtask/`).
 
-**Performance Goals**: with nothing arriving, `read_ready` returns in < 1 ms and `read` in
-< 2 ms (SC-004). The mock does constant work per call, with no allocation.
+**Performance Goals**: `read_ready` never waits; a read on an idle line ends within the 50 ms
+port timeout and never delays a reply, because the bus reads only after `read_ready` (SC-004). The mock does constant work per call, with no allocation.
 
 **Constraints**: no `dyn`, no allocation outside `std`, no panic on any I/O outcome, no retries,
 no clock in the transport. Module paths are `src/transport.rs` and `src/transport/**` only, plus

@@ -17,9 +17,16 @@ mod register;
 mod transport;
 
 pub use actuator::Actuator;
+/// The `embedded-io` crate this one builds on, so users can implement and
+/// call [`Transport`] without a version-matched dependency of their own.
+pub use embedded_io;
 pub use error::{Error, ValidationError};
 pub use id::Id;
 pub use models::ActuatorKind;
+/// The `serialport` crate behind [`SerialTransport`], for its port and error
+/// types.
+#[cfg(feature = "std")]
+pub use serialport;
 #[cfg(feature = "std")]
 pub use transport::SerialTransport;
 pub use transport::Transport;

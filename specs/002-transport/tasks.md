@@ -145,6 +145,22 @@ its own.
 
 ---
 
+## Phase 7: Review fixes (2026-10-27)
+
+**Purpose**: Apply the findings an adversarial review of PR #6 confirmed (research R-9)
+
+- [X] T029 Map `Ok(0)` from a non-empty write to `WriteZero` in src/transport/serial.rs (private `accepted` helper + unit test)
+- [X] T030 Raise the port timeout to 50 ms (`PORT_TIMEOUT`) and document what it bounds in src/transport/serial.rs; drop the unverified `InvalidInput` baud claim
+- [X] T031 Use the private `NativePort` alias in `port_mut`, `into_inner` and `From` in src/transport/serial.rs (no duplicated cfg signatures)
+- [X] T032 Replace wall-clock < 1 ms / < 2 ms asserts with 500 ms hang bounds; add open-settings and busy-port tests in src/transport/serial.rs
+- [X] T033 Gate `reply`/`reply_at` on the next send after scripting; compact `Debug`; tests for both and for `reply_at` needing send and time in src/transport/mock.rs
+- [X] T034 Move the user guide (bring your own UART, half-duplex, no echo) onto the `Transport` trait docs; pin the `compile_fail` doctest to `E0277` in src/transport.rs
+- [X] T035 Re-export `embedded_io` (always) and `serialport` (std) from src/lib.rs; doc examples use the re-exports
+- [X] T036 Build the `mock` feature in CI: clippy and doc tests in the check job, `mock` in the no_std job (.github/workflows/ci.yml, cross-module: ci)
+- [X] T037 Update research (R-3, R-9), plan, spec SC-004, data-model, contract and quickstart; correct the MSRV to 1.85
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

@@ -15,28 +15,36 @@ tests and coverage without hardware. Spec: `specs/002-transport/spec.md`.
   wrapper needed. A type without `ReadReady` fails to compile (`compile_fail` doctest).
 - `SerialTransport::open(path, baud)` opens 8N1 with no flow control through
   `serialport::open_native()`, so the port is a concrete `TTYPort` or `COMPort`: no `dyn`, no
-  `Box`. `read_ready` is `bytes_to_read() > 0`. The port timeout is 1 ms and only bounds a read
-  racing an empty buffer; the bus enforces the real timeouts. `From<TTYPort | COMPort>` wraps a
-  port the user opened, keeping its settings.
+  `Box`. `read_ready` is `bytes_to_read() > 0`. `write` maps an `Ok(0)` for a non-empty buffer to
+  `WriteZero`. The port timeout is 50 ms: it bounds write waits, flush retries and a read racing
+  an empty buffer, never a reply, because the bus reads only after `read_ready`.
+  `From<TTYPort | COMPort>` wraps a port the user opened, keeping its settings.
+- `embedded_io` and (under `std`) `serialport` are re-exported, so users need no version-matched
+  dependency of their own.
 - `MockTransport` replays scripted incoming chunks and records sent bytes in fixed arrays
   (const-generic capacities, defaults 4096/4096/32).
-  - Chunk kinds: stale bytes, replies after the n-th flush, replies at a `MockTime` instant.
+  - Chunk kinds: stale bytes, replies to the next send (optionally at a `MockTime` instant),
+    replies to the n-th send overall.
   - Failure injection: an error kind, or end of stream.
   - After the call: `check_sent` reports the first mismatching offset; `assert_sent` and
     `assert_done` panic with readable messages.
   - Writing past capacity returns `ErrorKind::WriteZero`, as embedded-io 0.7 requires (its
     `write_all` panics on `Ok(0)`).
-- Tests: a Unix pseudo-terminal pair checks bytes crossing the link, readiness, an idle read
-  timing out in under 2 ms, `read_ready` under 1 ms, a missing port (`Io(NotFound)`), a closed
-  peer (an error, not a hang), and settings kept by `From`. The mock is unit-tested per behaviour.
+- Tests: a Unix pseudo-terminal pair checks bytes crossing the link, readiness, `open` setting
+  8N1 with no flow control, a busy port (`NoDevice`), a missing port (`Io(NotFound)`), an idle
+  read timing out, a closed peer (an error, not a hang) and settings kept by `From`. Timing
+  asserts only catch hangs (500 ms margin), so they hold on shared CI runners. The mock is
+  unit-tested per behaviour.
 
 ## Architecture
 Follows docs/ARCHITECTURE.md and the SRS, with these deviations:
 - **Transport bound is `Read + Write + ReadReady`**, with the bus holding the `Clock`. This matches
   SRS 3.3, 4.4, §7 and FR-1.1, constitution 1.1.0 and docs/ARCHITECTURE.md, all amended
   2026-10-26 (the ARCHITECTURE.md change is in this PR).
-- **Cross-module edits**: `src/lib.rs` (core: `mod transport` and re-exports) and `Cargo.toml`
-  (ci: `embedded-io` 0.7, `std` → `embedded-io/std`, new `mock` feature).
+- **Cross-module edits**: `src/lib.rs` (core: `mod transport` and re-exports), `Cargo.toml`
+  (ci: `embedded-io` 0.7, `std` → `embedded-io/std`, new `mock` feature) and
+  `.github/workflows/ci.yml` (ci: clippy and doc tests with `mock`, `mock` in the no_std job, so
+  the public mock and its no-alloc proof are actually built in CI).
 - **Panics in the public mock**: scripting past capacity, `assert_sent` and `assert_done`
   panic by design (`#[track_caller]`, documented). `read`, `write`, `flush` and `read_ready`
   never panic.
@@ -52,9 +60,14 @@ Follows docs/ARCHITECTURE.md and the SRS, with these deviations:
   and its worktree `../dxl_rs_v2-transport` can be deleted.
 - Corrected during implementation: on Unix, `serialport` reports a missing port as `Io(NotFound)`;
   `NoDevice` means a busy port (`EBUSY`).
+- **Review round (2026-10-27)**: an adversarial multi-agent review confirmed and this PR fixed:
+  the `Ok(0)` write panic path, the 1 ms timeout (now 50 ms), mock replies gating on the first
+  send instead of the next, CI never building `mock`, unpublished module docs, missing
+  re-exports, a noisy `Debug`, flaky sub-millisecond timing tests, and a wrong baud-error doc.
+  Details in `specs/002-transport/research.md` R-9 and tasks T029–T037.
 
 ## Checklist
-- [x] `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass (also with `--features mock`)
+- [x] `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass (also with `--features mock`); `cargo doc` with `-D warnings` passes with and without default features
 - [x] `cargo test` passes; line coverage ≥ 70 % (`cargo llvm-cov`): transport files 85–99 %
 - [x] `no_std` build passes (`--no-default-features --features ax,mx,x-series,y-series,pro,mock --target thumbv7em-none-eabihf`)
 - [x] `cargo xtask codegen` leaves `src/models.rs` and `src/models/` unchanged

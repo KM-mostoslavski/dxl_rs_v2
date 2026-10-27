@@ -63,7 +63,8 @@ impl MockTime {
 enum Gate {
     /// From the start: bytes left on the line by earlier traffic.
     Always,
-    /// Once `flushes` packets have been sent and the time reaches `at`.
+    /// Once the `flushes`-th packet overall has been sent and the time
+    /// reaches `at`.
     AfterTx { flushes: usize, at: u64 },
 }
 
@@ -73,11 +74,13 @@ enum Gate {
 ///
 /// Incoming chunks open strictly in script order: a chunk that is not
 /// readable yet hides every chunk after it. A line with nothing scripted
-/// stays silent.
+/// stays silent. [`reply`](Self::reply) and [`reply_at`](Self::reply_at)
+/// wait for the next packet sent after they are scripted, so a test can
+/// script each reply right before the exchange that should get it.
 ///
 /// ```
 /// use dxl_rs_v2::{MockTime, MockTransport};
-/// use embedded_io::{Read, ReadReady, Write};
+/// use dxl_rs_v2::embedded_io::{Read, ReadReady, Write};
 ///
 /// let time = MockTime::new();
 /// let mut line = MockTransport::new(&time);
@@ -93,7 +96,6 @@ enum Gate {
 /// line.assert_sent(&[1, 2, 3]);
 /// line.assert_done();
 /// ```
-#[derive(Debug)]
 pub struct MockTransport<
     't,
     const RX: usize = 4096,
@@ -171,7 +173,7 @@ impl<'t, const RX: usize, const TX: usize, const CHUNKS: usize> MockTransport<'t
         self.push(bytes, Gate::Always)
     }
 
-    /// Bytes that arrive once the first packet has been sent (flushed).
+    /// Bytes that arrive once the next packet has been sent (flushed).
     ///
     /// # Panics
     ///
@@ -181,7 +183,7 @@ impl<'t, const RX: usize, const TX: usize, const CHUNKS: usize> MockTransport<'t
         self.reply_at(0, bytes)
     }
 
-    /// Bytes that arrive once the first packet has been sent and the time
+    /// Bytes that arrive once the next packet has been sent and the time
     /// reaches `at_us`.
     ///
     /// # Panics
@@ -192,14 +194,14 @@ impl<'t, const RX: usize, const TX: usize, const CHUNKS: usize> MockTransport<'t
         self.push(
             bytes,
             Gate::AfterTx {
-                flushes: 1,
+                flushes: self.flushes + 1,
                 at: at_us,
             },
         )
     }
 
-    /// Bytes that arrive once the `nth_flush`-th packet has been sent, to
-    /// script several exchanges in a row.
+    /// Bytes that arrive once the `nth_flush`-th packet since the mock was
+    /// created has been sent, to script several exchanges up front.
     ///
     /// # Panics
     ///
@@ -324,6 +326,26 @@ impl<'t, const RX: usize, const TX: usize, const CHUNKS: usize> MockTransport<'t
 
     fn check(&self) -> Result<(), ErrorKind> {
         self.fail.map_or(Ok(()), Err)
+    }
+}
+
+/// Shows counters and the bytes sent, not the raw buffers, so a failing
+/// assertion on a value holding the mock stays readable.
+impl<const RX: usize, const TX: usize, const CHUNKS: usize> fmt::Debug
+    for MockTransport<'_, RX, TX, CHUNKS>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MockTransport")
+            .field("now", &self.time.now())
+            .field("sent", &self.sent())
+            .field("unread", &self.unread())
+            .field("chunks", &self.n_chunks)
+            .field("reads", &self.reads)
+            .field("writes", &self.writes)
+            .field("flushes", &self.flushes)
+            .field("fail", &self.fail)
+            .field("eof", &self.eof)
+            .finish()
     }
 }
 
@@ -454,6 +476,41 @@ mod tests {
         assert_eq!(line.read_ready(), Ok(false));
         time.set(50);
         assert_eq!(line.read_ready(), Ok(true));
+    }
+
+    #[test]
+    fn reply_waits_for_the_send_after_it_was_scripted() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        line.reply(&[1]);
+        send(&mut line, &[0]);
+        assert_eq!(read_all(&mut line).1, 1);
+        line.reply(&[2]);
+        assert_eq!(line.read_ready(), Ok(false));
+        send(&mut line, &[0]);
+        let (buf, n) = read_all(&mut line);
+        assert_eq!(&buf[..n], &[2]);
+    }
+
+    #[test]
+    fn reply_at_needs_both_send_and_time() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        line.reply_at(50, &[1]);
+        time.set(50);
+        assert_eq!(line.read_ready(), Ok(false));
+        send(&mut line, &[0]);
+        assert_eq!(line.read_ready(), Ok(true));
+    }
+
+    #[test]
+    fn debug_is_compact() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        line.write_all(&[0xAB]).unwrap();
+        let text = std::format!("{line:?}");
+        assert!(text.starts_with("MockTransport { now: 0, sent: [171]"));
+        assert!(text.len() < 200);
     }
 
     #[test]

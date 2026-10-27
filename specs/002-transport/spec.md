@@ -203,8 +203,9 @@ contract fails to compile with an error naming the missing capability.
   compiled in, and every mock-based test records zero allocations.
 - **SC-003**: Every scripted mock behaviour of FR-008 is exercised by at least one test, and a
   wrong outgoing byte is reported with its offset 100 % of the time.
-- **SC-004**: With nothing arriving, the std adapter's "input pending" check returns in under
-  1 ms and a read returns within 2 ms, measured on the NFR-5 reference host.
+- **SC-004**: With nothing arriving, the std adapter's "input pending" check never waits, and a
+  read ends within the adapter's port timeout (50 ms), so the bus's reply timeout stays in charge.
+  Measured on the NFR-5 reference host (revised 2026-10-27, see research R-9).
 - **SC-005**: No transport failure (missing port, unplugged device, OS timeout, partial write)
   causes a panic or a wait longer than the bus timeout plus 2 ms, across a test that injects
   each failure.

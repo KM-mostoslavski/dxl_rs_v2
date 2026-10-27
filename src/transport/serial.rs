@@ -12,9 +12,12 @@ type NativePort = serialport::TTYPort;
 #[cfg(windows)]
 type NativePort = serialport::COMPort;
 
-/// How long a read may wait when no byte is pending. The bus only reads
-/// after the port reports pending input, so this only bounds a race.
-const POLL: Duration = Duration::from_millis(1);
+/// The port timeout `open` sets. It bounds a read that races an empty
+/// buffer, the wait for the OS to accept written bytes (the whole write on
+/// Windows), and on Unix the retry window of a `flush` interrupted by a
+/// signal. Reply timeouts are the bus's job: the bus reads only after
+/// `read_ready`, so this never delays a reply.
+const PORT_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// A serial port (a U2D2 or any USB-TTL / RS-485 adapter) used as a
 /// [`Transport`](crate::Transport).
@@ -23,7 +26,7 @@ const POLL: Duration = Duration::from_millis(1);
 /// use dxl_rs_v2::SerialTransport;
 ///
 /// let mut port = SerialTransport::open("/dev/ttyUSB0", 1_000_000)?;
-/// # Ok::<(), serialport::Error>(())
+/// # Ok::<(), dxl_rs_v2::serialport::Error>(())
 /// ```
 ///
 /// # Latency
@@ -44,68 +47,58 @@ pub struct SerialTransport {
 
 impl SerialTransport {
     /// Opens `path` (e.g. `/dev/ttyUSB0`, `COM3`) at `baud_rate`: 8 data
-    /// bits, no parity, 1 stop bit, no flow control.
+    /// bits, no parity, 1 stop bit, no flow control, a 50 ms port timeout.
     ///
     /// For other settings, open the port with [`serialport::new`] and
     /// convert it with [`From`].
     ///
     /// # Errors
     ///
-    /// A typed [`serialport::Error`]: on Unix, a missing port is
-    /// [`Io(NotFound)`](serialport::ErrorKind::Io), a port another program
-    /// holds is [`NoDevice`](serialport::ErrorKind::NoDevice), and a baud
-    /// rate the OS rejects is [`InvalidInput`](serialport::ErrorKind::InvalidInput).
+    /// A typed [`serialport::Error`]. On Unix, a missing port is
+    /// [`Io(NotFound)`](serialport::ErrorKind::Io) and a port another program
+    /// holds is [`NoDevice`](serialport::ErrorKind::NoDevice). Linux drivers
+    /// usually round an unsupported baud rate rather than reject it.
     pub fn open(path: &str, baud_rate: u32) -> serialport::Result<Self> {
         serialport::new(path, baud_rate)
             .data_bits(DataBits::Eight)
             .parity(Parity::None)
             .stop_bits(StopBits::One)
             .flow_control(FlowControl::None)
-            .timeout(POLL)
+            .timeout(PORT_TIMEOUT)
             .open_native()
             .map(Self::from)
     }
 
-    /// The underlying OS port, for settings this type does not cover.
-    #[cfg(unix)]
-    pub fn port_mut(&mut self) -> &mut serialport::TTYPort {
-        &mut self.port
-    }
-
-    /// The underlying OS port, for settings this type does not cover.
-    #[cfg(windows)]
-    pub fn port_mut(&mut self) -> &mut serialport::COMPort {
+    /// The underlying OS port ([`serialport::TTYPort`] on Unix,
+    /// `serialport::COMPort` on Windows), for settings this type does not
+    /// cover.
+    pub fn port_mut(&mut self) -> &mut NativePort {
         &mut self.port
     }
 
     /// Gives the port back.
-    #[cfg(unix)]
-    pub fn into_inner(self) -> serialport::TTYPort {
-        self.port
-    }
-
-    /// Gives the port back.
-    #[cfg(windows)]
-    pub fn into_inner(self) -> serialport::COMPort {
+    pub fn into_inner(self) -> NativePort {
         self.port
     }
 }
 
 /// Wraps a port the caller already opened, keeping its settings. Its timeout
-/// only matters when a read races an empty buffer, so keep it short.
-#[cfg(unix)]
-impl From<serialport::TTYPort> for SerialTransport {
-    fn from(port: serialport::TTYPort) -> Self {
+/// bounds write and flush waits as well as read races, so a few tens of
+/// milliseconds is a good value.
+impl From<NativePort> for SerialTransport {
+    fn from(port: NativePort) -> Self {
         Self { port }
     }
 }
 
-/// Wraps a port the caller already opened, keeping its settings. Its timeout
-/// only matters when a read races an empty buffer, so keep it short.
-#[cfg(windows)]
-impl From<serialport::COMPort> for SerialTransport {
-    fn from(port: serialport::COMPort) -> Self {
-        Self { port }
+/// Maps a write that accepted nothing to [`io::ErrorKind::WriteZero`]:
+/// `embedded-io` forbids `Ok(0)` for a non-empty buffer, and its `write_all`
+/// panics on it. A Windows port reports a write timeout that way.
+fn accepted(written: usize, buf: &[u8]) -> io::Result<usize> {
+    if written == 0 && !buf.is_empty() {
+        Err(io::ErrorKind::WriteZero.into())
+    } else {
+        Ok(written)
     }
 }
 
@@ -121,7 +114,7 @@ impl embedded_io::Read for SerialTransport {
 
 impl embedded_io::Write for SerialTransport {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        io::Write::write(&mut self.port, buf)
+        accepted(io::Write::write(&mut self.port, buf)?, buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -135,8 +128,23 @@ impl embedded_io::ReadReady for SerialTransport {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn accepting_nothing_is_write_zero() {
+        assert_eq!(
+            accepted(0, &[1]).unwrap_err().kind(),
+            io::ErrorKind::WriteZero
+        );
+        assert_eq!(accepted(0, &[]).unwrap(), 0);
+        assert_eq!(accepted(2, &[1, 2, 3]).unwrap(), 2);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod pty_tests {
     use std::time::Instant;
 
     use embedded_io::{ErrorKind, Read, ReadReady, Write};
@@ -144,16 +152,19 @@ mod tests {
 
     use super::*;
 
+    /// Generous bounds: they catch a hang, not a slow CI runner.
+    const HANG: Duration = Duration::from_millis(500);
+
     fn pair() -> (SerialTransport, SerialTransport) {
         let (mut a, mut b) = TTYPort::pair().unwrap();
-        a.set_timeout(POLL).unwrap();
-        b.set_timeout(POLL).unwrap();
+        a.set_timeout(PORT_TIMEOUT).unwrap();
+        b.set_timeout(PORT_TIMEOUT).unwrap();
         (a.into(), b.into())
     }
 
     fn wait_ready(port: &mut SerialTransport) -> bool {
         let start = Instant::now();
-        while start.elapsed() < Duration::from_millis(50) {
+        while start.elapsed() < HANG {
             if port.read_ready().unwrap() {
                 return true;
             }
@@ -197,7 +208,31 @@ mod tests {
     #[test]
     fn into_inner_returns_the_port() {
         let (a, _b) = pair();
-        assert_eq!(a.into_inner().timeout(), POLL);
+        assert_eq!(a.into_inner().timeout(), PORT_TIMEOUT);
+    }
+
+    #[test]
+    fn open_configures_8n1_without_flow_control() {
+        let (_master, slave) = TTYPort::pair().unwrap();
+        let path = slave.name().unwrap();
+        drop(slave);
+        let mut port = SerialTransport::open(&path, 57_600).unwrap();
+        let port = port.port_mut();
+        assert_eq!(port.data_bits().unwrap(), DataBits::Eight);
+        assert_eq!(port.parity().unwrap(), Parity::None);
+        assert_eq!(port.stop_bits().unwrap(), StopBits::One);
+        assert_eq!(port.flow_control().unwrap(), FlowControl::None);
+        assert_eq!(port.timeout(), PORT_TIMEOUT);
+    }
+
+    #[test]
+    fn open_busy_port_is_no_device() {
+        let (_master, slave) = TTYPort::pair().unwrap();
+        let path = slave.name().unwrap();
+        drop(slave);
+        let _held = SerialTransport::open(&path, 57_600).unwrap();
+        let err = SerialTransport::open(&path, 57_600).unwrap_err();
+        assert_eq!(err.kind(), serialport::ErrorKind::NoDevice);
     }
 
     #[test]
@@ -210,22 +245,22 @@ mod tests {
     }
 
     #[test]
-    fn idle_read_times_out_fast() {
+    fn idle_read_times_out_within_the_port_timeout() {
         let (_a, mut b) = pair();
         let start = Instant::now();
         let err = b.read(&mut [0; 1]).unwrap_err();
-        assert!(start.elapsed() < Duration::from_millis(2));
+        assert!(start.elapsed() < PORT_TIMEOUT + HANG);
         assert_eq!(embedded_io::Error::kind(&err), ErrorKind::TimedOut);
     }
 
     #[test]
-    fn read_ready_is_fast() {
+    fn read_ready_never_waits() {
         let (_a, mut b) = pair();
+        let start = Instant::now();
         for _ in 0..100 {
-            let start = Instant::now();
             b.read_ready().unwrap();
-            assert!(start.elapsed() < Duration::from_millis(1));
         }
+        assert!(start.elapsed() < HANG);
     }
 
     #[test]
@@ -237,7 +272,7 @@ mod tests {
             Err(_) => None,
             Ok(_) => Some(b.read(&mut [0; 1])),
         };
-        assert!(start.elapsed() < Duration::from_millis(50));
+        assert!(start.elapsed() < PORT_TIMEOUT + HANG);
         if let Some(read) = outcome {
             assert!(matches!(read, Err(_) | Ok(0)));
         }

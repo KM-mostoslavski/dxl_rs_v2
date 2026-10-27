@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust stable ≥ 1.81 and the `thumbv7em-none-eabihf` target (`rustup target add thumbv7em-none-eabihf`).
+- Rust stable ≥ 1.85 (edition 2024) and the `thumbv7em-none-eabihf` target (`rustup target add thumbv7em-none-eabihf`).
 - `cargo-llvm-cov` for the coverage gate.
 - Linux or macOS for the pseudo-terminal tests (they are skipped on Windows).
 - Optional, manual: a U2D2 (or any USB-TTL/RS-485 adapter) and one Protocol 2 actuator at ID 1,
@@ -31,7 +31,8 @@ heap (FR-002, FR-010, SC-002).
 |---|---|---|
 | US1-1, US1-3 | `src/transport/serial.rs` (pty pair) | bytes written and flushed on one end read back identically on the other |
 | US1-2 | `serial.rs` | `open("/dev/does-not-exist", 1_000_000)` is `Err` with kind `Io(NotFound)` (busy port: `NoDevice`) |
-| US1-4, SC-004 | `serial.rs` | `read_ready()` is `Ok(false)` on an idle line; `read` on an idle line returns `TimedOut` in < 2 ms |
+| US1-4, SC-004 | `serial.rs` | `read_ready()` is `Ok(false)` on an idle line and never waits; `read` on an idle line returns `TimedOut` within the port timeout |
+| US1-1 | `serial.rs` | `open` on a pty path configures 8N1, no flow control, 50 ms timeout; a second `open` of the same path is `NoDevice` |
 | US1-6, FR-004 | `serial.rs` | a port from `TTYPort::pair()` keeps its own timeout after `From` |
 | US2-1…4, FR-008 | `src/transport/mock.rs` | each gate opens exactly when scripted; injected kind and end of stream reach the caller |
 | US2-5, FR-009 | `mock.rs` | `check_sent` reports the first differing offset, and length differences |

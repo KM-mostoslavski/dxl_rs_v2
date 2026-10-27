@@ -46,19 +46,22 @@ parameter users must name, for no gain, because exactly one native type exists p
 **Decision**:
 - `read_ready()` returns `bytes_to_read()? > 0`. That is `FIONREAD` on Unix and
   `ClearCommError` on Windows, and it never blocks.
-- `open()` sets the port timeout to 1 ms. `read()` polls up to that timeout, then reads. The bus
-  only calls `read` after `read_ready` is true, so in practice `read` returns at once. The 1 ms
-  bound covers races (FR-005, SC-004).
-- `write` and `flush` go straight to the port. `flush` is `tcdrain` on Unix, which blocks until the
-  bytes have left the host UART buffer (US1 scenario 3).
+- `open()` sets the port timeout to 50 ms (revised 2026-10-27 from 1 ms, see R-9). The bus only
+  calls `read` after `read_ready` is true, so `read` returns at once and the timeout never delays
+  a reply; it bounds a read racing an empty buffer (FR-005).
+- `write` goes to the port, and a write that accepted nothing for a non-empty buffer becomes
+  `io::ErrorKind::WriteZero` (embedded-io forbids `Ok(0)`; R-9). `flush` is `tcdrain` on Unix,
+  which blocks until the bytes have left the host UART buffer (US1 scenario 3).
 
-**Rationale**: The builder default timeout is 0 ms (serialport `lib.rs` line 903), so a write
-would fail at once if the OS buffer were ever full. 1 ms is the smallest bound that still keeps
-write robust. The largest packet the crate sends (P2 sync write to 253 IDs × 4 bytes, about
-1.3 KB) fits the 4 KB Linux tty buffer, so in practice write does not wait at all.
+**Rationale**: serialport uses the one port timeout for more than reads: it bounds the wait for
+the OS to accept written bytes (`poll` on Unix, `WriteTotalTimeoutConstant`, the whole write, on
+Windows) and the retry window of a `flush` interrupted by a signal on Unix. 1 ms made those fail
+spuriously (a 1.3 KB sync write drains for about 225 ms at 57 600 baud). 50 ms keeps writes and
+flushes robust, and costs nothing on the reply path because reads follow `read_ready`.
 
-**Alternatives considered**: a large timeout, e.g. 100 ms like `TTYPort::pair`. Rejected: a read
-that races an empty buffer would stall the bus well past its 10 ms status timeout.
+**Alternatives considered**: 1 ms (the first version). Rejected after review: it turned slow
+writes and interrupted flushes into fake timeouts. The builder default of 0 ms fails writes the
+moment the OS buffer is full.
 
 **Already-open ports (FR-004)**: `From<NativePort>` keeps the user's settings, timeout included.
 The docs note that the timeout only matters for the race above.
@@ -133,7 +136,7 @@ diff; whichever PR merges second drops its copy.
 **Decision**:
 - The serial adapter is tested on a Unix pseudo-terminal pair (`TTYPort::pair()`, serialport
   `tty.rs` line 292): bytes cross the link, `read_ready` is false then true, `read` on an empty
-  line returns `TimedOut` within 2 ms, flush returns, opening a missing path gives `Io(NotFound)`,
+  line returns `TimedOut` within the port timeout, flush returns, opening a missing path gives `Io(NotFound)`,
   and `From<TTYPort>` keeps the timeout. Gated `cfg(all(test, unix))`.
 - The mock gets unit tests for every gate, failure and check (SC-003).
 - A compile-only `no_std` check with `--features mock` on `thumbv7em-none-eabihf` (SC-002), plus a
@@ -156,3 +159,35 @@ pseudo-terminal test approach.
 
 **Action for the architect**: close or delete `feature/transport` and its worktree
 (`../dxl_rs_v2-transport`) once this lands. This plan does not touch it.
+
+## R-9 Review findings applied (2026-10-27)
+
+An adversarial review of PR #6 (four reviewers, each batch checked by a skeptic) confirmed and
+this branch fixed:
+
+- `SerialTransport::write` could hand `Ok(0)` to embedded-io (a Windows write timeout reports
+  that way), and `write_all` panics on it. It now maps to `WriteZero`, unit-tested through the
+  private `accepted` helper.
+- The 1 ms port timeout also bounded writes and flush retries, and the docs said otherwise. Now
+  50 ms, with docs on `PORT_TIMEOUT` and `From` saying what it bounds (R-3).
+- `reply`/`reply_at` gated on the first flush ever, not on the next send (FR-008). They now gate
+  on the send after they are scripted; `reply_to(n)` stays absolute.
+- CI never built the `mock` feature, so its clippy, doc tests and the no_std/no-alloc proof (T015)
+  did not run. CI now runs clippy and doc tests with `mock` and adds it to the no_std job.
+- `mod transport` is private, so its module docs were never published. The guide (bring your
+  own UART, half-duplex, no echo) now lives on the `Transport` trait.
+- The public API exposed `embedded_io` and `serialport` types without re-exporting the crates.
+  Both are re-exported (`serialport` under `std`).
+- Docs claimed an OS-rejected baud gives `InvalidInput`; Linux drivers round instead. Removed.
+- `MockTransport`'s derived `Debug` printed both 4 KB buffers; it now shows counters and sent
+  bytes.
+- Timing tests asserted < 1 ms / < 2 ms wall-clock bounds (flaky on shared runners and under
+  coverage instrumentation); they now catch hangs with a 500 ms margin.
+- Duplicated `#[cfg(unix)]`/`#[cfg(windows)]` signatures now use the private `NativePort` alias.
+- New tests: open configures 8N1 without flow control; a busy port is `NoDevice`; a reply scripted
+  after an exchange waits for the next send; `reply_at` needs both the send and the time.
+- `compile_fail` doctest pinned to `E0277`. MSRV corrected to 1.85 (edition 2024).
+
+Rejected by the skeptics (not changed): a silent mock `read` returning `Ok(0)` (only `read_ready`
+gated reads happen in the crate), a one-shot `fail_with` (the bus owns retries; can be added with
+the bus), per-packet boundaries in `sent()`.

@@ -29,12 +29,12 @@ Behaviour the docs require of an implementor (not checkable by the compiler):
 
 | Operation | Maps to | Errors |
 |---|---|---|
-| `open(path, baud)` | `serialport::new(path, baud)` + 8 data bits, no parity, 1 stop bit, no flow control, timeout 1 ms, `.open_native()` | `serialport::Error` (Unix: missing `Io(NotFound)`, busy `NoDevice`, bad baud `InvalidInput`) |
+| `open(path, baud)` | `serialport::new(path, baud)` + 8 data bits, no parity, 1 stop bit, no flow control, timeout 50 ms, `.open_native()` | `serialport::Error` (Unix: missing `Io(NotFound)`, busy `NoDevice`, bad baud `InvalidInput`) |
 | `From<NativePort>` | wraps as-is | none |
 | `into_inner` / `port_mut` | gives the port back / borrows it for extra settings | none |
 | `read_ready` | `bytes_to_read()? > 0` | `serialport::Error` → `std::io::Error` |
 | `read` | `std::io::Read::read` on the port (waits ≤ port timeout) | `std::io::Error`; `TimedOut` kind kept |
-| `write` | `std::io::Write::write` | `std::io::Error` |
+| `write` | `std::io::Write::write`; `Ok(0)` for a non-empty buffer becomes `WriteZero` | `std::io::Error` |
 | `flush` | `std::io::Write::flush` (`tcdrain` on Unix) | `std::io::Error` |
 
 State: none beyond the OS port. No caching, no clock.
@@ -76,8 +76,8 @@ would exceed `RX` or `CHUNKS`):
 | Operation | Gate |
 |---|---|
 | `stale(bytes)` | `Always` |
-| `reply(bytes)` | `AfterTx { flushes: 1, at: 0 }` |
-| `reply_at(t, bytes)` | `AfterTx { flushes: 1, at: t }` |
+| `reply(bytes)` | `AfterTx { flushes: sent so far + 1, at: 0 }` (the next send) |
+| `reply_at(t, bytes)` | `AfterTx { flushes: sent so far + 1, at: t }` |
 | `reply_to(n, bytes)` | `AfterTx { flushes: n, at: 0 }` |
 | `fail_with(kind)` | sets `fail` |
 | `end_of_stream()` | sets `eof` |
