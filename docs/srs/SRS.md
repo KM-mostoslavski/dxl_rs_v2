@@ -26,10 +26,10 @@ Oct 26, 2026 · @David
 
 - Protocol 1 and Protocol 2 packet encode/decode, checksum (P1) and CRC (P2), status packet parsing.
 - A `Bus` that owns up to `N` actuators of mixed models on one wire, one protocol per bus, fixed at compile time.
-- Discovery by autoscan (default) or by declared `(Id, model)` list. Autoscan only when std is present.
+- Discovery by autoscan (default) or by declared `(Id, model)` list. Autoscan works with and without std (it allocates nothing).
 - Single-actuator access through a short-lived handle (\`ActuatorRef\`): it borrows \`&mut Bus\`, so it cannot be stored, cloned or outlive the bus borrow; that is what lets \`Bus\` own the actuators with no \`Rc\`, \`RefCell\` or stored lifetimes, and guarantees one active user of the wire at a time. Multi-actuator reads/writes go through the bus.
 - Generated model types with control-table registers as associated consts, from `control_tables/*.ron`.
-- Torque state, fault state and EEPROM limits cached per actuator.
+- EEPROM limits cached per actuator; one combined torque/fault state byte per actuator slot, held by the bus.
 - Typed values: `Id`, `Position` and other SI newtypes; raw register values always reachable.
 - Typed errors for every fallible operation, defined with the \`thiserror\` crate (no\_std), split into transport / protocol / status packet / validation.
 - `std` (default: `alloc` + `serialport`) and `no_std` heap-free builds from one crate.
@@ -73,9 +73,9 @@ Oct 26, 2026 · @David
 | Model type | A generated struct per control table, e.g. `Xm430W350`, `Mx64`. Registers are associated `const`s. Holds the per-actuator cache. Tier 2 of the API. |  |
 | Table variant | A model whose control table differs by firmware version gets one model type per table (e.g. XL330 before/after fw 53). `dynamixel.ron` maps model number + `from_fw` to the table. |  |
 | `ActuatorRef` | Short-lived handle from `bus.actuator(id)`, borrowing `&mut Bus`. Tier 1 of the API. Retired names: handle, actuator handle. **\[decision\]** name proposed from the C4 model. |  |
-| Cache | Per actuator, inside its model type: `Id`, torque state, fault state, limits read from EEPROM at Init. |  |
-| Torque state | Runtime `bool` in the cache. Off at Init. Not a typestate. |  |
-| Fault state | Runtime flag in the cache, set when a status packet reports a hardware fault. Setting it also sets torque state off. |  |
+| Cache | Per actuator, inside its model type: `Id` and limits read from EEPROM at Init. The torque/fault state is not in the model type (no padding): the bus holds it in a one-byte-per-slot array beside the actuator list. |  |
+| Torque state | One-byte runtime enum per actuator: off, on, or faulted (faulted always means off). Off at Init. Not a typestate. |  |
+| Fault state | The faulted value of the torque state, set when a status packet reports a hardware fault; it means torque off. No fault report is stored: the call that saw it returns it, and Hardware Error Status can be read again. |  |
 | Limits | Position (and other) min/max read from the actuator's EEPROM at Init. Never the control-table defaults. |  |
 | Protocol (`P`) | `P1` or `P2`, a compile-time type parameter of `Bus`. Packet layout, checksum/CRC, instruction set. |  |
 | Transport (`T`) | Any `embedded_io::{Read, Write, ReadReady}`: blocking read and write, plus a non-blocking check for pending input. Default under `std`: `SerialTransport` over `serialport`. Mockable in tests with `MockTransport` (feature `mock`). |  |
@@ -153,7 +153,7 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 
 ### FR-1 Bus and storage
 
-- FR-1.1 `Bus<P: Protocol, T: Transport, const N: usize = 32>` (`Transport` = `Read + Write + ReadReady`) owns its actuators in `heapless::Vec<ActuatorKind, N>`. Decided.
+- FR-1.1 `Bus<P: Protocol, T: Transport, const N: usize = 32, C: Clock = DefaultClock>` (`Transport` = `Read + Write + ReadReady`; `DefaultClock` is the system clock under std) owns its actuators in `heapless::Vec<ActuatorKind, N>` and the clock that bounds every wait. Decided; clock parameter added 2026-10-27 (zero bytes for a stateless clock, no indirect call, accepts an owned hardware timer).
 - FR-1.2 `N` is an upper bound, not an exact count. Setup finding more than `N` actuators is an Init error. Decided.
 - FR-1.3 Under the `std` feature, an `alloc::Vec` storage with no cap is also available; `heapless` stays the default. Decided. **\[decision\]** exposed as a second type alias, e.g. `DynBus<P, T>`, not as a feature-switched change to `Bus` (features add API, never change it).
 - FR-1.4 `Bus` holds timeouts and retry count, settable at construction, with defaults. Decided. **\[decision\]** defaults: 10 ms status timeout, 0 retries; measured values replace these in NFR-5.
@@ -206,7 +206,7 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 - FR-6.1 Every received status packet's error byte is checked: P2 alert bit 7 and error code; P1 per-bit error flags. Decided.
 - FR-6.2 A reported hardware fault sets fault state, sets torque state off in the cache, and returns a typed hardware error from the call that received it. Decided.
 - FR-6.3 Sync writes get no reply, so a write-only loop sees faults only on its next read. Documented limitation, not fixed. Decided.
-- FR-6.4 Errors are one `thiserror` enum (no\_std) split into `Transport`, `Protocol`, `Status` (hardware fault / status error byte), `Validation` (`ActuatorIsOff`, out-of-range, bad buffer), plus `UnsupportedModel`. Decided.
+- FR-6.4 Errors are one `thiserror` enum (no\_std) split into `Transport`, `Protocol`, `Status` (hardware fault / status error byte), `Validation` (`ActuatorIsOff`, out-of-range, bad buffer) and `Setup` (`UnsupportedModel`, too many actuators, declared actuator missing or of another model, `Id` not on the bus). Decided; `Setup` added 2026-10-27.
 - FR-6.5 Clearing a fault state is an explicit user call. **\[decision\]** `clear_fault()` re-reads Hardware Error Status and clears only if the hardware reports none.
 
 ### FR-7 Control tables, capabilities and codegen
@@ -259,7 +259,8 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 **Decisions** (ticked = decided, with date)
 
 - [x] AoS storage, `ActuatorKind` closed enum, `Bus` owns actuators. ARCHITECTURE.md, 2026-10-12.
-- [x] Torque state as runtime field, off by default, explicit enable only. 2026-10-12.
+- [x] Torque state as runtime field, off by default, explicit enable only. 2026-10-12. One byte per slot (off / on / faulted) held by the bus, not in the model types. 2026-10-27.
+- [x] `Bus` takes the clock as a fourth type parameter with a default; autoscan available without std; setup errors in a `Setup` category; every table records access and memory area per register now, range/default/unit per model on verification. 2026-10-27.
 - [x] Limits from EEPROM at Init, never table defaults. 2026-10-12.
 - [x] Easy + Explicit tiers; `sync_read` P2 only as a missing method. 2026-10-12.
 - [x] `Id` is `0..=252`, no protocol parameter. 2026-10-12.
