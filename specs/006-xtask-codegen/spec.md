@@ -17,6 +17,7 @@ No-go: any hand-written file under `src/` other than the `pub mod models;` line 
 
 - Q: Do the generated `Actuator` impls perform wire operations or only supply per-model data? → A: Only per-model data; I/O is the bus's job (single responsibility).
 - Q: A mapped table lacks protocol-support data: fail or generate as "protocols unknown"? → A: Codegen fails and names the table; it is a priority issue for the table maintainers.
+- Q: Are the register constants on each model type public API? → A: No, internal; users have get/set methods for that, which makes their lives easier.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -261,9 +262,8 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
 - **FR-015**: Model types MUST be public, documented types reachable through `ActuatorKind`
   variants; `ActuatorKind` MUST be `#[non_exhaustive]`; constructors stay crate-internal (SRS
   OQ-1 meanwhile).
-  [NEEDS CLARIFICATION: Are the register constants on each model type public API (Tier 2
-  users and `raw-registers` can name `Xm430W350::GOAL_POSITION`), or crate-internal as today,
-  with model types public only as `match` targets?]
+  Register constants on model types stay crate-internal: users go through the get/set
+  methods, which is easier for them; model types are public only as `match` targets.
 - **FR-016**: Every public generated item MUST be documented: model name, model number,
   firmware range and source table (constitution VII).
 - **FR-017**: Codegen MUST be tested on fixture tables for each success path and each error

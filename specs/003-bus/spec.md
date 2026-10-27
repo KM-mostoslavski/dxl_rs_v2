@@ -11,6 +11,14 @@
 FR-6.2, FR-6.3, FR-6.5, FR-8, NFR-1, NFR-2; delivery steps 4, 5, 6, 9, 10. Design input:
 `specs/ideas/bus-proposal.md`. No-go: `src/models.rs`, `src/models/**`, `control_tables/**`.
 
+## Clarifications
+
+### Session 2026-10-27
+
+- Q: Q1: is the time source part of the bus's type or carried another way? → A: A fourth type parameter with a default (system clock under std): zero bytes for a stateless clock, no indirect call, works with an owned hardware timer.
+- Q: Q2: is autoscan available in no_std? → A: Yes, if possible; checked: it needs no allocation (broadcast ping, P1 sweep, model lookup, fixed-capacity list), so it is available.
+- Q: Q4: one combined torque/fault state or two flags? → A: One combined state (off / on / faulted) in one byte; flags cost padding and a low memory footprint is preferred.
+
 ## User Scenarios & Testing *(mandatory)*
 
 The "users" of this module are robot application developers on a PC or SBC, and embedded
@@ -325,11 +333,11 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 - **FR-002**: The bus MUST own the actuators it holds, up to a capacity `N` (default 32) that is
   an upper bound, not an exact count; exceeding it during setup is an error (FR-1.2).
 - **FR-003**: The bus MUST bound every wait for a reply with a monotonic time source the user
-  supplies (any function returning microseconds), or the system clock under `std`.
-  [NEEDS CLARIFICATION: Q1 — is the time source part of the bus's compile-time type (a fourth
-  type parameter after capacity, with a default, which changes the shape SRS FR-1.1, 4.1 and
-  §7 give the bus and its constructor), or does it travel another way (inside the
-  configuration, or one fixed clock per build) so FR-1.1 stays as written?]
+  supplies (any function returning microseconds), or the system clock under `std`. The time
+  source is part of the bus's compile-time type, as a fourth type parameter after capacity
+  with a default (the system clock under `std`), so the std user never names it. This takes
+  no space for a clock with no state, needs no indirect call, and accepts a clock that owns a
+  hardware timer. SRS FR-1.1, 4.1 and §7 need the extra parameter (deviation).
 - **FR-004**: The bus MUST take a reply timeout, a scan wait and a retry count at construction,
   with defaults of 10 ms, 10 ms and 0 retries (FR-1.4). Retries apply to unicast instructions
   that time out or get a corrupted reply only.
@@ -345,10 +353,10 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 - **FR-008**: Declared setup MUST take a list of (ID, model number), ping only those IDs, and
   fail if one is missing or answers with another model. It never sweeps the bus (FR-2.5).
 - **FR-009**: Autoscan MUST find every actuator answering at the bus's baud: one broadcast ping
-  on Protocol 2, a per-ID ping sweep of 0..=252 on Protocol 1 (FR-2.1, FR-2.2).
-  [NEEDS CLARIFICATION: Q2 — is autoscan available in `no_std` builds too? SRS 2.1 limits it
-  to `std`, but FR-2.1 makes it the default setup and it needs no allocation; keeping the
-  limit leaves embedded users with declared setup only.]
+  on Protocol 2, a per-ID ping sweep of 0..=252 on Protocol 1 (FR-2.1, FR-2.2). Autoscan is
+  available in `no_std` builds too: broadcast ping, the P1 sweep, the model lookup and the
+  fixed-capacity actuator list allocate nothing. SRS 2.1's "only when std is present" is
+  dropped (deviation).
 - **FR-010**: Setup MUST pick each actuator's model from its model number, and, where the
   model's table depends on firmware, the table for its firmware version (FR-2.3).
 - **FR-011**: A model number with no compiled-in model MUST fail setup with "unsupported model"
@@ -383,11 +391,10 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 
 **Torque and fault state**
 
-- **FR-024**: The bus MUST expose, per actuator, whether torque is on, off, or the actuator is
-  faulted (and with what report).
-  [NEEDS CLARIFICATION: Q4 — are torque state and fault state one combined state (off / on /
-  faulted, where faulted always means off), or two independent values as SRS 3.3 defines them
-  (a torque on/off flag plus a fault flag)?]
+- **FR-024**: The bus MUST expose, per actuator, one combined state: torque off, torque on, or
+  faulted (faulted always means off). It is stored in one byte per actuator; no fault report
+  is kept: the call that saw the fault returns it, and Hardware Error Status can be read
+  again. This replaces SRS 3.3's two flags (deviation), for the smallest actuator footprint.
 - **FR-025**: Any reply that reports a hardware fault MUST mark that actuator faulted with
   torque off, and the call that received it MUST return a typed hardware error (FR-6.2).
 - **FR-026**: Enabling torque on a faulted actuator MUST be refused with a typed error and send
