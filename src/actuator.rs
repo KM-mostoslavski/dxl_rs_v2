@@ -798,6 +798,27 @@ mod tests {
         assert_eq!(AX12A.protocols, p1_only);
     }
 
+    #[test]
+    fn raw_and_typed_goals_hit_the_same_check() {
+        let mut cache = Cache::new(id(3));
+        cache.record_limits(1000, 3000).unwrap();
+        let scale = XM430.scale;
+        let typed = scale.to_raw(scale.to_position(3001)).unwrap();
+        assert_eq!(
+            cache.check_goal(typed),
+            Err(ValidationError::OutOfLimits {
+                id: id(3),
+                raw: 3001,
+                min: 1000,
+                max: 3000
+            })
+        );
+        assert_eq!(cache.check_goal(typed), cache.check_goal(3001));
+        assert_eq!(cache.check_goal(2500), Ok(2500));
+        let typed_inside = scale.to_raw(scale.to_position(2500)).unwrap();
+        assert_eq!(cache.check_goal(typed_inside), Ok(2500));
+    }
+
     mod mode {
         use super::*;
 
