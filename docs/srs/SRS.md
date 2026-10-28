@@ -153,7 +153,7 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 
 ### FR-1 Bus and storage
 
-- FR-1.1 `Bus<P: Protocol, T: Transport, const N: usize = 32, C: Clock = DefaultClock>` (`Transport` = `Read + Write + ReadReady`; `DefaultClock` is the system clock under std) owns its actuators in `heapless::Vec<ActuatorKind, N>` and the clock that bounds every wait. Decided; clock parameter added 2026-10-27 (zero bytes for a stateless clock, no indirect call, accepts an owned hardware timer).
+- FR-1.1 `Bus<P: Protocol, T: Transport, C: Clock = DefaultClock, const N: usize = 32>` (`Transport` = `Read + Write + ReadReady`; `DefaultClock` is the system clock under std; without std the clock has no default and is named, e.g. `Bus<P2, Uart, Mono>`) owns its actuators in `heapless::Vec<ActuatorKind, N>` and the clock that bounds every wait. The clock is passed to the constructor, per bus. Decided; clock parameter added 2026-10-27 (zero bytes for a stateless clock, no indirect call, accepts an owned hardware timer), moved before `N` 2026-10-28.
 - FR-1.2 `N` is an upper bound, not an exact count. Setup finding more than `N` actuators is an Init error. Decided.
 - FR-1.3 Under the `std` feature, an `alloc::Vec` storage with no cap is also available; `heapless` stays the default. Decided. **\[decision\]** exposed as a second type alias, e.g. `DynBus<P, T>`, not as a feature-switched change to `Bus` (features add API, never change it).
 - FR-1.4 `Bus` holds timeouts and retry count, settable at construction, with defaults. Decided. **\[decision\]** defaults: 10 ms status timeout, 0 retries; measured values replace these in NFR-5.
