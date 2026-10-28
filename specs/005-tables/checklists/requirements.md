@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-10-27
-**Updated**: 2026-10-27 (clarification session); 2026-10-28 (mode source, stale text)
+**Updated**: 2026-10-27 (clarification session); 2026-10-28 (mode source, stale text, `operating_modes`)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -51,6 +51,10 @@
 - 2026-10-28: architect decision "limits follow the operating mode" (module-interfaces §2.4b).
   Added US3 AS5–AS6, US5 AS6, FR-020, SC-008, the Mode source entity, an edge case and an
   assumption; FR-014 fails on a missing mode source. Not yet in SRS FR-3.7.
+- 2026-10-28: architect decision "the mode values live in the tables" (module-interfaces §3.1).
+  Added a clarification, US3 AS7, the `operating_modes` rule in FR-020 and FR-014, the Operating
+  modes entity, an edge case (reserved or unclear values), SC-008 coverage and an effort line.
+  The open question "how X1 picks the value list" is closed.
 - 2026-10-28 cleanup: 60 (not 62) tables have Protocol Type; 63 model numbers and 4,635 register
   rows (plus 269 `unit_info` entries); US2 AS4 and US5 AS3–AS4 match the plan (shared-number
   files stay not mapped, skipped without a warning); FR-019 separates MX(2.0) (dual) from MX on

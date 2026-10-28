@@ -8,11 +8,13 @@
 - Latest stable Rust (dev: 1.97.1) with `rustfmt` and `clippy`, plus the
   `thumbv7em-none-eabihf` target.
 - `cargo-llvm-cov` for the coverage gate.
-- Merged first: core-1 (with the contract §2.4b items `ModeSource`, `LimitMode`,
-  `ModelData::mode`, `Cache::record_mode`) and tables T1 (contract §7). Protocol PR #7
+- Merged first: core-1 (with the contract §2.4b items `ModeSource { Register { register, values },
+  AngleLimits }`, `ModeValues { bounded, unbounded, no_position }`, `LimitMode`,
+  `ModelData::mode`, `Cache::record_mode`) and tables T1, `operating_modes` included (contract
+  §7). Protocol PR #7
   (`ProtocolVersion`, contract §5) is already merged into `main`. Before T1, only the xtask
   fixture tests (§2) can pass; codegen on the real tables fails on the missing
-  `protocols`/`source`/`access`/`area`. That is the intended FR-012 behaviour.
+  `protocols`/`source`/`access`/`area`/`operating_modes`. That is the intended FR-012 behaviour.
 
 ## 1. Gates every PR runs
 
@@ -39,7 +41,7 @@ Expected: all pass, and the last line shows no diff (SC-001).
 | US3 AS3, FR-005 | family `x_series` fails, naming the model number and the bad family |
 | SC-002 | the real-tables test: every role of all 69 mapped tables, mode source included, matches an independent name lookup and the rendered `reg(...)` line |
 | US1 AS1–AS4 | real-tables spot checks: XM430-W350 Goal Position `reg(116, 4, RW, Ram)`; AX-12A `CwCcw` at 6/8; AX-12A `hardware_error: None`; scale from `type_info`, radians as `{:?}` of the table value |
-| US1 AS6, FR-019 | real-tables spot checks: XM430-W350 `mode: ModeSource::OperatingMode(Self::OPERATING_MODE)` with `OPERATING_MODE` at `reg(11, 1, RW, Eeprom)`; XL-320 `ControlMode(Self::CONTROL_MODE)` at 11; AX-12A `AngleLimits`; YM070-210-M001 `OperatingMode` at 33. Check 17 fixtures (no mode source; `Operating Mode` beside CW/CCW; two mode rows) fail and name the table |
+| US1 AS6, FR-019 | real-tables spot checks: XM430-W350 `mode: ModeSource::Register { register: Self::OPERATING_MODE, values: ModeValues { .. } }` with `OPERATING_MODE` at `reg(11, 1, RW, Eeprom)` and the slices equal to its table's `operating_modes`; XL-320 `Register { register: Self::CONTROL_MODE, .. }` at 11 with its lists; AX-12A `AngleLimits`; YM070-210-M001 `Register` at 33 with its lists. Check 17 fixtures (no mode source; `Operating Mode` beside CW/CCW; two mode rows; a mode row without `operating_modes`; `operating_modes` without a mode row; a value in two lists) fail and name the table |
 | SC-008 | `cargo llvm-cov -p xtask` reports at least 70 % lines |
 
 ## 3. Generated crate tests (`src/models/tests.rs`)
@@ -89,8 +91,9 @@ AS1, AS2). The no-family lines also depend on core-1's `Register::new` fix (cont
 ## 6. Add a model (SC-005, manual)
 
 1. Add `control_tables/<new>.ron` with `source`, `protocols`, `type_info`, and rows with
-   `access`/`area`, including the common roles and an `Operating Mode` or `Control Mode` row (or
-   CW/CCW Angle Limits with no mode row) (tables module work, e-Manual cited).
+   `access`/`area`, including the common roles and an `Operating Mode` or `Control Mode` row with
+   its `operating_modes` (or CW/CCW Angle Limits with no mode row and no `operating_modes`)
+   (tables module work, e-Manual cited).
 2. Add its entry to `dynamixel.ron` under `p1` and/or `p2`.
 3. Run `cargo xtask codegen`.
 

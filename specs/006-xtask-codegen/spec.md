@@ -5,7 +5,8 @@ step X1 of `specs/ideas/module-interfaces.md`)
 
 **Created**: 2026-10-27
 
-**Updated**: 2026-10-28 (aligned with module-interfaces.md §8; limits follow the operating mode)
+**Updated**: 2026-10-28 (aligned with module-interfaces.md §8; limits follow the operating mode;
+the mode values live in the tables)
 
 **Status**: Draft
 
@@ -26,7 +27,8 @@ FR-3.7 (mode source, FR-019). The SRS module text does not list them yet.
 
 ### Session 2026-10-28
 
-- Q: Do position limits apply in every operating mode? → A: No. Limits follow the operating mode (architect, 2026-10-28; module-interfaces §2.4b). Codegen emits, per model, where Setup finds the mode: the "Operating Mode" register, XL-320's "Control Mode" register, or the CW/CCW Angle Limits for tables with no mode register (AX, MX on P1). Core owns the types and the mapping of mode values; codegen only emits the per-model source (FR-019).
+- Q: Do position limits apply in every operating mode? → A: No. Limits follow the operating mode (architect, 2026-10-28; module-interfaces §2.4b). Codegen emits, per model, where Setup finds the mode: the "Operating Mode" register, XL-320's "Control Mode" register, or the CW/CCW Angle Limits for tables with no mode register (AX, MX on P1). Core owns the types and the decoding; the meaning of each value comes from the tables (next answer, FR-019).
+- Q: Where do the mode value lists come from (value 5 is unbounded on X and MX(2.0), bounded on RH-P12-RN, so neither the register nor the family decides)? → A: From each table's `operating_modes: (bounded: [...], unbounded: [...], no_position: [...])` (architect, 2026-10-28; module-interfaces §2.4b, §3.1). Codegen emits the lists with the register in `ModeSource::Register { register, values }`; core holds no per-family list, so a new model or family is a data change only.
 - Q: Does the per-actuator cache hold torque and fault state? → A: No. It holds the Id, the limit mode and the limits. The bus keeps torque and fault state as one byte per slot (module-interfaces §2.5, conflict 1).
 - Q: Are register access and MX on Protocol 1 in scope? → A: Yes (module-interfaces §8 conflicts 2, 3). Access and area are generated on every register, and the lookup is per protocol, so the MX P1 tables of tables T2 need no xtask change.
 
@@ -70,9 +72,10 @@ model's `.ron` table. Write the cache through `ActuatorKind` and read it back.
    mode, limits), **Then** the change is visible through the same value, with no copy and no
    allocation. The cache holds no torque or fault state.
 6. **Given** an XM430-W350, an XL-320 and an AX-12A, **When** the bus asks where to find the
-   operating mode, **Then** it gets the Operating Mode register (address 11, 1 byte), the
-   Control Mode register (address 11, 1 byte), and "from the CW/CCW Angle Limits" with no
-   register, as the tables list them.
+   operating mode, **Then** it gets the Operating Mode register (address 11, 1 byte) with the
+   value lists of its table's `operating_modes` (bounded 3; unbounded 4, 5; no position 0, 1,
+   16), the Control Mode register (address 11, 1 byte) with bounded 2, no position 1, and "from
+   the CW/CCW Angle Limits" with no register and no lists, as the tables give them.
 
 ---
 
@@ -155,8 +158,8 @@ the new generated data needs.
 **Independent Test**: Run codegen on fixture tables: a valid set, then one fixture per
 failure class of FR-003 (e.g. missing file, bad `from_fw` order, duplicate names, unknown
 family, missing `source`/`protocols`/`access`/`area`, missing common register, no mode source,
-bad scale, Model Number at an unexpected address). Check exit status, message and that
-existing output files are unchanged.
+a mode row without `operating_modes`, bad scale, Model Number at an unexpected address). Check
+exit status, message and that existing output files are unchanged.
 
 **Acceptance Scenarios**:
 
@@ -223,6 +226,10 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   register beside CW/CCW Angle Limits, or with both an Operating Mode and a Control Mode
   register: codegen fails, naming the table. XL-320 (Control Mode and CW/CCW Angle Limits) is
   the one table with both a mode register and CW/CCW limits.
+- A mode register without `operating_modes`, `operating_modes` in a table with no mode
+  register, or one value in two of its lists: codegen fails, naming the table (and the value).
+  An empty list is fine (Y and XL-320 have no unbounded mode); a value in no list is decided at
+  Setup (`UnknownOperatingMode`), not by codegen.
 - A model claiming P1 support whose common registers sit above address 255 (P1 addresses are
   8-bit): codegen fails, naming the model and register.
 - A table whose Model Number is not at the address and size every other table uses: codegen
@@ -256,7 +263,9 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   area (FR-011); no mode source, an Operating Mode register beside CW/CCW limits, or two mode
   registers (FR-019); Model Number or Firmware Version location differing between tables
   (FR-008); a P1-listed table with a common register above address 255; an inconsistent
-  position scale (FR-013); duplicate type or register identifiers, or a reserved module name.
+  position scale (FR-013); duplicate type or register identifiers, or a reserved module name;
+  a mode row without `operating_modes`, `operating_modes` without a mode row, or overlapping
+  value lists (FR-019).
 - **FR-004**: A table with no model number in `dynamixel.ron` MUST be skipped. It gives one
   warning per file unless `not_mapped` lists it, and codegen MUST still succeed (FR-7.4).
 - **FR-005**: Every model type and `ActuatorKind` variant MUST be gated by its family feature.
@@ -321,14 +330,17 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   modules' types it relies on (traits, model data, cache, register, mode source, newtypes,
   errors) are consumed, not defined, by generated code.
 - **FR-019**: Each model type MUST expose, as compile-time data, where Setup finds its
-  operating mode, because limits follow the operating mode (architect, 2026-10-28): the
-  "Operating Mode" register when the table has one (X, MX(2.0), PRO, PRO+, Y), XL-320's
-  "Control Mode" register, or "from the CW/CCW Angle Limits" when the table has no mode
-  register (AX, MX on P1). Codegen MUST fail, naming the table, when a table has neither a
-  mode register nor CW/CCW Angle Limit rows, has an Operating Mode row beside CW/CCW Angle
-  Limits, or has both an Operating Mode and a Control Mode row. A mode register MUST be one
-  byte in EEPROM, as the bus reads it once at Setup. The mode types and the meaning of each
-  mode value belong to core; codegen only emits the per-model source.
+  operating mode and what each mode value means, because limits follow the operating mode
+  (architect, 2026-10-28): the "Operating Mode" register when the table has one (X, MX(2.0),
+  PRO, PRO+, RH-P12-RN, Y) or XL-320's "Control Mode" register, each with the three value lists
+  (`bounded`, `unbounded`, `no_position`) of the table's `operating_modes`; or "from the CW/CCW
+  Angle Limits" when the table has no mode register (AX, MX on P1). Codegen MUST fail, naming
+  the table, when a table has neither a mode register nor CW/CCW Angle Limit rows, has an
+  Operating Mode row beside CW/CCW Angle Limits, has both an Operating Mode and a Control Mode
+  row, has a mode row without `operating_modes` or `operating_modes` without a mode row, or has
+  one value in two of its lists. A mode register MUST be one byte, RW, in EEPROM, as the bus
+  reads it once at Setup (contract §4.3). The value lists are table data, copied by codegen; the
+  mode types and the decoding of a value with the lists belong to core.
 
 ### Key Entities
 
@@ -336,15 +348,15 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   table list per protocol (`p1`, `p2`) ordered by `from_fw`, with `default: P2` when both
   exist; plus `not_mapped` tables, each with a reason.
 - **Control table** (`<model>.ron`): `source` (unverified, or e-Manual URL and date),
-  `protocols`, register rows (address, size, name, access, area), `type_info` (position scale)
-  and `unit_info`.
+  `protocols`, `operating_modes` (with a mode row only), register rows (address, size, name,
+  access, area), `type_info` (position scale) and `unit_info`.
 - **Model type**: one generated public struct per table; holds the cache; carries registers,
   common-role data, mode source, scale and protocols as compile-time data.
 - **`ActuatorKind`**: generated, closed, `#[non_exhaustive]` enum, one variant per model type,
   family-gated; the type the bus stores.
 - **Common roles**: Torque Enable, Goal Position, Present Position, position limits (min/max or
-  CW/CCW), hardware-fault register (optional), mode source (Operating Mode, Control Mode, or
-  the CW/CCW Angle Limits).
+  CW/CCW), hardware-fault register (optional), mode source (the Operating Mode or Control Mode
+  register with its table's value lists, or the CW/CCW Angle Limits).
 - **Model lookup**: protocol + model number (+ firmware) → variant or `UnsupportedModel`; plus
   "needs firmware" and the Firmware Version location per (protocol, model number).
 - **Family feature**: `ax`, `mx`, `x-series`, `y-series`, `pro`; gates model types and variants.
@@ -382,22 +394,22 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   impls for `id`, `model_number`, `name` on model types and `ActuatorKind`; public model types;
   crate-internal register constants; fixture tests in xtask; CI diff check.
 - **Gaps this feature covers**: the new table and map schema (`source`, `protocols`, `access`,
-  `area`, per-protocol lists, `not_mapped`); common-role data with access and area (FR-011);
-  mode source (FR-019); scale (FR-013); protocol set (FR-012); cache in model types (FR-009);
-  the description trait and the trait impls (FR-010); the per-protocol lookup returning
+  `area`, `operating_modes`, per-protocol lists, `not_mapped`); common-role data with access and
+  area (FR-011); mode source (FR-019); scale (FR-013); protocol set (FR-012); cache in model types
+  (FR-009); the description trait and the trait impls (FR-010); the per-protocol lookup returning
   `SetupError` (FR-006, FR-007); the firmware-dependence and Firmware/Model Number locations
-  (FR-008); `ModelNumber` input (FR-006); the unknown-family check (FR-005);
-  validate-before-write for every check (FR-003); warning-free builds for every family
-  combination including none (FR-014; today a no-family build warns about an unused
-  `Register::new`); documentation of source table and verification state (FR-016).
+  (FR-008); `ModelNumber` input (FR-006); the unknown-family check (FR-005); validate-before-write
+  for every check (FR-003); warning-free builds for every family combination including none (FR-014;
+  today a no-family build warns about an unused `Register::new`); documentation of source table and
+  verification state (FR-016).
 - **Dependencies on other modules**: `core` defines `Actuator`, the description trait, the
   model-data, cache, register, scale, protocol-set and mode-source types, `ModelNumber` and
-  `SetupError`, decides what each mode value means, and fixes the no-family warning in
-  `register.rs` (core-1). `protocol` defines `ProtocolVersion` (PR #7, merged). `tables` adds
-  `source`, `protocols`, `access`/`area` and the per-protocol map (T1), and the MX P1 tables
-  later (T2). `ci` runs the per-family builds of SC-003. `bus` does all wire I/O, the torque
-  guard, the mode read and the limit checks. This feature only generates code against their
-  types.
+  `SetupError`, decodes a mode value with the lists codegen emits (core holds no per-family list),
+  and fixes the no-family warning in `register.rs` (core-1). `protocol` defines `ProtocolVersion`
+  (PR #7, merged). `tables` adds `source`, `protocols`, `access`/`area`, `operating_modes` and the
+  per-protocol map (T1), and the MX P1 tables later (T2). `ci` runs the per-family builds of SC-003.
+  `bus` does all wire I/O, the torque guard, the mode read and the limit checks. This feature only
+  generates code against their types.
 - **Meanwhile defaults recorded**: model types public and `ActuatorKind` `#[non_exhaustive]`
   (OQ-1); the operations served are torque, goal position, present position and limits only
   (OQ-2); `Position` SI form is radians as `f32`, so the scale is generated in radians (OQ-3);
@@ -411,5 +423,5 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   range, default and unit come per model with e-Manual verification; this feature does not
   generate them yet.
 - MX on Protocol 1 is in scope: the lookup is per protocol now, and tables T2 adds the MX(1.0)
-  P1 tables with no xtask change. They have no mode register, so their mode source is the
-  CW/CCW Angle Limits.
+  P1 tables with no xtask change. They have no mode register and no `operating_modes`, so
+  their mode source is the CW/CCW Angle Limits.

@@ -16,6 +16,7 @@ One file per model and firmware variant. The file stem names the generated type 
 | `source` | Verification flag | always | this feature | check, X1 (docs) |
 | `protocols` | non-empty set of `P1`, `P2` | always | model page, Protocol Type values (research R-3) | check, X1 (`ModelData::protocols`) |
 | `instructions` | list of Instruction entry | verified tables only, one or more per protocol in `protocols` | protocol pages (R-5) | check; not codegen yet |
+| `operating_modes` | Operating modes | exactly when the table has an `Operating Mode` or `Control Mode` row | model page, the mode register's value table (R-15) | check, X1 (`ModeValues` in `ModelData::mode`) |
 | `type_info` | Position scale | always (unchanged shape) | model page | X1 (`PositionScale`) |
 | `unit_info` | list of `{data_name, value, unit, sign_type}` | optional (unchanged shape) | model page | nobody yet |
 | `control_table` | list of Register row, non-empty | always | model page | today's codegen, X1 |
@@ -24,7 +25,9 @@ Validation:
 - Every field above comes from the e-Manual; a value the page does not give is left out.
 - Brace style stays (`{ key: value }`); no real map appears in a table.
 - A table mapped under `p1` must list `P1` in `protocols`; under `p2`, `P2`.
-- Exactly one mode source, from the rows (see "Mode source" below).
+- Exactly one mode source, from the rows and `operating_modes` (see "Mode source" below).
+- Key order: `source`, `protocols`, `instructions`, `operating_modes`, `type_info`, `unit_info`,
+  `control_table` (absent keys skipped).
 
 ## Verification flag (`source`)
 
@@ -68,32 +71,61 @@ Validation:
 - In a mapped table, no two rows give the same register constant (ron-schema.md section 1).
 - In a table mapped under `p1`, no role row and no mode row above address 255.
 
-## Mode source (derived from the rows, not a field)
+## Mode source (the mode row plus `operating_modes`)
 
 How the bus learns an actuator's operating mode at Setup, so a goal is checked only where the
 firmware applies the limits (module-interfaces §2.4b, architect 2026-10-28). X1 emits it as
-`ModelData::mode: ModeSource`. The tables give the rows; the values (which mode means what) are
-core's.
+`ModelData::mode: ModeSource`. The tables give the row (which register) and `operating_modes`
+(what each value means); core decodes a value with those lists and holds none of its own.
 
-| `ModeSource` | Rows in the table | Models |
-|---|---|---|
-| `OperatingMode { register, values }` | one `Operating Mode` row, no CW/CCW Angle Limit row | X, MX(2.0), PRO, PRO+, RH-P12-RN, Y |
-| `ControlMode(Register)` | one `Control Mode` row (the CW/CCW pair is also there, as the limits) | XL-320 only |
-| `AngleLimits` | neither mode row; `CW Angle Limit` + `CCW Angle Limit` | AX, MX on Protocol 1 |
+| `ModeSource` | Rows in the table | `operating_modes` | Models |
+|---|---|---|---|
+| `Register { register, values }` | one `Operating Mode` row, no CW/CCW Angle Limit row | required | X, MX(2.0), PRO, PRO+, RH-P12-RN, Y |
+| `Register { register, values }` | one `Control Mode` row (the CW/CCW pair is also there, as the limits) | required | XL-320 only |
+| `AngleLimits` | neither mode row; `CW Angle Limit` + `CCW Angle Limit` | absent | AX, MX on Protocol 1 |
 
-`register` comes from the row. `values` (which Operating Mode value list applies) is open in
-module-interfaces §2.4b; the tables carry nothing for it until core, xtask and tables agree
-(research R-15).
+`register` comes from the row, `values` from `operating_modes` (research R-15).
 
 Validation (every table, mapped or not; codegen checks 11 and 17, plus the `xl320` rule;
 research R-15):
 - Exactly one source: at most one row of each mode name, never both names in one table, no
   `Operating Mode` row beside CW/CCW Angle Limit rows; with neither mode row, the CW/CCW pair
   must be present.
+- `operating_modes` is present exactly when the table has a mode row.
 - `Control Mode` only in `xl320`.
 - The mode row is 1 byte, `RW`, `EEPROM`. Its address, size, access and area are the page's; a
   page that lists a mode register means the table carries that row, and a page that lists none
   means the table carries none (FR-020).
+
+## Operating modes (`operating_modes`)
+
+```ron
+operating_modes: (bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16]),
+```
+
+| Field | Type | Meaning (from the model's page) |
+|---|---|---|
+| `bounded` | list of u8, may be empty | position modes in which the page says the position limits apply: the goal must lie within the EEPROM limits |
+| `unbounded` | list of u8, may be empty | position modes in which the page says the limits are not used |
+| `no_position` | list of u8, may be empty | modes in which the actuator does not follow Goal Position (current, velocity, PWM, wheel) |
+
+Validation:
+- All three keys present; every value an integer 0–255.
+- The three lists are disjoint: a value in two lists is an error.
+- A value the page marks reserved is in no list. A position mode whose page does not say
+  whether the limits apply is raised, not placed (constitution III). At Setup, a value in no list
+  fails with `UnknownOperatingMode`.
+
+Expected lists, from core research R-17 (each table copies its own page, and the page wins):
+
+| Tables | `bounded` | `unbounded` | `no_position` |
+|---|---|---|---|
+| X-series but XL-320, MX(2.0) | `[3]` | `[4, 5]` | `[0, 1, 16]` |
+| XL430-W250, 2XL430-W250 (their pages list 1, 3, 4, 16 only) | `[3]` | `[4]` | `[1, 16]` |
+| PRO (A), PRO+ | `[3]` | `[4]` | `[0, 1, 16]` |
+| Y | `[3]` | `[]` | `[0, 1]` |
+| RH-P12-RN(A) | `[5]` | `[]` | `[0]` |
+| XL-320 (`Control Mode`) | `[2]` | `[]` | `[1]` |
 
 ## Instruction entry (`instructions[i]`)
 
@@ -188,7 +220,7 @@ Relationships:
 Model entry 1 ──p1/p2── * Table ref ──file── 1 Control table
 Not-mapped record ──file── 1 Control table ;  SameNumberAs(n) ── 1 Model entry n
 Control table 1 ── * Register row ; 0..* Instruction entry ; 1 Verification flag
-Control table 1 ── 1 Mode source (derived from 1 mode row, or from the CW/CCW pair)
+Control table 1 ── 1 Mode source (1 mode row + 1 Operating modes, or the CW/CCW pair)
 ```
 
 Data after each PR:
@@ -200,7 +232,8 @@ Data after each PR:
 | Mapped files | 69 | 69 | 72 |
 | `not_mapped` | none (3 warnings) | 3 records | 3 records |
 | `Verified` tables | 0 | 1 (AX-12A) | 4 (+ MX-64(2.0), AX-12+, MX-64 P1) |
-| Mode source `OperatingMode` / `ControlMode` / `AngleLimits` (all tables) | 66 / 1 / 5 | 66 / 1 / 5 | 66 / 1 / 8 |
+| Mode row `Operating Mode` / `Control Mode` / none (CW/CCW pair) (all tables) | 66 / 1 / 5 | 66 / 1 / 5 | 66 / 1 / 8 |
+| Tables with `operating_modes` | 0 | 67 | 67 |
 | Model entry key `tables` | every entry | every entry (legacy) | none (an error) |
 
 ## Table check report

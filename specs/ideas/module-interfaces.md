@@ -276,7 +276,7 @@ impl LimitMode {
   `Control Mode` + CW/CCW, the 5 AX tables have CW/CCW only; T2's 3 MX P1 tables add CW/CCW only.
 - `position_limits()` / `position_limits_raw()` return the EEPROM limits in every mode
   (architect 2026-10-28); the rustdoc says they are applied only in `Bounded` mode.
-- Setup cost: one 1-byte read per actuator for `OperatingMode` and `ControlMode` models, on
+- Setup cost: one 1-byte read per actuator for `ModeSource::Register` models, on
   either protocol (X and MX(2.0) on P1 use the same table as on P2); none for `AngleLimits` (AX,
   MX P1).
 - Memory cost: zero. `mode` fits in the 3 padding bytes after `id` in `Cache`.
@@ -449,7 +449,7 @@ pub enum SetupError {
     Missing { id: Id },                                   // declared, did not answer
     WrongModel { id: Id, declared: u16, found: u16 },
     NotOnBus { id: Id },                                  // target Id the bus does not hold
-    /// Operating Mode / Control Mode value not listed for the family (§2.4b). No fallback.
+    /// Operating Mode / Control Mode value in none of the model's `operating_modes` lists (§2.4b). No fallback.
     UnknownOperatingMode { id: Id, value: u8 },
 }
 ```
@@ -584,7 +584,7 @@ impl Xm430W350 {
     pub(crate) const fn new(id: Id) -> Self;
     pub(crate) const DATA: ModelData = ModelData {
         /* name, number, protocols, roles, hardware_error, */
-        mode: ModeSource::OperatingMode { register: Self::OPERATING_MODE, values: ModeValues::X }, // §2.4b
+        mode: ModeSource::Register { register: Self::OPERATING_MODE, values: ModeValues { bounded: &[3], unbounded: &[4, 5], no_position: &[0, 1, 16] } }, // §2.4b, from `operating_modes`
         /* scale */
     };
     pub(crate) const TORQUE_ENABLE: Register = super::reg(64, 1, Access::RW, Area::Ram);
@@ -950,10 +950,6 @@ Open:
   19); the roadmap line "AX-12+, AX-18F, XW430-T200 … Adding the number is enough" is stale (the
   numbers are shared, §3.2). Then regenerate `docs/srs/modules/*.md`; `bus.md` also predates the
   clock-before-`N` change.
-- `position_limits()` and `position_limits_raw()` return the EEPROM limits in every mode, though
-  the firmware ignores them outside `Bounded`. Keep, or return `None` outside `Bounded` (core
-  research R-17)?
-- How X1 picks `ModeValues` per table (§2.4b, open; xtask plan to settle).
 - AX-18F is recorded as `SameNumberAs(18)` (tables plan, deviation 2): the AX-18A page covers
   "AX-18F, AX-18A", number 18, same layout. Data only; confirm.
 - `cache_mut` misuse (core research R-12): generic user code bounded on `A: Actuator` can call

@@ -16,7 +16,10 @@ Prototypes ran in scratch crates under `/tmp/claude-1000/xtaskplan/` (never in t
 
 **Decision**: xtask reads exactly the schema of contract §3 with serde + ron 0.12.2.
 
-- Tables keep the existing brace-to-paren rewrite, then `ron::from_str`.
+- Tables keep the existing brace-to-paren rewrite, then are read with the same options as the
+  map (below), so `operating_modes` is a plain optional field
+  (`#[serde(default)] Option<OperatingModes>`, with `OperatingModes { bounded: Vec<u8>,
+  unbounded: Vec<u8>, no_position: Vec<u8> }`).
 - `dynamixel.ron` is read with `ron::Options::default().with_default_extension(Extensions::IMPLICIT_SOME)`,
   so `p1`, `p2` and `default` are plain optional fields (`#[serde(default)] Option<_>`).
 - `source` is an enum `Unverified | Verified { url, verified }`. `protocols` is a list of the
@@ -31,7 +34,12 @@ Prototypes ran in scratch crates under `/tmp/claude-1000/xtaskplan/` (never in t
 `Verified(url: "...", verified: "...")` and `Unverified` both parse; a missing `access` gives
 "Unexpected missing field named `access` in `Row`"; a missing `protocols` gives the same for
 `Table`; `default: P3` names the bad variant; the legacy `tables:` field is ignored. Without
-`IMPLICIT_SOME`, `p1: [...]` fails with `ExpectedOption`, so the extension is required.
+`IMPLICIT_SOME`, `p1: [...]` fails with `ExpectedOption`, so the extension is required. The
+same holds for `operating_modes` in a table (tables research R-1, prototype 2026-10-28): without
+the extension, `operating_modes: (bounded: [3], …)` fails with "Expected option"; with it, the
+field parses, an absent one is `None`, a value above 255 fails with "Integer is out of bounds",
+and a missing list with "Unexpected missing field" (both check 1). Today's xtask ignores the field:
+with `operating_modes` added to three tables, `cargo xtask codegen` changed no file.
 
 **Alternatives considered**:
 - `p1: Vec<_>` with `#[serde(default)]`. Rejected: an explicit `p1: []` and a missing `p1` look
@@ -95,11 +103,11 @@ per problem.
 | Limits, min/max form | `Min Position Limit` + `Max Position Limit` | one complete form |
 | Limits, CW/CCW form | `CW Angle Limit` + `CCW Angle Limit` | one complete form |
 | Hardware fault | `Hardware Error Status` | no; absent gives `None` |
-| Operating mode | `Operating Mode` or `Control Mode` | at most one; neither only with the CW/CCW form (R-17) |
+| Operating mode | `Operating Mode` or `Control Mode`, with the table's `operating_modes` | at most one; neither (and no `operating_modes`) only with the CW/CCW form (R-17) |
 
 Both limit forms present, or one half of a form, is an error. Role attributes are checked as in
 contract §4.3 (Torque Enable and Goal Position `RW`/`RAM`, Present Position `R`/`RAM`, limits
-`RW`/`EEPROM`), plus a mode register 1 byte in `EEPROM` (plan C5). A table listed under `p1`
+`RW`/`EEPROM`, a mode register 1 byte, `RW`, `EEPROM`; plan C5). A table listed under `p1`
 must have every role register at address ≤ 255.
 
 **Rationale**: FR-011 and constitution III/IV: no guessed address. A scan of all 72 tables on
@@ -178,8 +186,8 @@ generated files. The value is table data, not a use of π, so the lint does not 
 
 **Decision**: each model type has `pub(crate) const DATA: ModelData`, and
 `Describe::data` returns `&Self::DATA`. `ModelData` refers to the role constants by name
-(`goal_position: Self::GOAL_POSITION`, `mode: ModeSource::OperatingMode(Self::OPERATING_MODE)`),
-so each address appears once per file.
+(`goal_position: Self::GOAL_POSITION`, `mode: ModeSource::Register { register:
+Self::OPERATING_MODE, values: ModeValues { … } }`), so each address appears once per file.
 
 **Rationale**: the prototype compiled `fn data(&self) -> &'static ModelData { &Self::DATA }`.
 Constant promotion applies, since `ModelData` has no `Drop` and no interior mutability. No `static`
@@ -246,8 +254,10 @@ file has its own imports, and only the items it uses in every combination in whi
 
 - `models.rs`: items used with no family too (`Actuator`, `Cache`, `Describe`, `ModelData`,
   `ModelNumber`, `SetupError`, `Id`, `ProtocolVersion`, `Access`, `Area`, `Register`). Not
-  `LimitRegisters`, `Protocols`, `ModeSource` or `PositionScale`: only model files use those.
-- A model file compiles only with its family, so it imports what its `DATA` and impls use.
+  `LimitRegisters`, `Protocols`, `ModeSource`, `ModeValues` or `PositionScale`: only model files
+  use those.
+- A model file compiles only with its family, so it imports what its `DATA` and impls use:
+  `ModeValues` only when the table has a mode register (an `AngleLimits` file does not use it).
 - `tests.rs`: top-level imports only for the tests that compile in every combination (the
   unknown-number test). A family-gated test imports what it needs inside its body.
 
@@ -280,8 +290,10 @@ the stand-in core types, which core-1 owns (contract conflict 14).
    written in the test, and checks the resolver result and the rendered `reg(...)` line against
    it, mode source included. That is SC-002. It also checks hand-written acceptance values:
    XM430-W350 Goal Position 116/4, AX-12A CW/CCW at 6/8, XL330-M077 boundary 53, AX-12A hardware
-   fault `None`, and the mode sources of XM430-W350 (`Operating Mode` at 11), XL-320 (`Control
-   Mode` at 11), AX-12A (angle limits) and YM070-210-M001 (`Operating Mode` at 33).
+   fault `None`, and the mode sources of XM430-W350 (`Operating Mode` at 11, the lists of its
+   `operating_modes`), XL-320 (`Control Mode` at 11, its lists), AX-12A (angle limits, no lists)
+   and YM070-210-M001 (`Operating Mode` at 33, its lists). The oracle reads the lists from each
+   table's `operating_modes` with its own parse, never from a family rule.
 3. **Generated crate tests** in `src/models/tests.rs` (`#[cfg(test)] mod tests;` in
    `models.rs`). For every (protocol, model number) they check the lookup at firmware 0, at each
    `from_fw` and the value before it, and at 255. With the family off (`cfg(not)`), they check
@@ -321,14 +333,15 @@ section 2 in core-1. X1 emits:
 - `impl Actuator` that still spells out `id`, `model_number` and `name`. Core-1's trait requires
   them, and core-2's provided methods accept the overrides.
 - `ActuatorKind::new` returning `SetupError` (core-1 adds it).
-- `mode: ModeSource::…` in every `DATA` (R-17).
+- `mode: ModeSource::…` in every `DATA`, with `ModeValues` where the table has a mode register
+  (R-17).
 - Imports: every item by its owning module, as in the core plan's path table
-  (`specs/004-core/contracts/core-api.md`, "Paths for xtask and bus"):
-  `crate::actuator::{Actuator, Cache, Describe, LimitRegisters, ModeSource, ModelData, ModelNumber,
-  Protocols}`, `crate::units::PositionScale`, `crate::error::SetupError`, `crate::id::Id`,
+  (`specs/004-core/contracts/core-api.md`, "Paths for xtask and bus"): `crate::actuator::{Actuator,
+  Cache, Describe, LimitRegisters, ModeSource, ModeValues, ModelData, ModelNumber, Protocols}`,
+  `crate::units::PositionScale`, `crate::error::SetupError`, `crate::id::Id`,
   `crate::protocol::ProtocolVersion` and `crate::register::{Access, Area, Register}`. No root
-  re-export is used, so generated code does not depend on when core adds them (contract §2.8 is
-  the list at the end of the chain). Each file imports only what it uses (R-10).
+  re-export is used, so generated code does not depend on when core adds them (contract §2.8 is the
+  list at the end of the chain). Each file imports only what it uses (R-10).
 
 **Rationale**: contract §7. Two things the contract leaves open are raised as clarifications in
 plan.md. The core plan (`specs/004-core/plan.md`, D1, D2 and its clarifications) resolves both
@@ -407,53 +420,72 @@ Indirect Address Write).
 **Rationale**: the generated `tests` module must not collide with a table named `tests`. No
 table name today is a keyword; the check makes that hold for the future too.
 
-## R-17 Mode source (limits follow the operating mode)
+## R-17 Mode source (limits follow the operating mode; the values live in the tables)
 
 **Decision**: each model's `DATA` gets `mode: ModeSource` (core's type, contract §2.4b, §2.6),
-from rows matched by exact `data_name`:
+from the rows matched by exact `data_name` and the table's `operating_modes` (contract §3.1,
+architect 2026-10-28):
 
-1. Check 17 fails first if the table has an `Operating Mode` row beside CW/CCW Angle Limit rows,
-   both an `Operating Mode` and a `Control Mode` row, or neither a mode row nor CW/CCW Angle
-   Limit rows.
-2. An `Operating Mode` row gives `ModeSource::OperatingMode(Self::OPERATING_MODE)`.
-3. Else a `Control Mode` row gives `ModeSource::ControlMode(Self::CONTROL_MODE)`.
-4. Else (CW/CCW Angle Limits, no mode row) it is `ModeSource::AngleLimits`.
+1. Check 17 fails first if the table has an `Operating Mode` row beside CW/CCW Angle Limit rows;
+   both an `Operating Mode` and a `Control Mode` row; neither a mode row nor CW/CCW Angle Limit
+   rows; a mode row without `operating_modes`; `operating_modes` without a mode row; or one
+   value in two of its lists.
+2. An `Operating Mode` row, else a `Control Mode` row, gives
+   `ModeSource::Register { register: Self::<CONST>, values: ModeValues { bounded: &[..],
+   unbounded: &[..], no_position: &[..] } }`. `<CONST>` is the row's constant
+   (`OPERATING_MODE` or `CONTROL_MODE`, built by `super::reg(..)` like every row); the three
+   slices are the table's lists, in table order, printed as `u8` literals (`&[]` when empty).
+3. Else (CW/CCW Angle Limits, no mode row, no `operating_modes`) it is `ModeSource::AngleLimits`.
 
-Check 11 requires a mode register to be 1 byte in `EEPROM` (plan C5). The mode register is
-named by its constant, like the other roles (R-7). A mode row above address 255 in a table listed
-under `p1` fails check 14, like any role.
+Check 11 requires a mode register to be 1 byte, `RW`, `EEPROM` (contract §4.3, plan C5). A mode
+row above address 255 in a table listed under `p1` fails check 14, like any role. A value outside
+`u8` or a missing list key in `operating_modes` is a parse error (check 1, R-1). X1 does not check
+the lists against a family, and does not ask for a value in any list: a value in no list is
+decided at Setup (`UnknownOperatingMode`, core and bus).
+
+Example, XM430-W350 after T1:
+
+```rust
+mode: ModeSource::Register {
+    register: Self::OPERATING_MODE,
+    values: ModeValues { bounded: &[3], unbounded: &[4, 5], no_position: &[0, 1, 16] },
+},
+```
 
 **Rationale**: contract §2.4b (architect, 2026-10-28): the firmware applies position limits only
-in position mode, so the goal check follows the mode, and Setup must know where to read it. A
-scan of all 72 tables on `dev`:
+in position mode, so the goal check follows the mode, and Setup must know where to read it and
+what each value means. One value means different modes in different families (5: unbounded on X
+and MX(2.0), bounded on RH-P12-RN, a `pro` table), so neither the register nor the map's
+`family` can say it. The tables carry the lists, copied from each model's page, and X1 copies
+them unchanged: no rule keyed on a family or a file name (constitution III), and a new model is a
+data change only (SC-005). A scan of all 72 tables on `dev`, with the lists T1 writes (tables
+research R-15, expected from core research R-17; each table's page wins):
 
-| Table has | Tables | `mode` |
-|---|---|---|
-| `Operating Mode` (1 byte), min/max limits | 66: X, MX(2.0), PRO, PRO+ at address 11 (54); Y at 33 (12) | `OperatingMode` |
-| `Control Mode` at 11 (1 byte), CW/CCW limits | `xl320` | `ControlMode` |
-| no mode row, CW/CCW limits | `ax_12a`, `ax_12_plus`, `ax_12w`, `ax_18a`, `ax_18f`; MX(1.0) P1 tables after T2 | `AngleLimits` |
+| Table has | Tables | `mode` | `values` (bounded / unbounded / no_position) |
+|---|---|---|---|
+| `Operating Mode` (1 byte), min/max limits | 66: X, MX(2.0), PRO, PRO+, RH at address 11 (54); Y at 33 (12) | `Register` | X, MX(2.0): `[3]` / `[4, 5]` / `[0, 1, 16]` (XL430-W250, 2XL430-W250: `[3]` / `[4]` / `[1, 16]`); PRO (A), PRO+: `[3]` / `[4]` / `[0, 1, 16]`; RH-P12-RN(A): `[5]` / `[]` / `[0]`; Y: `[3]` / `[]` / `[0, 1]` |
+| `Control Mode` at 11 (1 byte), CW/CCW limits | `xl320` | `Register` | `[2]` / `[]` / `[1]` |
+| no mode row, CW/CCW limits | `ax_12a`, `ax_12_plus`, `ax_12w`, `ax_18a`, `ax_18f`; MX(1.0) P1 tables after T2 | `AngleLimits` | none |
 
-No table has an `Operating Mode` row beside CW/CCW limits, and none has both mode rows, so every
-table resolves today and check 17 guards future tables only. Matching by name keeps
-constitution III and IV: the register comes from the table, never from a family rule. What each
-value means (X: 3 → `Bounded`; 4, 5 → `Unbounded`; 0, 1, 16 → `NoPosition`; XL-320: 1 →
-`NoPosition`, 2 → `Bounded`; AX: CW = CCW = 0 → `NoPosition`) is core's, cited from each
-e-Manual page. Codegen emits no value table. The Setup cost (one 1-byte read on P2 and XL-320,
-none on AX and MX P1) is the bus's.
-
-Open for core and the architect: contract §2.4b maps Operating Mode values "per family", but
-`ModeSource::OperatingMode(Register)` carries no family. If core's value lists differ between
-families (PRO, PRO+, Y or RH-P12-RN against X), the contract must change first, and X1 then emits
-the discriminator. X1 can derive one per family from the map's `family` with no new input. It
-cannot split a family (RH-P12-RN is a `pro` table): that needs table data, never a rule keyed on
-a file name (constitution III). Until the contract changes, X1 emits §2.4b's shape.
+No table has an `Operating Mode` row beside CW/CCW limits, and none has both mode rows. After T1
+every table with a mode row has `operating_modes` (the tables check enforces it, tables plan
+deviation 4), so every table resolves and check 17 guards future tables only. Matching by name
+keeps constitution III and IV: the register and the values come from the table. The Setup cost
+(one 1-byte read on P2 and XL-320, none on AX and MX P1) is the bus's.
 
 **Alternatives considered**:
 - Derive the source from the limit form alone (min/max → `Operating Mode`, CW/CCW → angle
   limits). Rejected: XL-320 has CW/CCW limits and a `Control Mode` register, and a register
   inferred from the form is a guess.
-- Emit a mode-value table per model from xtask. Rejected: the tables hold no mode values, and
-  the mapping is core's (contract §2.4b).
+- Per-family value lists in core (`ModeValues { X, Pro, Y, RhP12Rn }`), X1 picking the variant
+  from the map's `family`. Rejected by the architect (2026-10-28): the family cannot single out
+  RH-P12-RN (a `pro` table), and every new family would need core code. Splitting a family by
+  file name or model number in xtask: rejected, constitution III.
+- Separate `OperatingMode` and `ControlMode` variants. Rejected (contract §2.4b): with the lists
+  in the table, XL-320's register decodes like any other, so one `Register` variant serves both.
+- `register` as a literal `reg(addr, size, ..)` in `DATA`. Rejected: the row's constant already
+  holds it (R-7), so the address stays on one line.
 - A per-family mode register in xtask. Rejected, as in R-4: it duplicates table data.
-- A warning instead of an error for two mode rows. Rejected: Setup reads exactly one register,
-  so picking one is a guess.
+- A warning instead of an error for two mode rows, or for a mode row without its lists.
+  Rejected: Setup reads exactly one register and decodes it with exactly one set of lists, so
+  picking one or using a default is a guess.

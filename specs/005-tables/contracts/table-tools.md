@@ -31,7 +31,8 @@ dual-protocol models
   1020 XM430-W350   p1: xm430_w350   p2: xm430_w350   default: P2
 errors
   xl320.ron: row 30 "Goal Position": missing `area`
-summary: 72 tables, 1 verified, 71 unverified, 69 mapped, 3 not mapped, 28 dual-protocol, 1 error
+  xm430_w350.ron: `operating_modes`: value 4 in both `bounded` and `unbounded`
+summary: 72 tables, 1 verified, 71 unverified, 69 mapped, 3 not mapped, 28 dual-protocol, 2 errors
 ```
 
 Errors go to stdout under `errors` and are also printed one per line to stderr. Every error names
@@ -62,8 +63,9 @@ data-model §3), so a table the check passes is not rejected by codegen for its 
 | 14 | no role above 255 in a table under `p1`, the mode register included |
 | 15 | scale sanity |
 | 16 | no duplicate register constant in a table; no duplicate type identifier among mapped files; no module identifier `tests` or a keyword |
-| 17 | exactly one mode source: none, an `Operating Mode` row beside CW/CCW Angle Limit rows, or both mode rows fail |
-| — (tables only) | `Control Mode` only in `xl320`; the mode-source rules on unmapped tables too |
+| 17 | exactly one mode source: none, an `Operating Mode` row beside CW/CCW Angle Limit rows, or both mode rows fail; a mode row without `operating_modes`, `operating_modes` without a mode row, or a value in two of its lists fails |
+| 1 (parse, for X1) | `operating_modes` with a missing key or a value outside 0–255 |
+| — (tables only) | `Control Mode` only in `xl320`; the mode-source and `operating_modes` rules on unmapped tables too |
 | — (tables only) | T1: legacy `tables` equals the default (or only) list. T2 on: no `tables` key |
 
 Codegen stays the authority. If xtask adds a data check, this table and the check follow. Rows

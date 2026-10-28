@@ -205,7 +205,7 @@ Autoscan (`autoscan()`):
    - `register()` is `None` (`AngleLimits`: AX, MX on P1): no read,
      `LimitMode::from_angle_limits(limits)` on the limits of step 3.
    - `cache_mut().record_mode(mode)`.
-   - Function names are core's (specs/004-core contracts); module-interfaces §2.4b names none.
+   - Function names are module-interfaces §2.4b's (specs/004-core contracts).
 5. Push the actuator and set its slot to `TorqueState::Off`. No torque write is sent (FR-014).
 
 A hardware fault reported at Setup fails Setup (spec Assumptions, proposal Q6).
@@ -323,16 +323,18 @@ An empty target list returns `Ok(())` and sends nothing.
   (<https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>). That is not a hardware fault in
   `is_hardware_fault`.
 - XL-320 Control Mode (1 wheel, 2 joint) and MX on P1 multi-turn (CW = CCW = 4095) are taken
-  from module-interfaces §2.4b; core cites them per family.
+  from module-interfaces §2.4b. The value lists live in the tables (each table's
+  `operating_modes`, architect 2026-10-28) and reach the bus as the model's `ModeValues`; core
+  research R-17 cites them.
 
 **Decision**: The goal check follows the mode the firmware is in (module-interfaces §2.4b).
 - Setup reads the mode once, after the limits (R-6 step 4): one 1-byte read of Operating Mode
   (X, MX(2.0), PRO, PRO+, Y) or Control Mode (XL-320); none for AX and MX on P1, whose mode
-  comes from the CW/CCW limits just read. Core maps the value to a `LimitMode`
-  (`ModeSource::limit_mode`, `LimitMode::from_angle_limits`) and the bus calls
+  comes from the CW/CCW limits just read. Core maps the value to a `LimitMode` with the model's
+  own lists (`ModeSource::limit_mode`, `LimitMode::from_angle_limits`) and the bus calls
   `cache_mut().record_mode(mode)`.
-- An unlisted value fails Setup with `SetupError::UnknownOperatingMode { id, value }`. No
-  fallback mode (constitution III).
+- A value in none of the model's lists fails Setup with
+  `SetupError::UnknownOperatingMode { id, value }`. No fallback mode (constitution III).
 - The goal path is unchanged: `cache.check_goal(raw)` applies the mode.
   - `Bounded` (position, joint): the EEPROM limits, `OutOfLimits` outside.
   - `Unbounded` (extended and current-based position, MX multi-turn): no limit check, as on the
@@ -544,7 +546,8 @@ R-4: it happens at startup, outside any bus exchange.
 - Reads decode with `Register::decode`, then `scale.to_position`.
 - In position mode the limits a user sees (`Actuator::position_limits[_raw]`) are the ones
   `check_goal` uses, so "rounds outside the limits" (US4 AS3) is refused in both forms. In
-  extended position modes they are still the EEPROM values, but not applied (R-9).
+  every other mode they are still the EEPROM values, but not applied (R-9); the rustdoc says so
+  (architect 2026-10-28, module-interfaces §2.4b).
 
 ## R-20 Tier 2 and `Actuator` on the handle
 

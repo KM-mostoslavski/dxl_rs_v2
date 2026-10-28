@@ -4,10 +4,10 @@
 **Cross-module contract**: `specs/ideas/module-interfaces.md` §4
 
 This is what `cargo xtask codegen` writes into `src/models.rs` and `src/models/`. Signatures and
-`cfg` rules are the contract. Bodies are shown only where the shape matters to the bus.
-`Register`, `Access`, `Area`, `ModelData`, `LimitRegisters`, `Protocols`, `ModeSource`, `Cache`,
-`Describe`, `Actuator`, `PositionScale`, `ModelNumber`, `Id`, `SetupError` and `ProtocolVersion`
-are owned by core or protocol (contract §2, §5). Generated code only uses them.
+`cfg` rules are the contract. Bodies are shown only where the shape matters to the bus. `Register`,
+`Access`, `Area`, `ModelData`, `LimitRegisters`, `Protocols`, `ModeSource`, `ModeValues`, `Cache`,
+`Describe`, `Actuator`, `PositionScale`, `ModelNumber`, `Id`, `SetupError` and `ProtocolVersion` are
+owned by core or protocol (contract §2, §5). Generated code only uses them.
 
 ## Imports
 
@@ -26,13 +26,21 @@ use crate::protocol::ProtocolVersion;                                     // con
 use crate::register::{Access, Area, Register};                            // core-1
 ```
 
-`src/models/<module>.rs` compiles only with its family:
+`src/models/<module>.rs` compiles only with its family. A table with a mode register:
 
 ```rust
-use crate::actuator::{Actuator, Cache, Describe, LimitRegisters, ModeSource, ModelData, Protocols};
+use crate::actuator::{
+    Actuator, Cache, Describe, LimitRegisters, ModeSource, ModeValues, ModelData, Protocols,
+};
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
+```
+
+A table without one (`AngleLimits`: AX, MX on P1) does not import `ModeValues`:
+
+```rust
+use crate::actuator::{Actuator, Cache, Describe, LimitRegisters, ModeSource, ModelData, Protocols};
 ```
 
 `src/models/tests.rs` imports at the top only what the tests compiled in every combination use
@@ -192,7 +200,10 @@ impl Xm430W350 {
         present_position: Self::PRESENT_POSITION,
         limits: LimitRegisters::MinMax { min: Self::MIN_POSITION_LIMIT, max: Self::MAX_POSITION_LIMIT },
         hardware_error: Some(Self::HARDWARE_ERROR_STATUS),
-        mode: ModeSource::OperatingMode(Self::OPERATING_MODE),
+        mode: ModeSource::Register {
+            register: Self::OPERATING_MODE,
+            values: ModeValues { bounded: &[3], unbounded: &[4, 5], no_position: &[0, 1, 16] },
+        },
         scale: PositionScale::new(2048, 0, 4095, -3.1415927, 3.1400588),
     };
 
@@ -225,10 +236,13 @@ hard-codes a radian literal. The line above shows T1's corrected values (`-3.141
 Variations:
 
 - CW/CCW tables (AX, XL-320, MX on P1): `limits: LimitRegisters::CwCcw { cw: Self::CW_ANGLE_LIMIT, ccw: Self::CCW_ANGLE_LIMIT }`.
-- Mode source (contract §2.4b, research R-17): an `Operating Mode` row gives
-  `mode: ModeSource::OperatingMode(Self::OPERATING_MODE)` (X, MX(2.0), PRO, PRO+, Y); XL-320 gives
-  `mode: ModeSource::ControlMode(Self::CONTROL_MODE)`; a table with no mode register (AX, MX on P1)
-  gives `mode: ModeSource::AngleLimits`.
+- Mode source (contract §2.4b, §3.1, research R-17): an `Operating Mode` row gives
+  `mode: ModeSource::Register { register: Self::OPERATING_MODE, values: ModeValues { .. } }` (X,
+  MX(2.0), PRO, PRO+, RH-P12-RN, Y); XL-320 gives `mode: ModeSource::Register { register:
+  Self::CONTROL_MODE, values: ModeValues { bounded: &[2], unbounded: &[], no_position: &[1] } }`;
+  a table with no mode register (AX, MX on P1) gives `mode: ModeSource::AngleLimits`. The three
+  slices are the table's `operating_modes` lists, unchanged and in table order (`&[]` when
+  empty); the values above are T1's expected lists (tables research R-15).
 - No `Hardware Error Status` row (AX; Y-series until verified): `hardware_error: None`.
 - A verified table: `Verified against <url> on <YYYY-MM-DD>.` replaces the Unverified line.
 - `also` names: `(model number 12, also sold as AX-12+)`.

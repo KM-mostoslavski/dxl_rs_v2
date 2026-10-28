@@ -98,9 +98,9 @@ About 14 source files, delivered in 6 PRs.
 |---|---|---|
 | `ProtocolVersion`, `Protocol::VERSION`, `Exchange::{scan, read_many}`, `P2::sync_read`, `Clock` with `#[diagnostic::on_unimplemented]` | protocol PR #7, merged into `main` 2026-10-28 (module-interfaces §5) | bus-1, bus-2 (`scan`), bus-4 (`read_many`, `sync_read`) |
 | `ModelNumber`, `Position`, `PositionScale`, `TorqueState`, `Cache`, `Limits`, `Register` (+ `encode`/`decode`), `ModelData`, `LimitRegisters`, `Describe`, `Actuator` with provided methods | core-1 + core-2 | bus-1 |
-| `LimitMode`, `Cache::record_mode`, mode-aware `Cache::check_goal`, the mapping to `LimitMode`: `ModeSource::register()`, `ModeSource::limit_mode(value) -> Option<LimitMode>`, `LimitMode::from_angle_limits(Limits)` (module-interfaces §2.4b names no function; names from specs/004-core contracts) | core-1 | bus-1 |
+| `LimitMode`, `Cache::record_mode`, mode-aware `Cache::check_goal`, the mapping to `LimitMode`: `ModeSource::register()`, `ModeSource::limit_mode(value) -> Option<LimitMode>`, `LimitMode::from_angle_limits(Limits)` (module-interfaces §2.4b, specs/004-core contracts) | core-1 | bus-1 |
 | `ValidationError::{ActuatorIsOff, ActuatorFaulted, OutOfLimits, LimitsUnknown, InvertedLimits, NotFinite, DoesNotFit, BufferLength, DuplicateId, NotPositionMode}`, `SetupError` (with `UnknownOperatingMode { id, value }`) | core-1 | bus-1 |
-| `ActuatorKind::new(ProtocolVersion, ModelNumber, fw, Id)`, `ActuatorKind::firmware_register`, `models::MODEL_NUMBER`, generated `Describe` impls, `ModelData::mode: ModeSource` | xtask X1 (regenerated) | bus-1 |
+| `ActuatorKind::new(ProtocolVersion, ModelNumber, fw, Id)`, `ActuatorKind::firmware_register`, `models::MODEL_NUMBER`, generated `Describe` impls, `ModelData::mode: ModeSource` (with each model's `ModeValues` lists from its table's `operating_modes`) | xtask X1 (regenerated) | bus-1 |
 
 ## Constitution Check
 
@@ -111,7 +111,7 @@ About 14 source files, delivered in 6 PRs.
 | I. no_std and Heap-Free | Storage is `heapless::Vec` + a fixed array. Staging for multi-actuator ops is a stack array of `N` entries. `DynBus` and `SerialBus` are `cfg(feature = "std")`. The no_std clippy build proves the rest cannot allocate. `tests/bus_no_alloc.rs` counts zero allocations per Cycle for `Bus` and `DynBus`, whose Vecs are sized at Setup. No `Rc`, `RefCell` or stored lifetime. Single-actuator access borrows `&mut Bus`. | PASS |
 | II. Absent Over Failing | `sync_read` exists only on `impl Bus<P2, …>`. Partial and raw methods exist only with their features, `DynBus`/`SerialBus` only with `std`. A model with no table on the bus protocol, or compiled out, fails Setup with `SetupError::UnsupportedModel`, before any byte for a declared list. `N > 253` is a compile error. A no_std bus without a named clock does not compile. | PASS |
 | III. Nothing Hidden | Setup sends no torque write and starts every slot `Off`. Limits come only from EEPROM; a failed read fails Setup. The operating mode is read at Setup; a failed read or an unlisted value fails Setup (`UnknownOperatingMode`), with no fallback mode. A goal while `Off` or `Faulted` returns `ActuatorIsOff`, and a goal in a non-position mode returns `NotPositionMode`, with zero bytes sent. No read-back after writes. Every unicast, sync-read and `raw-registers` reply passes `observe` (raw: architect, 2026-10-28). A failed torque write applies `disable()`: `Off` from `On`/`Off`, and `Faulted` stays `Faulted`. Retries are only the configured count, only on timeout or corruption. Faults at Setup fail Setup. | PASS |
-| IV. e-Manual Is the Only Source | The bus adds no register data. It uses generated `ModelData` (mode source included). The behaviour it relies on (limits per operating mode, reboot-only recovery on X-series, AX angle-limit error, P2 Sync Read reply order, alert bit) is cited from the e-Manual in research R-9, R-10 and R-11. The mode-value mapping per family is core's, cited there. | PASS |
+| IV. e-Manual Is the Only Source | The bus adds no register data. It uses generated `ModelData` (mode source included). The behaviour it relies on (limits per operating mode, reboot-only recovery on X-series, AX angle-limit error, P2 Sync Read reply order, alert bit) is cited from the e-Manual in research R-9, R-10 and R-11. The mode-value lists are table data (each table's `operating_modes`, generated into `ModeValues`; architect 2026-10-28), decoded by core and cited in core research R-17. | PASS |
 | V. Committed, Data-Driven Codegen | No generated file is edited. The bus reads `ModelData` through `Describe`. | PASS (N/A for edits) |
 | VI. Typed, Static, Panic-Free | `Position` and raw `i32` cross the API. `match`-based `ActuatorKind`, no `dyn`. Every fallible path returns `Result<_, Error>`. No `unwrap` outside tests. | PASS |
 | VII. DX First | `SerialBus::<P2>::open(path, baud)` and `autoscan()` give a working bus. `bus.enable_torque(bus.ids())` works because `IdSet` is `Copy` (prototype-checked). Every public item is documented. Features only add methods or types. | PASS |
@@ -156,19 +156,20 @@ behaviour the architect may change, not gate failures.
    FR-028). The plan sets `*state = state.disable()` after a non-hardware-fault error: `Off`
    from `On`/`Off`, `Faulted` kept. A hardware fault still gives `fault()`. FR-027 holds (never
    `On`). module-interfaces §2.5 now says the same (research R-7).
-6. **No bus PR removes PR #7's `expect(dead_code)` on `mod protocol;` (§1 exception unused).**
-   §1 lets the last of bus-2/3/4 delete
-   `#[cfg_attr(not(test), expect(dead_code, reason = "exchanges are called by the bus module"))]`
-   once every protocol item is used. Checked on `main` (2026-10-28) by building the lib without
-   the attribute: the only dead protocol item is `P2::broadcast_ping`. The bus never calls it.
-   Autoscan uses `Exchange::scan`, which passes corrupted replies on (module-interfaces conflict
-   16); `broadcast_ping` skips them. So the expectation stays fulfilled after every bus PR, and
-   the bus edits only its own lines in `src/lib.rs`. Removing `broadcast_ping` (or the
-   attribute) is the protocol owner's call. If a bus PR ever trips
-   `unfulfilled_lint_expectations`, it stops and raises it to that owner.
+6. **No bus PR touches PR #7's `expect(dead_code)` on `mod protocol;`: core-1 removes it.**
+   Checked on `main` (2026-10-28) by building the lib without
+   `#[cfg_attr(not(test), expect(dead_code, reason = "exchanges are called by the bus module"))]`:
+   the only dead protocol item is `P2::broadcast_ping`. The bus never calls it. Autoscan uses
+   `Exchange::scan`, which passes corrupted replies on (module-interfaces conflict 16);
+   `broadcast_ping` skips them. The architect decided on 2026-10-28 that core-1 deletes both
+   `P2::broadcast_ping` and the attribute, as a protocol touch listed in the core-1 PR
+   (module-interfaces §1, §5; specs/004-core research R-19). bus-1 lands after core-2, so no bus
+   PR sees either, and the bus edits only its own lines in `src/lib.rs`. This is no longer a
+   deviation: module-interfaces §1 says the same since commit 96b317a.
 7. **module-interfaces.md and the 2026-10-28 decisions.** Resolved: the contract now carries
    raw `observe` (§2.5), the mode step in Setup (§6), `NotPositionMode` and
-   `UnknownOperatingMode` (§2.7), and keeps PR #7's `expect(dead_code)` (§1).
+   `UnknownOperatingMode` (§2.7), core-1's removal of `P2::broadcast_ping` and PR #7's
+   `expect(dead_code)` (§1, §5), and the mode value lists in the tables (§2.4b, §3.1).
 
 ## Deviations from the SRS
 
@@ -279,18 +280,19 @@ the doctest and waits for bus-2 as well as bus-3.
 `DynBus::read_positions_partial` / `read_positions_raw_partial` and their no-alloc case
 (T072 in bus-5, T084 in bus-6); the first skips its task.
 
-**`expect(dead_code)` on `mod protocol;`** (deviation 6). It stays. bus-1 uses
-`ping`/`read`/`write`, bus-2 `scan`, bus-3 `sync_write`, bus-4 `read_many`/`P2::sync_read`.
-`P2::broadcast_ping` stays unused, so the expectation stays fulfilled. Every bus PR runs
-`cargo clippy --all-targets -- -D warnings` (quickstart §1); an `unfulfilled_lint_expectations`
-error there is raised to the protocol owner, never fixed in a bus PR.
+**`expect(dead_code)` on `mod protocol;`** (deviation 6). core-1 removes it together with
+`P2::broadcast_ping`, before any bus PR. bus-1 uses `ping`/`read`/`write`, bus-2 `scan`, bus-3
+`sync_write`, bus-4 `read_many`/`P2::sync_read`. Every bus PR runs
+`cargo clippy --all-targets -- -D warnings` (quickstart §1) and changes nothing in `src/lib.rs`
+beyond its own lines; anything wrong in `src/protocol*` is raised to the protocol owner, never
+fixed in a bus PR.
 
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
 | One module in six PRs | Steps 4, 5, 6, 9 and 10 depend on other modules landing in order (core-1, X1, core-2; the protocol hooks are merged). Each PR stays reviewable and reaches 70 % coverage alone. | One PR would sit open until every prerequisite merged and be too large to review. The seven-PR proposal would leave `main` with a bus that ignores faults. |
-| `src/lib.rs` (core) touched by every bus PR | `mod bus;` and the `pub use` lines must be in the crate root. Nothing else in `lib.rs` changes (deviation 6). | No alternative (module-interfaces §1). |
+| `src/lib.rs` (core) touched by every bus PR | `mod bus;` and the `pub use` lines must be in the crate root. Nothing else in `lib.rs` changes; PR #7's `expect(dead_code)` is core-1's to remove (deviation 6). | No alternative (module-interfaces §1). |
 | `Cargo.toml` touched (bus-1, bus-5) | `heapless` is the storage. `partial-reads`/`raw-registers` gate API. | Allowed by §1 split ownership. Flagged as a shared-file touch. |
 | `tests/bus_no_alloc.rs` outside `src/bus/**` (bus-4 creates it, bus-5 and bus-6 extend it) | A runtime zero-allocation check needs its own global allocator, so its own test binary (R-12). | An in-crate test cannot install a second allocator or read the protocol's private counter. The static no_std proof does not cover `DynBus`. |
 | Test-only status and instruction builders duplicate a little protocol code | Protocol's builders and vectors are private test modules (R-13). Byte-exact `sent()` checks need the instruction side too. | Editing protocol is forbidden to this module. The builders are checked against e-Manual examples. |

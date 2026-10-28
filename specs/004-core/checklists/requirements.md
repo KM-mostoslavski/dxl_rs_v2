@@ -49,3 +49,7 @@
   generated-code sequencing is core-1 → X1 → core-2 (plan). The architect's decisions of
   2026-10-28 (limits follow the operating mode, FR-021 to FR-023; `raw-registers` faults; partial
   reads; conflict 19 accepted) are in the spec's Clarifications. The items above still pass.
+- Update 2026-10-28 (module-interfaces commit 96b317a): the mode value lists live in the tables
+  (FR-022, FR-023, SC-009), the position limits are returned in every mode (FR-005), and core-1
+  deletes the unused protocol broadcast ping helper (Assumptions). All in the spec's
+  Clarifications; the items above still pass.

@@ -4,7 +4,8 @@
 time) | **Date**: 2026-10-27, updated 2026-10-28 (architect decisions) | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/004-core/spec.md`, SRS module `docs/srs/modules/core.md`,
-the cross-module contract `specs/ideas/module-interfaces.md` (sections 1, 2, 7), constitution 1.3.0.
+the cross-module contract `specs/ideas/module-interfaces.md` (sections 1, 2, 3.1, 5, 7),
+constitution 1.3.0.
 
 ## Summary
 
@@ -16,7 +17,9 @@ Core gives every other module its shared types. It does no I/O. It adds:
   nothing else), with the one limit check used by the typed and the raw path.
 - **`LimitMode`** (`Bounded | Unbounded | NoPosition`, one byte in the `Cache` padding) and
   **`ModeSource`** / **`ModeValues`**: limits follow the operating mode (architect, 2026-10-28).
-  Core maps each family's Operating Mode values, cited from the e-Manual (research R-17).
+  Core decodes a mode value with the model's own value lists, which X1 generates from each
+  table's `operating_modes` field; core holds no per-family list (architect, 2026-10-28). The
+  reference lists with their e-Manual citations stay in research R-17.
 - **`TorqueState`**: one byte, `Off | On | Faulted`, with its transition rules. The bus stores it.
 - **`ModelNumber`**, **`ModelData`**, **`LimitRegisters`**, **`Protocols`** and the sealed
   **`Describe`** trait: what the bus needs from a model, all crate-internal.
@@ -29,7 +32,7 @@ Core ships as **two PRs**, as in module-interfaces §7:
 
 | PR | Content | Needs |
 |---|---|---|
-| **core-1** | Every type above (the limit mode included: it is additive), `Describe` standalone, `Error::Setup`. Shims keep today's generated code building with no regeneration. Fixes the no-family `dead_code` error. | Protocol PR #7 with `ProtocolVersion` (§5): **merged** into `main` (f338e2a), root re-export included |
+| **core-1** | Every type above (the limit mode included: it is additive), `Describe` standalone, `Error::Setup`. Shims keep today's generated code building with no regeneration. Fixes the no-family `dead_code` error. Deletes `P2::broadcast_ping` and PR #7's `expect(dead_code)` on `mod protocol;`, a flagged protocol touch (module-interfaces §1, architect 2026-10-28; research R-19). | Protocol PR #7 with `ProtocolVersion` (§5): **merged** into `main` (f338e2a), root re-export included |
 | **core-2** | `Actuator: Describe` with provided methods; removes the shims; tests over every compiled-in model. | xtask X1 |
 
 Technical approach (research.md): manual rounding (core has no `f32::round`), `i64`
@@ -63,7 +66,10 @@ division per call. The register lookup is a `match` returning `&'static ModelDat
 **Constraints**: no panic on any input, no allocation, no `dyn` (FR-018). Only core paths are
 edited (`src/lib.rs`, `src/id.rs`, `src/error.rs`, `src/actuator.rs`, `src/register.rs`,
 `src/units.rs`, `src/units/**`). No edit to `src/models*`, `xtask/`, `control_tables/`,
-`Cargo.toml`.
+`Cargo.toml`. One exception, in core-1 only (module-interfaces §1, §5; architect 2026-10-28):
+the protocol touch that deletes `P2::broadcast_ping` (`src/protocol/p2.rs`, its tests, its call
+in `src/protocol/no_alloc.rs`, its mention in the `Pong::fault` doc in `src/protocol.rs`) and
+PR #7's `expect(dead_code)` on `mod protocol;` in `src/lib.rs` (research R-19).
 
 **Scale/Scope**: about 18 types and 16 new error variants. core-1 ≈ 1100 lines with tests,
 core-2 ≈ 280 lines.
@@ -75,18 +81,21 @@ core-2 ≈ 280 lines.
 | Principle | Check | Status |
 |---|---|---|
 | I. no_std and Heap-Free | Only `core` + `thiserror`. No `alloc`, no `Vec`, no `String`. Errors are `Copy`. Checked by the no_std clippy line. | PASS |
-| II. Absent Over Failing | Core adds no protocol-specific method. `UnsupportedModel` still fails Setup, now under `SetupError`, keeping `model_number` and `feature` and adding `id` and `protocol` (conflict 19, accepted 2026-10-28). | PASS. The text of Principle II still writes `UnsupportedModel { model_number, feature }`: a wording amendment for the architect (T056). |
-| III. Nothing Hidden | `TorqueState` starts `Off`. `Faulted` is off. No constructor fills limits from a table (FR-007). The limit check refuses when limits are unknown. An operating mode value not listed for the family has no mapping, and the bus fails Setup with `UnknownOperatingMode` (no fallback mode). In `Unbounded` mode the goal check is the register size only, as the firmware does; the docs say so. A fault on a `raw-registers` reply also sets `Faulted` (2026-10-28): core has no exception. | PASS, with one transitional exception (Complexity Tracking row 2) |
-| IV. e-Manual Is the Only Source | Core holds no register addresses. Scale and registers come from the tables module. The one capability core encodes, the Operating Mode value lists per family, is cited value by value from the e-Manual pages in research R-17. Test values are checked against the pages cited in research R-7, R-9 and R-17. | PASS |
-| V. Committed, Data-Driven Codegen | Core never edits `src/models*`. Each core PR leaves `cargo xtask codegen` output unchanged. | PASS |
-| VI. Typed, Static, Panic-Free API | `Position` newtype, raw `i32` path kept. Static dispatch only (the mode mapping is a `match` in a `const fn`). Every conversion returns `Result`. Five error categories, with `Setup`, as constitution 1.3.0 lists them. | PASS |
+| II. Absent Over Failing | Core adds no protocol-specific method. `UnsupportedModel` still fails Setup, now under `SetupError`, keeping `model_number` and `feature` and adding `id` and `protocol` (conflict 19, accepted 2026-10-28). | PASS. The text of Principle II still writes `UnsupportedModel { model_number, feature }`: a wording amendment for the architect (T059). |
+| III. Nothing Hidden | `TorqueState` starts `Off`. `Faulted` is off. No constructor fills limits from a table (FR-007). The limit check refuses when limits are unknown. An operating mode value in none of the model's lists has no mapping, and the bus fails Setup with `UnknownOperatingMode` (no fallback mode). In `Unbounded` mode the goal check is the register size only, as the firmware does; the docs say so. A fault on a `raw-registers` reply also sets `Faulted` (2026-10-28): core has no exception. | PASS, with one transitional exception (Complexity Tracking row 2) |
+| IV. e-Manual Is the Only Source | Core holds no register addresses and no mode values. Scale, registers and the Operating Mode value lists come from the tables module (`operating_modes`, architect 2026-10-28), through X1's generated `ModelData`. Research R-17 keeps today's lists, cited value by value from the e-Manual, as the reference the tables are checked against and the source of core's test fixtures. Test values are checked against the pages cited in research R-7, R-9 and R-17. | PASS |
+| V. Committed, Data-Driven Codegen | Core never edits `src/models*`. Each core PR leaves `cargo xtask codegen` output unchanged. A new model or family's mode values are a table change, not a core change. | PASS |
+| VI. Typed, Static, Panic-Free API | `Position` newtype, raw `i32` path kept. Static dispatch only (the mode mapping is a `const fn` walk over three `&'static [u8]` lists). Every conversion returns `Result`. Five error categories, with `Setup`, as constitution 1.3.0 lists them. | PASS |
 | VII. DX First | `goal + Position::from_radians(0.1)` in one expression. Every public item documented (`missing_docs` from PR #7). No feature changes core behaviour. Breaking changes (`UnsupportedModel` moves) are called out in the PR. | PASS |
-| Workflow: one module per PR | Core ships as core-1 and core-2. | **DEVIATION**: Complexity Tracking row 1. Needs the architect's approval (module-interfaces §9). |
+| Workflow: one module per PR | Core ships as core-1 and core-2. core-1 also deletes one dead protocol item. | **DEVIATION**: Complexity Tracking rows 1 and 3. Row 1 needs the architect's approval (module-interfaces §9); row 3 is the architect's decision of 2026-10-28. |
 | Workflow: gates (fmt, clippy, test, no_std, codegen diff, ≥ 70 % coverage) | Each PR runs all of them. core-1 also makes `--no-default-features` pass under `-D warnings` (today it fails, reproduced). | PASS |
 
 **Post-design re-check (after Phase 1, and after the 2026-10-28 decisions)**: unchanged. No new
 violation. The three deviations from module-interfaces.md below keep every gate green across the
-core-1 → X1 → core-2 sequence.
+core-1 → X1 → core-2 sequence. The later 2026-10-28 decisions (commit 96b317a: value lists in the
+tables, `position_limits*` in every mode, core-1 deletes `P2::broadcast_ping`) add no violation:
+core encodes less capability data than before, and the protocol touch is Complexity Tracking
+row 3.
 
 ## Deviations from module-interfaces.md
 
@@ -94,14 +103,18 @@ core-1 → X1 → core-2 sequence.
 |---|---|---|---|
 | D1 | §2.2: core-1 keeps `Register::new(addr, size)` as a shim; §4.1: X1 emits `Register::new(64, 1, Access::RW, Area::Ram)`; core-2 removes the shim. | Rust has no overloading. The 2-argument shim and the 4-argument `new` cannot both exist, so X1's output would not compile against core-1. | core-1 keeps `new(addr, size)` as the shim, with an unconditional `allow(dead_code)`. **X1 builds registers without calling `Register::new`**, through its own generated `reg()` helper (xtask plan D1). core-2 removes the shim and adds **no** 4-argument `new`: nothing would call it. module-interfaces §2.2, §4.1 and §7 now say the same. Research R-2, R-4. |
 | D2 | §7: core-1 "builds against today's generated code". Not stated: who owns tests of the generated lookup. | `src/actuator.rs` (core) holds tests that call `ActuatorKind::new(u16, u8, Id)` and match `Error::UnsupportedModel`. X1 changes that signature and cannot edit core files, so X1's PR would fail `cargo test`. | core-1 rewrites those tests to build models with `Model::new(id)` (kept by §4.1) and drops the lookup tests. Lookup tests move to X1 (generated test module or xtask). The `UnsupportedModel` message test moves to `src/error.rs` on `SetupError`. Research R-3. |
-| D3 | §2.4b: `ModeSource::OperatingMode(Register)`; "X: 3 → Bounded; 4, 5 → Unbounded; 0, 1, 16 → NoPosition; PRO/PRO+/Y checked by core". | The register alone does not say which value list applies, and the lists conflict: value 5 is Current-based Position on X and MX(2.0), where the firmware ignores the limits (`Unbounded`), and on RH-P12-RN (feature `pro`), where "The Goal Position(596) can't exceed these values" (`Bounded`). One mapping cannot serve both. | `OperatingMode { register: Register, values: ModeValues }` with `ModeValues { X, Pro, Y, RhP12Rn }` and `const fn ModeValues::limit_mode(value) -> Option<LimitMode>`. X1 emits the variant per table. module-interfaces §2.4b carries this shape since its 2026-10-28 update; how X1 picks `values` per table (family alone does not single out RH-P12-RN) is open for the xtask plan (T041). Research R-17. |
+| D3 | §2.4b, first 2026-10-28 text: `ModeSource::OperatingMode(Register)`; "X: 3 → Bounded; 4, 5 → Unbounded; 0, 1, 16 → NoPosition; PRO/PRO+/Y checked by core". | The register alone does not say which value list applies, and the lists conflict: value 5 is Current-based Position on X and MX(2.0), where the firmware ignores the limits (`Unbounded`), and on RH-P12-RN (feature `pro`), where "The Goal Position(596) can't exceed these values" (`Bounded`). One mapping cannot serve both. | **Decided by the architect (2026-10-28): the value lists live in the tables.** `ModeSource::Register { register: Register, values: ModeValues }` (Operating Mode, or XL-320 Control Mode) and `ModeSource::AngleLimits`; `ModeValues { bounded, unbounded, no_position: &'static [u8] }` with `const fn limit_mode(self, value) -> Option<LimitMode>`. X1 copies the lists from each table's `operating_modes` field (module-interfaces §2.4b, §3.1, commit 96b317a), so nothing is left for X1 to pick. Core holds no per-family list; research R-17 keeps the reference lists. module-interfaces §2.4b now says the same. |
 
 Clarifications of the contract (no change in meaning):
 
-- The mode mapping returns `Option<LimitMode>`; `None` means "not listed", and the bus builds
-  `SetupError::UnknownOperatingMode { id, value }` (it holds the `Id`). Two helpers the bus needs
-  are named here: `ModeSource::register() -> Option<Register>` (what Setup reads) and
-  `const fn LimitMode::from_angle_limits(Limits) -> LimitMode` (AX, MX P1). Research R-17.
+- The mode mapping returns `Option<LimitMode>`; `None` means "in none of the model's lists", and
+  the bus builds `SetupError::UnknownOperatingMode { id, value }` (it holds the `Id`). The two
+  helpers the bus needs, `ModeSource::register() -> Option<Register>` (what Setup reads) and
+  `const fn LimitMode::from_angle_limits(Limits) -> LimitMode` (AX, MX P1), are in §2.4b.
+  Research R-17.
+- `Actuator::position_limits_raw` and `position_limits` return the EEPROM limits in every limit
+  mode; their rustdoc says the limits are applied to goals only in `Bounded` mode (architect,
+  2026-10-28; module-interfaces §2.4b). Research R-17.
 - `Cache::check_goal` checks the mode first: a `NoPosition` actuator gives `NotPositionMode` even
   when its limits are unknown.
 
@@ -116,9 +129,6 @@ Open risks and questions for the architect (not deviations):
 - A user's generic code bounded on `A: Actuator` can call the supertrait method `cache_mut()` and
   overwrite one actuator's cache with another's (confirmed in a prototype). The fix is a
   crate-private token argument on `cache_mut`, which changes X1's emitted impl. Research R-12.
-- `position_limits_raw()` / `position_limits()` return the EEPROM limits whatever the mode. In
-  `Unbounded` and `NoPosition` the goal check does not apply them. Returning `None` there would
-  change the contract's meaning ("`None` until Setup read the limits"). Research R-17.
 - MX on P1, multi-turn: Goal Position is 2 bytes with a range of −28 672 to 28 672, and §2.2
   encodes 2 bytes unsigned, so negative multi-turn goals give `DoesNotFit`. How the firmware
   reads values above 28 672 is not on the e-Manual page. For tables T2 (research R-17).
@@ -145,7 +155,8 @@ specs/004-core/
 ```text
 src/
 ├── lib.rs               # core-1: + mod units; + pub use of ModelNumber, TorqueState, Position,
-│                        #   PositionScale, SetupError. ProtocolVersion is already re-exported
+│                        #   PositionScale, SetupError; PR #7's expect(dead_code) on
+│                        #   mod protocol; deleted. ProtocolVersion is already re-exported
 │                        #   by PR #7 (merged): only checked. core-2: no change expected.
 ├── id.rs                # unchanged
 ├── error.rs             # core-1: ValidationError + 10 variants, SetupError (6 variants),
@@ -164,12 +175,15 @@ src/
     └── position.rs      # core-1 (new): Position, PositionScale, Limits
 ```
 
-Not touched: `src/models.rs`, `src/models/**`, `src/protocol*`, `src/transport*`, `xtask/**`,
-`control_tables/**`, `Cargo.toml`.
+Not touched: `src/models.rs`, `src/models/**`, `src/transport*`, `xtask/**`,
+`control_tables/**`, `Cargo.toml`. `src/protocol*` only in core-1's protocol touch:
+`src/protocol/p2.rs` (`P2::broadcast_ping` and its two tests deleted, one `scan` test added),
+`src/protocol/no_alloc.rs` (its call deleted), `src/protocol.rs` (the `Pong::fault` doc).
 
 **Structure Decision**: Rust 2018+ layout (`units.rs` + `units/`, no `mod.rs`). Files and items
-follow module-interfaces §2, with D1–D3. `Limits` sits in `units/position.rs`; `Cache`,
-`LimitMode`, `ModeSource`, `ModeValues` and `TorqueState` in `actuator.rs`.
+follow module-interfaces §2, with D1–D3 (D3 decided 2026-10-28). `Limits` sits in
+`units/position.rs`; `Cache`, `LimitMode`, `ModeSource`, `ModeValues` and `TorqueState` in
+`actuator.rs`.
 
 ## Complexity Tracking
 
@@ -177,3 +191,4 @@ follow module-interfaces §2, with D1–D3. `Limits` sits in `units/position.rs`
 |---|---|---|
 | Core ships as two PRs (core-1, core-2), against "one module per PR". | The trait cutover (`Actuator: Describe`) needs generated code that implements `Describe`. That code comes from X1, which itself needs core-1's types. | One core PR after X1: X1 cannot build without the types. One core PR with a regeneration: core may not edit xtask, and today's xtask cannot emit `Describe`. |
 | Transitional shims in core-1: `#[doc(hidden)] Error::UnsupportedModel`, 2-arg `#[doc(hidden)] Register::new` filling `access`/`area` with placeholders (`R`, `Eeprom`) under an unconditional `#[allow(dead_code, reason = "unused once X1 regenerates with reg(); removed in core-2")]` (unused in every build after X1), `allow(dead_code)` on not-yet-used items: `Access` (`RW` never built) and `Area` (`Ram` never built) until X1, `Describe` until X1, the D3 items until X1 or bus-1 (full list in research R-4). | Today's generated code must keep compiling with no regeneration (§7). The placeholders are never read: nothing reads `access`/`area` before X1 regenerates every register, and bus lands after core-2. | Real attributes need the tables (T1) and X1. Leaving the fields out until core-2 breaks X1 (it must emit them). |
+| core-1 edits protocol files outside core's paths (`src/protocol/p2.rs`, `src/protocol/no_alloc.rs`, `src/protocol.rs`) and removes PR #7's attribute on `mod protocol;` in `src/lib.rs`. | Architect decision of 2026-10-28 (module-interfaces §1, §5): `P2::broadcast_ping` is the only dead protocol item (nothing calls it: Setup uses `scan`, conflict 16), and PR #7's `expect(dead_code)` on `mod protocol;` exists only for it. core-1 deletes both, checked first (T003) and listed in the PR (research R-19). | A protocol follow-up PR: the architect gave the deletion to core-1. Keeping both: dead code kept alive by a lint expectation that every bus PR would have to leave alone. |

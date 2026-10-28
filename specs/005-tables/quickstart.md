@@ -43,13 +43,14 @@ codegen skips the three `not_mapped` files without a warning.
 | US1 AS4, FR-002 | in a scratch copy, set a URL on another host, then a date `2026-02-30`, then a future date | exit 1 each time, error names the file |
 | US1 AS5, FR-016 | T1: `cargo xtask codegen`, `git diff src/` | empty |
 | US2, SC-002 | check output for `ax_12a` (T1) and `mx_64`, `ax_12_plus`, `mx_64_p1` (T2) | `verified` with an `emanual.robotis.com` URL and a valid date |
-| SC-002 audit, SC-008 | `python3 control_tables/emanual.py diff ax_12a` (and the other three) | no difference, mode row (or its absence) included; then 5 random rows checked by eye on the cited page |
+| SC-002 audit, SC-008 | `python3 control_tables/emanual.py diff ax_12a` (and the other three) | no difference, mode row (or its absence) included; then 5 random rows, and `operating_modes` where present (`mx_64`), checked by eye on the cited page |
 | US2 AS5, FR-013 | check output | Y-series and PRO tables mapped and `unverified` |
 | US3 AS1, FR-005, SC-006 | check output, protocols column | every table shows `[P1]`, `[P2]` or `[P1, P2]` |
 | US3 AS2, FR-007 | the check passes (it fails on a row without `access` or `area`) | every row has both |
 | US3 AS4, FR-015 | `python3 control_tables/analyze_tables.py`, then read the protocol section | XL-320 under P2; grouping equals the `protocols` fields |
 | US3 AS5, FR-020, SC-008 | the check passes; scratch copy: delete the `Operating Mode` row of `xm430_w350`, then add a `Control Mode` row to it | exit 1 each time, the error names the file (no mode source; two sources) |
 | US3 AS6, US5 AS6, FR-020 | `grep -L '"Operating Mode"' control_tables/*.ron` | only the 5 AX tables, `xl320`, `dynamixel.ron` and (T2) the 3 MX P1 tables |
+| US3 AS7, FR-020, SC-008 | `grep -L 'operating_modes' control_tables/*.ron`; scratch copy: delete the `operating_modes` line of `xm430_w350`, then add one to `ax_12a`, then put 4 in both `bounded` and `unbounded` of `xm430_w350` | the grep lists only the 5 AX tables, `dynamixel.ron` and (T2) the 3 MX P1 tables; exit 1 each time, the error names the file |
 | US4 AS1–3, SC-007 | `dual-protocol models` section of the check | each lists a P1 and a P2 table and `default: P2` |
 | US4 AS4 | after T2: X1's lookup test asks for model 310 on P2 | `UnsupportedModel` (X1's test; listed here for traceability) |
 | US4 AS5, FR-009 | T1: legacy `tables` equals the default list (check rule); codegen diff empty | same table per number as before |
@@ -75,9 +76,12 @@ type identifier (`ax_12a` and `ax12a`), a mapped stem `tests`, a mapped stem `ty
 (FR-020): a Min/Max table without `Operating Mode`, an `Operating Mode` and a `Control Mode` row
 in one table, an `Operating Mode` row beside the CW/CCW pair, two `Operating Mode` rows in an
 unmapped table, a `Control Mode` row in a table other than `xl320`, an `Operating Mode` row of
-size 2, `access: R` or in `RAM`, a `p1`-mapped table with `Operating Mode` at 300; passing cases:
-an X-shaped, a Y-shaped, an XL-320-shaped and an AX/MX-P1-shaped table. In T2,
-the legacy test becomes "any `tables` key is an error".
+size 2, `access: R` or in `RAM`, a `p1`-mapped table with `Operating Mode` at 300; `operating_modes`
+(FR-020): an X-shaped table without it, an AX-shaped table with it, a value in two lists, a
+missing `no_position` key, a value 256, a value `-1`, a list that is not a list
+(`bounded: 3`); passing cases: an X-shaped (`[3]`, `[4, 5]`, `[0, 1, 16]`), a Y-shaped (`[3]`,
+`[]`, `[0, 1]`), an XL-320-shaped (`[2]`, `[]`, `[1]`) and an AX/MX-P1-shaped table (no field).
+In T2, the legacy test becomes "any `tables` key is an error".
 
 `test_emanual.py` parses three hand-written HTML snippets shaped like the AX, X and PRO+ pages
 (different columns, EEPROM/RAM headings) and checks `fill` on a fixture table in both row styles.
@@ -98,8 +102,9 @@ the check passes.
 
 1. `python3 control_tables/emanual.py diff <stem>`: resolve every difference from the page.
 2. Check `type_info`, every `unit_info` entry, `protocols`, the mode row (`Operating Mode` or
-   `Control Mode`, or that the page lists neither) and the protocol page instructions by hand on
-   the page. Remove what the page does not give.
+   `Control Mode`, or that the page lists neither), every value of `operating_modes` against the
+   page's mode value table and limit text (research R-15), and the protocol page instructions by
+   hand on the page. Remove what the page does not give.
 3. Set `source: Verified(url: "<page>", verified: "<today>")` and add `instructions`.
 4. `python3 control_tables/check_tables.py --markdown <stem>` and paste the line into the PR,
    with every corrected or removed row (FR-017).

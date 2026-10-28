@@ -1,9 +1,10 @@
 # Research: Core (typed values, Actuator trait, errors)
 
-**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27, updated 2026-10-28 (R-17, R-18)
+**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27, updated 2026-10-28 (R-17, R-18, R-19)
 
 Sources: `src/` on `dev`; the protocol module of PR #7 (merged into `main` as f338e2a:
-`src/error.rs`, `src/lib.rs`, `src/protocol.rs`); `specs/ideas/module-interfaces.md`; the SRS patch
+`src/error.rs`, `src/lib.rs`, `src/protocol.rs`, `src/protocol/p2.rs`, `src/protocol/no_alloc.rs`);
+`specs/ideas/module-interfaces.md` (with commit 96b317a, 2026-10-28); the SRS patch
 `/tmp/dxl-srs-bus.patch`; all 72 `control_tables/*.ron` (scanned by script); the e-Manual pages
 for XM430-W350 and AX-12A; the e-Manual pages cited in R-17 (read 2026-10-28); and a scratch
 prototype crate under `/tmp/claude-1000/core-proto` (host and `thumbv7em-none-eabihf`, rustc
@@ -16,7 +17,8 @@ prototype crate under `/tmp/claude-1000/core-proto` (host and `thumbv7em-none-ea
 - **core-1** (after protocol PR #7 with `ProtocolVersion`, merged): every type of §2 including the
   limit mode of §2.4b (R-17), `Describe` standalone, `SetupError` and `Error::Setup`, and the shims
   of R-2 and R-14. `Actuator` keeps its three required methods. Builds against today's generated
-  code.
+  code. It also deletes `P2::broadcast_ping` and PR #7's `expect(dead_code)` on `mod protocol;`
+  (R-19, a protocol touch).
 - **core-2** (after xtask X1): `Actuator: sealed::Describe` with provided methods, shims removed,
   generic tests over every model.
 
@@ -101,9 +103,11 @@ in core-1. The full core-1 list, with the reason each one is dead until then:
 - Enums whose variants are each built by **some** families only keep an unconditional
   `#[allow(dead_code, reason = "each variant is built only by the generated models of its families")]`
   through core-2: `LimitRegisters` (AX alone builds no `MinMax`; MX, PRO and Y alone build no
-  `CwCcw` until T2), `ModeSource` (AX alone builds no `OperatingMode`; only `x-series` builds
-  `ControlMode`) and `ModeValues` (one variant per family). The ci feature-set job builds each
-  family alone, and a no-family `cfg_attr` would leave those legs red.
+  `CwCcw` until T2) and `ModeSource` (AX alone builds no `Register`; X, PRO and Y never build
+  `AngleLimits`, MX only from T2). `ModeValues` keeps one too: it is a struct, but only tables
+  with an `operating_modes` field build it, and no AX table has one, so an `ax`-only build never
+  does. The ci feature-set job builds each family alone, and a no-family `cfg_attr` would leave
+  those legs red.
 - Items whose first user is the bus keep an unconditional
   `#[allow(dead_code, reason = "used by bus-1")]` through core-2: `Register::encode/decode`,
   `Cache::record_limits/record_mode/check_goal`, the `Cache::mode` field, `LimitMode`,
@@ -327,7 +331,7 @@ message would need its own formatting.
   number on both protocols, with every firmware value when `firmware_register` is `Some`, and
   dedup by `core::mem::discriminant`. Round-trip loops dedup by scale.
 - US2 AS7 ("the enum gives the same answer as the model inside it") is covered in two parts
-  (T045). (1) The generic check runs on every variant through `ActuatorKind`: each `Actuator`
+  (T048). (1) The generic check runs on every variant through `ActuatorKind`: each `Actuator`
   method of the enum equals the value read from `data()` and `cache()`, which the enum's `match`
   takes from the inner model. (2) For five representatives, one per family (`Xm430W350`,
   `Ax12a`, `Mx64`, `H54200S500Ra`, `Ym070210M001`, each under its family `cfg`), the test unwraps
@@ -335,9 +339,12 @@ message would need its own formatting.
   enum with the inner model's directly. Reaching the inner model needs a pattern that names its
   variant. A hand-written `match` over all 72 variants would copy the generated one and break
   with every new table, so the per-variant direct comparison is left to the representatives.
-- The mode source is checked per model in the same test (T045): every `OperatingMode` and
-  `ControlMode` register is 1 byte, RW, EEPROM; `AngleLimits` comes only with
-  `LimitRegisters::CwCcw`; seven representatives carry the source and value list of R-17.
+- The mode source is checked per model in the same test (T048): every `ModeSource::Register`
+  register is 1 byte, RW, EEPROM, and its three lists are disjoint; `AngleLimits` comes only
+  with `LimitRegisters::CwCcw`; seven representatives carry the address and the value lists of
+  R-17, as the tables copy them.
+- core-1 tests the mapping with hand-built `ModeValues` fixtures (the X, RH-P12-RN and XL-320
+  lists of R-17), since core holds no list of its own (R-17).
 - Compile-fail cases (e.g. `Describe` not nameable outside the crate) are rustdoc
   `compile_fail,E0603` examples (module-interfaces conflict 13), not `trybuild`.
 
@@ -355,28 +362,42 @@ Lookup enumeration needs no list and follows the enabled features.
   mode first. `Bounded`: R-11, unchanged. `Unbounded`: `Ok(raw)`; the register size check of
   `Register::encode` still runs on the goal path (module-interfaces §6), so a value that does
   not fit is still `DoesNotFit`. `NoPosition`: `NotPositionMode { id }`, whatever the limits.
-- `ModelData::mode: ModeSource` says where Setup gets the mode: `OperatingMode { register,
-  values: ModeValues }`, `ControlMode(Register)` (XL-320) or `AngleLimits` (AX, MX on P1).
-  `ModeSource::register()` is the 1-byte register Setup reads (`None` for `AngleLimits`).
-  `ModeSource::limit_mode(value)` and `ModeValues::limit_mode(value)` are the per-family mapping,
-  crate-internal `const fn`s returning `Option<LimitMode>`. `LimitMode::from_angle_limits(limits)`
-  gives the AX / MX P1 mode from the limits Setup has just read.
-- `None` means "value not listed for this family". The bus turns it into
+- `ModelData::mode: ModeSource` says where Setup gets the mode: `Register { register, values:
+  ModeValues }` (the Operating Mode register, or the XL-320 Control Mode register) or
+  `AngleLimits` (AX, MX on P1). `ModeSource::register()` is the 1-byte register Setup reads
+  (`None` for `AngleLimits`).
+- **Decided by the architect on 2026-10-28: the value lists live in the tables.** `ModeValues` is
+  a struct of three lists, `bounded`, `unbounded`, `no_position: &'static [u8]`. X1 generates one
+  per model from its table's `operating_modes` field, which T1 copies from that model's e-Manual
+  page (module-interfaces §2.4b, §3.1). Core holds no per-family list: a new model or family is a
+  data change only. `ModeValues::limit_mode(value)` gives the mode of the list that holds
+  `value`; `ModeSource::limit_mode(value)` is `values.limit_mode(value)` for `Register` and `None`
+  for `AngleLimits`. Both are crate-internal `const fn`s returning `Option<LimitMode>`; the
+  lookup walks the slices with slice patterns, no indexing. Codegen and the tables check refuse
+  overlapping lists, a mode row without `operating_modes` and `operating_modes` without a mode
+  row (§4.3). `LimitMode::from_angle_limits(limits)` gives the AX / MX P1 mode from the limits
+  Setup has just read.
+- `None` means "the value is in none of the model's lists". The bus turns it into
   `SetupError::UnknownOperatingMode { id, value }` (constitution III: no fallback). Core never
   guesses a mode.
+- **Decided by the architect on 2026-10-28:** `position_limits_raw()` / `position_limits()` return
+  the EEPROM limits in every mode, as read at Setup. Their rustdoc says the limits are applied to
+  goals only in `Bounded` mode (module-interfaces §2.4b). `None` still means only "not read yet".
 
-Values, from the e-Manual pages read on 2026-10-28:
+Values, from the e-Manual pages read on 2026-10-28. This is the reference the tables copy into
+`operating_modes` (e.g. XM430-W350: `(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16])`)
+and the source of core's test fixtures (the X, RH-P12-RN and XL-320 rows):
 
-| Source (`ModeValues` variant) | Models | Register | Value → `LimitMode` |
+| Tables | Source | Register | Value → `LimitMode` |
 |---|---|---|---|
-| `OperatingMode`, `X` | X-series (feature `x-series`, every table but XL-320: X430, X540, 2XL/2XC, XL330/XC330, XW) and MX(2.0) (feature `mx`) | Operating Mode (11) | 0 Current → `NoPosition`; 1 Velocity → `NoPosition`; 3 Position → `Bounded`; 4 Extended Position → `Unbounded`; 5 Current-based Position → `Unbounded`; 16 PWM → `NoPosition` |
-| `OperatingMode`, `Pro` | DYNAMIXEL-PRO (A) H42/H54/M42/M54 …-R(A) and DYNAMIXEL-P PH42/PH54/PM42/PM54 (feature `pro`) | Operating Mode (11) | 0 Current → `NoPosition`; 1 Velocity → `NoPosition`; 3 Position → `Bounded`; 4 Extended Position → `Unbounded`; 16 PWM (Voltage) → `NoPosition` |
-| `OperatingMode`, `Y` | DYNAMIXEL-Y YM070/YM080 (feature `y-series`) | Operating Mode (33) | 0 Current → `NoPosition`; 1 Velocity → `NoPosition`; 3 Position → `Bounded` |
-| `OperatingMode`, `RhP12Rn` | RH-P12-RN gripper (feature `pro`) | Operating Mode (11) | 0 Current → `NoPosition`; 5 Current based Position → `Bounded` |
-| `ControlMode` | XL-320 (feature `x-series`) | Control Mode (11) | 1 Wheel → `NoPosition`; 2 Joint → `Bounded` |
-| `AngleLimits` | AX-12A, AX-12W, AX-18A (feature `ax`); MX-28/64/106 on P1 (tables T2) | none: CW/CCW Angle Limit (6, 8), already read | CW = CCW = 0 → `NoPosition` (wheel); CW = CCW = 4095 → `Unbounded` (MX multi-turn); otherwise `Bounded` (joint) |
+| X-series (feature `x-series`, every table but XL-320: X430, X540, 2XL/2XC, XL330/XC330, XW) and MX(2.0) (feature `mx`) | `Register` | Operating Mode (11) | 0 Current → `NoPosition`; 1 Velocity → `NoPosition`; 3 Position → `Bounded`; 4 Extended Position → `Unbounded`; 5 Current-based Position → `Unbounded`; 16 PWM → `NoPosition` |
+| DYNAMIXEL-PRO (A) H42/H54/M42/M54 …-R(A) and DYNAMIXEL-P PH42/PH54/PM42/PM54 (feature `pro`) | `Register` | Operating Mode (11) | 0 Current → `NoPosition`; 1 Velocity → `NoPosition`; 3 Position → `Bounded`; 4 Extended Position → `Unbounded`; 16 PWM (Voltage) → `NoPosition` |
+| DYNAMIXEL-Y YM070/YM080 (feature `y-series`) | `Register` | Operating Mode (33) | 0 Current → `NoPosition`; 1 Velocity → `NoPosition`; 3 Position → `Bounded` |
+| RH-P12-RN gripper (feature `pro`) | `Register` | Operating Mode (11) | 0 Current → `NoPosition`; 5 Current based Position → `Bounded` |
+| XL-320 (feature `x-series`) | `Register` | Control Mode (11) | 1 Wheel → `NoPosition`; 2 Joint → `Bounded` |
+| AX-12A, AX-12W, AX-18A (feature `ax`); MX-28/64/106 on P1 (tables T2) | `AngleLimits` (no `operating_modes`) | none: CW/CCW Angle Limit (6, 8), already read | CW = CCW = 0 → `NoPosition` (wheel); CW = CCW = 4095 → `Unbounded` (MX multi-turn); otherwise `Bounded` (joint) |
 
-Every other value is `None`. Citations:
+Every other value is in no list, so `None`. Citations:
 - X: [XM430-W350](https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/), Operating Mode(11)
   lists 0, 1, 3, 4, 5, 16; Min/Max Position Limit: "These values are not used in Extended Position
   Control Mode and Current-based Position Control Mode." The same list and sentence are on
@@ -411,8 +432,10 @@ Every other value is `None`. Citations:
   "Conditions excluding Wheel Mode and Multi-turn Mode".
 
 Notes:
-- Lists are per family, not per model. XL430-W250 never reports 0 or 5, so the `X` list covers
-  it. A value a model's firmware cannot hold never reaches the mapping.
+- The rows group tables whose pages give the same list. The lists are per table: each table
+  copies its own page, so a table may list fewer values than its row (XL430-W250 and
+  2XL430-W250 list 1, 3, 4, 16 only). Either way, a value a model's firmware cannot hold never
+  reaches the mapping.
 - AX joint mode is every pair but (0, 0). The AX page writes "neither are 0", but its default
   pair CW 0 / CCW 1023 is joint mode, so the MX wording ("conditions excluding Wheel Mode and
   Multi-turn Mode") is the rule. AX limits are 0–1023, so (4095, 4095) never comes from an AX;
@@ -420,7 +443,8 @@ Notes:
 - Every `pro` table in `control_tables/` is the (A) firmware (model numbers 51201, 53769, 54025,
   43289, 46097, 46353). The older non-A page
   ([H54-200-S500-R](https://emanual.robotis.com/docs/en/dxl/pro/h54-200-s500-r/)) lists 0, 1, 3,
-  4 and "In Extended Position Control Mode, these limits will be ignored", a subset of `Pro`.
+  4 and "In Extended Position Control Mode, these limits will be ignored", a subset of the PRO
+  row.
 - MX on P1, multi-turn: Goal Position (30) is 2 bytes and the e-Manual gives "a range from
   -28,672 to 28,672". §2.2 encodes 2-byte registers unsigned, so a negative multi-turn goal is
   refused with `DoesNotFit` (safe side). The page does not say how the firmware reads values
@@ -432,12 +456,22 @@ extended or current-based position mode refuses goals the hardware accepts (bus 
 Checking them in velocity, current, PWM or wheel mode passes goals the hardware ignores. Setup
 cost: one 1-byte read per actuator on P2 and XL-320, none on AX and MX P1. Memory cost: zero.
 
-**Deviation D3** (plan): §2.4b writes `OperatingMode(Register)`. The register alone cannot pick
-the value list: value 5 is `Unbounded` on X and MX(2.0) and `Bounded` on RH-P12-RN, and both sit
-in default features. So `OperatingMode` carries `values: ModeValues`, which X1 emits per table.
+**Deviation D3** (plan), decided: §2.4b first wrote `OperatingMode(Register)`. The register
+alone cannot pick the value list: value 5 is `Unbounded` on X and MX(2.0) and `Bounded` on
+RH-P12-RN, and both sit in default features. So the register carries its values. The architect
+decided on 2026-10-28 that the values come from the tables: `ModeSource::Register { register,
+values: ModeValues }`, with the lists X1 copies from `operating_modes` (module-interfaces §2.4b,
+commit 96b317a). How X1 picks the values is no longer open: there is nothing to pick.
 
 **Alternatives considered**:
-- One mapping for every Operating Mode register (the §2.4b shape). Rejected: value 5 conflicts.
+- One mapping for every Operating Mode register (the first §2.4b shape). Rejected: value 5
+  conflicts.
+- A per-family `ModeValues` enum (`X`, `Pro`, `Y`, `RhP12Rn`) with the lists in core (this plan's
+  first D3 shape). Replaced by the decision: X1 would have to pick a variant per table, family
+  alone does not single out RH-P12-RN, and a new family would need a core change.
+- A separate `ControlMode(Register)` variant with the XL-320 list in core. Replaced by the
+  decision: XL-320's Control Mode values are a table's lists like any other (`bounded: [2]`,
+  `no_position: [1]`).
 - A family field on `ModelData` beside `mode`. Rejected: it could disagree with the source (a
   family on an `AngleLimits` model); the value list belongs to the register it decodes.
 - A mapping returning `Result<LimitMode, SetupError>`. Rejected: it would need `SetupError`
@@ -445,8 +479,9 @@ in default features. So `OperatingMode` carries `values: ModeValues`, which X1 e
   `Id`. `Option` keeps the mapping a plain table.
 - A `modes: [LimitMode; N]` array in the bus (bus tasks, earlier alternative). Rejected by the
   decision: the mode lives in the `Cache` padding at zero cost.
-- `position_limits*()` returning `None` outside `Bounded`. Not done: the contract says `None`
-  only until Setup read the limits. Open question for the architect (T041).
+- `position_limits*()` returning `None` outside `Bounded`. Rejected by the architect
+  (2026-10-28): they return the EEPROM limits in every mode, and `None` means only that Setup
+  has not read them yet.
 
 ## R-18 Other decisions of 2026-10-28
 
@@ -459,7 +494,44 @@ in default features. So `OperatingMode` carries `values: ModeValues`, which X1 e
   and a caller buffer of the wrong length is still `BufferLength`.
 - **Conflict 19 accepted** ("fine by me"): `SetupError::UnsupportedModel { id, model_number,
   protocol, feature }`. SRS FR-2.4 and constitution Principle II still write the old shape; both
-  belong to the architect (T056).
+  belong to the architect (T059).
 - **Protocol PR #7 merged** into `main` (f338e2a) with `ProtocolVersion` and its root re-export
   (R-15). **Constitution 1.3.0** lists `setup` in Principle VI, so the fifth category needs no
   exception any more.
+
+## R-19 core-1 deletes `P2::broadcast_ping` (architect, 2026-10-28)
+
+**Decision**: core-1 deletes `P2::broadcast_ping` and PR #7's
+`#[cfg_attr(not(test), expect(dead_code, reason = "exchanges are called by the bus module"))]` on
+`mod protocol;` in `src/lib.rs`, as a protocol touch listed in the core-1 PR (module-interfaces
+§1, §5). Tasks T003–T005, before any core file changes.
+- `src/protocol/p2.rs`: the function with its doc, and its two tests.
+  `broadcast_ping_reports_a_set_error_byte_as_a_fault` is covered by
+  `scan_reports_a_set_error_byte_as_a_fault`. `broadcast_ping_collects_every_reply_in_the_window`
+  is covered by `scan_sends_one_broadcast_ping_and_reports_every_reply` (replies, empty window)
+  and `scan_passes_corrupted_replies_on_and_carries_on`, except its transport-failure check: no
+  other P2 test runs `scan` on a failing transport, so that check moves to a new
+  `scan_fails_on_the_transport`.
+- `src/protocol/no_alloc.rs`: the `P2::broadcast_ping` call goes. The test scripts replies per
+  flush, so the scan becomes the 6th flush and takes the two replies scripted for it; the 7th
+  flush's reply goes, and the reply count drops from 6 to 5.
+- `src/protocol.rs`: the `Pong::fault` doc says "scan reply" instead of "scan or broadcast ping
+  reply". The `v2::BROADCAST_PING*` vectors stay (the scan tests use them), and so does "broadcast
+  Ping" on `P2` and above `scan_reply`: it names the instruction `scan` sends.
+
+**Rationale**: nothing calls `broadcast_ping`. Setup uses `Exchange::scan`, which passes
+corrupted replies on (module-interfaces conflict 16); `broadcast_ping` is `scan` with them
+dropped. The lint expectation exists only because of it.
+
+Checked on a copy of `main` (f338e2a), 2026-10-28, rustc 1.97.1:
+- Without the attribute alone, `cargo clippy --all-targets -- -D warnings` and the no_std clippy
+  line each report exactly one error: "associated function `broadcast_ping` is never used"
+  (`src/protocol/p2.rs`). No other protocol item is dead.
+- With both deleted and the test changes above, both clippy lines, `cargo test --workspace`,
+  `cargo fmt --check` and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` pass. The no-family
+  build still fails on `Register::new` only, as before (R-4, fixed by T010).
+- T003 repeats the first check on the core-1 branch and stops if any other item turns dead.
+
+**Alternatives considered**: a protocol follow-up PR. Not chosen: the architect gave it to
+core-1. Keeping both (the bus plan's earlier deviation 6): dead code kept alive by a lint
+expectation that every later PR would have to leave alone.

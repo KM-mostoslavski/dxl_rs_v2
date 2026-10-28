@@ -25,7 +25,9 @@ a bus that ignores hardware faults) and bus-2 needs bus-1.
 
 **Architect decisions of 2026-10-28** are folded into the task text: raw replies run `observe`
 (T073, T075), `partial-reads` keeps one result per actuator inside a P2 sync group (T068, T071),
-and limits follow the operating mode (T019, T021, T023, T034, T046, T051).
+limits follow the operating mode (T019, T021, T023, T034, T046, T051), the mode value lists come
+from the tables through the generated `ModeValues` (T002), and core-1, not a bus PR, removes
+`P2::broadcast_ping` and PR #7's `expect(dead_code)` on `mod protocol;` (rules, T035).
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -43,9 +45,9 @@ and limits follow the operating mode (T019, T021, T023, T034, T046, T051).
 - Files this module may change: `src/bus.rs`, `src/bus/**`, `tests/bus_no_alloc.rs`, its own
   `mod bus;` / `pub use bus::…` lines in `src/lib.rs`, and the `heapless` dependency (bus-1) and
   the `partial-reads` / `raw-registers` features (bus-5) in `Cargo.toml`. Every shared-file touch
-  is listed in that PR's description. PR #7's `expect(dead_code)` on `mod protocol;` stays: it is
-  fulfilled by `P2::broadcast_ping`, which the bus never calls (plan deviation 6). If a bus PR
-  ever trips `unfulfilled_lint_expectations` on it, stop and raise it to the protocol owner.
+  is listed in that PR's description. PR #7's `expect(dead_code)` on `mod protocol;` and
+  `P2::broadcast_ping`, which the bus never calls, are removed by core-1 (architect 2026-10-28,
+  plan deviation 6); no bus PR touches `src/lib.rs` beyond its own lines.
 - Never edit core (`src/error.rs`, `src/id.rs`, `src/actuator.rs`, `src/register.rs`,
   `src/units*`), protocol (`src/protocol*`), transport, `xtask/**`, `control_tables/**` or the
   generated `src/models.rs` / `src/models/**` (only `cargo xtask codegen` writes those). A missing
@@ -79,8 +81,8 @@ and limits follow the operating mode (T019, T021, T023, T034, T046, T051).
 
 **Purpose**: Approval, prerequisites, dependency and module skeleton
 
-- [ ] T001 [human] Architect: approve the six-PR split of this module (plan Complexity Tracking, module-interfaces §7 and §9). Needed before T036 opens bus-1. The 2026-10-28 decisions (raw replies run `observe`, FR-4.7 one result per actuator, limits follow the operating mode) need no further answer; they are in the tasks below
-- [ ] T002 Check the prerequisites on `origin/main` (module-interfaces §7) and stop with a report to the caller if any is missing: protocol PR #7 is merged (2026-10-28), so confirm `src/protocol.rs` still has `ProtocolVersion`, `Protocol::VERSION`, `Exchange::{ping, read, write, sync_write, scan, read_many}`, `P2::sync_read`, `Link`, `Pong { id, model_number, firmware, fault }`; core-1 + core-2 merged (`src/actuator.rs`: `ModelNumber`, `TorqueState`, `Cache` with `record_mode` and a mode-aware `check_goal`, `LimitMode { Bounded, Unbounded, NoPosition }` with `LimitMode::from_angle_limits`, `ModeSource::register()` and `ModeSource::limit_mode(value) -> Option<LimitMode>` (names from specs/004-core contracts; module-interfaces §2.4b names none), `ModelData` with `mode: ModeSource`, `LimitRegisters`, `Describe`, `Actuator` with provided methods; `src/units/position.rs`: `Position`, `PositionScale`, `Limits`; `src/error.rs`: `SetupError` with `UnknownOperatingMode { id, value }` and the `ValidationError` variants `ActuatorIsOff, ActuatorFaulted, OutOfLimits, LimitsUnknown, InvertedLimits, NotFinite, DoesNotFit, BufferLength, DuplicateId, NotPositionMode`); xtask X1 merged with regenerated `src/models.rs` (`ActuatorKind::new(ProtocolVersion, ModelNumber, u8, Id)`, `ActuatorKind::firmware_register`, `models::MODEL_NUMBER`, a `ModeSource` in every model's `DATA`). Then create branch `003-bus-1` from `origin/main`
+- [x] T001 [human] Architect: approve the six-PR split (approved 2026-10-28: "you can touch multiple modules its fine") of this module (plan Complexity Tracking, module-interfaces §7 and §9). Needed before T036 opens bus-1. The 2026-10-28 decisions (raw replies run `observe`, FR-4.7 one result per actuator, limits follow the operating mode) need no further answer; they are in the tasks below
+- [ ] T002 Check the prerequisites on `origin/main` (module-interfaces §7) and stop with a report to the caller if any is missing: protocol PR #7 is merged (2026-10-28), so confirm `src/protocol.rs` still has `ProtocolVersion`, `Protocol::VERSION`, `Exchange::{ping, read, write, sync_write, scan, read_many}`, `P2::sync_read`, `Link`, `Pong { id, model_number, firmware, fault }`; core-1 + core-2 merged (`src/actuator.rs`: `ModelNumber`, `TorqueState`, `Cache` with `record_mode` and a mode-aware `check_goal`, `LimitMode { Bounded, Unbounded, NoPosition }` with `LimitMode::from_angle_limits`, `ModeSource` (`Register { register, values: ModeValues }` or `AngleLimits`) with `ModeSource::register()` and `ModeSource::limit_mode(value) -> Option<LimitMode>` (module-interfaces §2.4b, specs/004-core contracts), `ModelData` with `mode: ModeSource`, `LimitRegisters`, `Describe`, `Actuator` with provided methods; `src/units/position.rs`: `Position`, `PositionScale`, `Limits`; `src/error.rs`: `SetupError` with `UnknownOperatingMode { id, value }` and the `ValidationError` variants `ActuatorIsOff, ActuatorFaulted, OutOfLimits, LimitsUnknown, InvertedLimits, NotFinite, DoesNotFit, BufferLength, DuplicateId, NotPositionMode`); xtask X1 merged with regenerated `src/models.rs` (`ActuatorKind::new(ProtocolVersion, ModelNumber, u8, Id)`, `ActuatorKind::firmware_register`, `models::MODEL_NUMBER`, a `ModeSource` in every model's `DATA`, its `ModeValues` lists copied from the table's `operating_modes`). Then create branch `003-bus-1` from `origin/main`
 - [ ] T003 Add `heapless = { version = "0.9", default-features = false }` to `[dependencies]` in Cargo.toml (shared-file touch, module-interfaces §1)
 - [ ] T004 Create the bus-1 skeleton: src/bus.rs (module doc placeholder; `mod actuator_ref; mod observe; mod setup; mod slots; mod wire; #[cfg(test)] mod testing;`) and empty files src/bus/actuator_ref.rs, src/bus/observe.rs, src/bus/setup.rs, src/bus/slots.rs, src/bus/wire.rs, src/bus/testing.rs; add `mod bus;` to src/lib.rs after `mod actuator;`. Files of later PRs (`id_set.rs`, `field.rs`, `group.rs`, `multi.rs`, `partial.rs`, `raw.rs`, `serial.rs`, `dyn_bus.rs`) are created by those PRs
 - [ ] T005 Verify the skeleton: `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo clippy --no-default-features --features ax,mx,x-series,y-series,pro,mock --target thumbv7em-none-eabihf -- -D warnings`, `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features` all pass; fix fallout only in files from T003–T004
@@ -195,8 +197,8 @@ US4-1 … US4-4.
 
 ## Phase 6: Close-out PR bus-1
 
-- [ ] T035 Run the bus-1 gates (PR map, gate set G-base) and `cargo llvm-cov … --fail-under-lines 70`; fix fallout only in bus files. PR #7's `expect(dead_code)` on `mod protocol;` stays untouched (plan deviation 6)
-- [ ] T036 Write specs/003-bus/pr-bus-1.md from .github/pull_request_template.md: What/Why (SRS steps 4, 5; FR-001…FR-029 as covered, US1/US3/US4), Architecture (plan deviations 1, 2, 5, 6; shared-file touches `src/lib.rs`, `Cargo.toml` `heapless`; six-PR split (T001); limits follow the operating mode, decided 2026-10-28, SRS FR-3.7 patch pending (T087)), checklist with the gate results, the optional quickstart §4 hardware check unchecked. No AI attribution. Push `003-bus-1` and open the PR into `main` with that body
+- [ ] T035 Run the bus-1 gates (PR map, gate set G-base) and `cargo llvm-cov … --fail-under-lines 70`; fix fallout only in bus files. PR #7's `expect(dead_code)` on `mod protocol;` and `P2::broadcast_ping` are already gone (core-1, plan deviation 6); `src/lib.rs` changes only by the bus lines
+- [ ] T036 Write specs/003-bus/pr-bus-1.md from .github/pull_request_template.md: What/Why (SRS steps 4, 5; FR-001…FR-029 as covered, US1/US3/US4), Architecture (plan deviations 1, 2, 5; shared-file touches `src/lib.rs`, `Cargo.toml` `heapless`; six-PR split (T001); limits follow the operating mode, decided 2026-10-28, SRS FR-3.7 patch pending (T087)), checklist with the gate results, the optional quickstart §4 hardware check unchecked. No AI attribution. Push `003-bus-1` and open the PR into `main` with that body
 
 ---
 

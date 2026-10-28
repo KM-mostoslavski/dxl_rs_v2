@@ -58,10 +58,10 @@ Expected: all pass.
 - The `cargo build --lib` lines mirror ci's feature-set legs. With no model family on,
   `ActuatorKind` has no variants, so every bus path works on an uninhabited type and must still
   build without warnings (no unreachable-code or unused-item lint left over).
-- PR #7's `expect(dead_code)` on `mod protocol;` stays: `P2::broadcast_ping`, which the bus
-  never calls, keeps it fulfilled (plan.md, deviation 6). If `cargo clippy --all-targets -- -D
-  warnings` ever reports `unfulfilled_lint_expectations` there, stop and raise it to the
-  protocol owner; a bus PR does not edit that line.
+- PR #7's `expect(dead_code)` on `mod protocol;` and `P2::broadcast_ping`, which the bus never
+  calls, are gone before bus-1: core-1 removes both (architect 2026-10-28; plan.md, deviation
+  6). A bus PR edits only its own lines in `src/lib.rs`; anything wrong in `src/protocol*` is
+  raised to the protocol owner.
 
 ## 2. Scenario checks (all in `cargo test`, no hardware)
 
@@ -72,7 +72,7 @@ Every row runs against `MockTransport` with `MockTime::ticker`. "Zero bytes" mea
 |---|---|---|
 | US1-1, FR-014 | `src/bus/setup.rs` | Declared XM430 (P2) and AX-12A (P1, own bus): pings, P1 model read, limit reads, XM430 Operating Mode read (11, 1 byte; none on AX-12A), all byte-exact; `torque_states()` all `Off`; no Torque Enable write in `sent()` |
 | FR-013, research R-9 | `setup.rs` | XM430 Operating Mode 3 → `Bounded`, 4 and 5 → `Unbounded`, 1 → `NoPosition`; AX-12A CW = CCW = 0 → `NoPosition` with no extra read; mode read timeout → `Err(Timeout)`, list empty |
-| US1-13 | `setup.rs` | XM430 Operating Mode 2 (not listed for X) → `SetupError::UnknownOperatingMode { id, value: 2 }`, list empty |
+| US1-13 | `setup.rs` | XM430 Operating Mode 2 (in none of its table's lists) → `SetupError::UnknownOperatingMode { id, value: 2 }`, list empty |
 | US1-2 | `setup.rs` | Silent ID → `SetupError::Missing`; other model → `WrongModel`; `actuators()` empty afterwards |
 | US1-2 (early) | `setup.rs` | Compiled-out or unknown model in a declared list → `UnsupportedModel`, zero bytes |
 | US1-3 | `setup.rs` | Limit-read timeout → `Err(Timeout)`; list empty; no default used |

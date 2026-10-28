@@ -48,7 +48,7 @@ Operations: `ZERO`, `from_radians`, `radians`, `+`, `-`, `+=`, `-=`, `PartialEq`
 No range clamp: ticks outside `min_raw..=max_raw` convert linearly (multi-turn). Codegen checks
 `max_raw > min_raw`, `max_rad > min_rad`, `zero_raw` in range (module-interfaces §4.3).
 
-Test-only helper (core-2, T044): `#[cfg(test)] pub(crate) const fn raw_range(&self) ->
+Test-only helper (core-2, T047): `#[cfg(test)] pub(crate) const fn raw_range(&self) ->
 core::ops::RangeInclusive<i32>`, giving `min_raw..=max_raw`. The per-model round-trip test
 (SC-001) loops over it. It is not part of the contract and does not exist outside `cargo test`.
 
@@ -107,29 +107,42 @@ Where Setup gets an actuator's `LimitMode`. One value per generated model, in `M
 
 | `ModeSource` variant | Models | Setup reads |
 |---|---|---|
-| `OperatingMode { register: Register, values: ModeValues }` | X-series, MX(2.0), PRO, PRO+, Y, RH-P12-RN | the 1-byte Operating Mode register |
-| `ControlMode(Register)` | XL-320 | the 1-byte Control Mode register |
+| `Register { register: Register, values: ModeValues }` | X-series, MX(2.0), PRO, PRO+, Y, RH-P12-RN (Operating Mode); XL-320 (Control Mode) | the 1-byte mode register |
 | `AngleLimits` | AX; MX on Protocol 1 | nothing more: the CW/CCW limits it reads anyway |
+
+`ModeValues` holds one model's mode values (architect, 2026-10-28: the value lists live in the
+tables):
+
+| Field | Type | Rule |
+|---|---|---|
+| `bounded` | `&'static [u8]` | Values that give `Bounded` (position, joint mode). |
+| `unbounded` | `&'static [u8]` | Values that give `Unbounded` (extended or current-based position). |
+| `no_position` | `&'static [u8]` | Values that give `NoPosition` (current, velocity, PWM, wheel). |
+
+X1 generates it per model from the table's `operating_modes` field, copied from that model's
+e-Manual page (module-interfaces §2.4b, §3.1). The lists are disjoint: codegen and the tables
+check refuse overlaps (§4.3). Core holds no per-family list; a new model or family is a data
+change only.
 
 | Operation | Result |
 |---|---|
-| `ModeSource::register(self) -> Option<Register>` | the register for `OperatingMode` and `ControlMode`; `None` for `AngleLimits` |
-| `ModeSource::limit_mode(self, value: u8) -> Option<LimitMode>` | `OperatingMode`: `values.limit_mode(value)`; `ControlMode`: 1 → `NoPosition`, 2 → `Bounded`, else `None`; `AngleLimits`: `None` |
-| `ModeValues::limit_mode(self, value: u8) -> Option<LimitMode>` | the table below; any value not listed gives `None` |
+| `ModeSource::register(self) -> Option<Register>` | the register for `Register`; `None` for `AngleLimits` |
+| `ModeSource::limit_mode(self, value: u8) -> Option<LimitMode>` | `Register`: `values.limit_mode(value)`; `AngleLimits`: `None` |
+| `ModeValues::limit_mode(self, value: u8) -> Option<LimitMode>` | the mode of the list that holds `value`; `None` when no list does |
 
-`None` means the value is not in the family's e-Manual list. The bus returns
+`None` means the value is in none of the model's lists. The bus returns
 `SetupError::UnknownOperatingMode { id, value }` for it; core never picks a fallback mode.
 
-| `ModeValues` | 0 | 1 | 3 | 4 | 5 | 16 |
-|---|---|---|---|---|---|---|
-| `X` (X-series, MX(2.0)) | `NoPosition` | `NoPosition` | `Bounded` | `Unbounded` | `Unbounded` | `NoPosition` |
-| `Pro` (PRO (A), PRO+) | `NoPosition` | `NoPosition` | `Bounded` | `Unbounded` | `None` | `NoPosition` |
-| `Y` | `NoPosition` | `NoPosition` | `Bounded` | `None` | `None` | `None` |
-| `RhP12Rn` | `NoPosition` | `None` | `None` | `None` | `Bounded` | `None` |
+Examples (today's lists, research R-17; also core's test fixtures):
 
-Every value not in a column is `None` for every variant. e-Manual citations: research R-17.
-`ModeValues` is not in module-interfaces §2.4b: plan deviation D3 (value 5 differs between X
-and RH-P12-RN).
+| Model | `bounded` | `unbounded` | `no_position` |
+|---|---|---|---|
+| XM430-W350 (Operating Mode) | `[3]` | `[4, 5]` | `[0, 1, 16]` |
+| RH-P12-RN (Operating Mode) | `[5]` | `[]` | `[0]` |
+| XL-320 (Control Mode) | `[2]` | `[]` | `[1]` |
+
+Value 5 shows why the lists belong to the model: `Unbounded` on XM430-W350, `Bounded` on
+RH-P12-RN. Plan deviation D3, decided by the architect on 2026-10-28.
 
 ## TorqueState (public, core-1, `src/actuator.rs`)
 
@@ -190,8 +203,8 @@ only by X1's generated `reg()` helper (D1).
 | `scale` | `PositionScale` | from `type_info` |
 
 Examples (e-Manual, research R-9, R-17): XM430-W350 goal 116/4, present 132/4, limits MinMax
-52/48, mode `OperatingMode { 11/1, X }`; AX-12A goal 30/2, present 36/2, limits CwCcw 6/8, mode
-`AngleLimits`.
+52/48, mode `Register { 11/1, [3] / [4, 5] / [0, 1, 16] }`; AX-12A goal 30/2, present 36/2, limits
+CwCcw 6/8, mode `AngleLimits`.
 
 ## Describe and Actuator (traits, `src/actuator.rs`)
 
@@ -203,6 +216,10 @@ Examples (e-Manual, research R-9, R-17): XM430-W350 goal 116/4, present 132/4, l
 
 No I/O in either trait. `ActuatorKind` dispatches by `match` and returns `&'static ModelData`: no
 runtime address lookup.
+
+`position_limits_raw` and `position_limits` return the EEPROM limits read at Setup in every limit
+mode, `None` only before Setup read them. Their rustdoc says the limits are applied to goals only
+in `Bounded` mode (architect, 2026-10-28).
 
 ## Errors (`src/error.rs`)
 

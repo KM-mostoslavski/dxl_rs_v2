@@ -27,6 +27,12 @@ Expected: all pass. The no-family line fails on `dev` today ("associated functio
 used"); it passes from core-1 on (research R-4). The codegen line shows no diff: core never
 changes generated output.
 
+core-1 only, protocol touch (research R-19), first: with only PR #7's `expect(dead_code)` on
+`mod protocol;` deleted, both clippy lines report exactly one error, "associated function
+`broadcast_ping` is never used"; any other dead item stops core-1. After `P2::broadcast_ping` and
+its tests are deleted, all gates above pass as before and `rg -n "broadcast_ping" src/` finds
+nothing.
+
 core-1 only, simulate X1: in a scratch copy, change the generated code so it no longer calls
 `Register::new` (build each register as a struct literal). `cargo clippy --all-targets -- -D
 warnings` stays clean, as does the no-family line. This proves the shim's `allow` holds after X1
@@ -44,7 +50,7 @@ regenerates (research R-4).
 | US1-7, FR-021 | `actuator.rs` (`LimitMode`) | limits 1000..=3000 and mode `Unbounded`: 5000, 999 and `i32::MIN` give `Ok`; with limits unknown too |
 | US1-8, FR-021 | `actuator.rs` | mode `NoPosition`: 2000 (inside the limits) and any tick give `NotPositionMode { id }`, limits known or not |
 | FR-021 | `actuator.rs` | `Cache::new(id)` is `Bounded`; `record_mode` leaves the limits as they were |
-| US1-9, FR-022, FR-023, SC-009 | `actuator.rs` (`ModeValues`) | for `X`, `Pro`, `Y`, `RhP12Rn` and XL-320 `ControlMode`, all 256 values: the listed ones give the mode of data-model.md § ModeSource, every other one `None` |
+| US1-9, FR-022, FR-023, SC-009 | `actuator.rs` (`ModeValues`) | hand-built fixtures with the X, RH-P12-RN and XL-320 lists of research R-17 (core holds no list), all 256 values: a value in a list gives that list's mode, every other one `None`; value 5 is `Unbounded` with the X lists and `Bounded` with the RH-P12-RN lists; empty lists give `None` for every value |
 | US1-10, FR-022 | `actuator.rs` | `from_angle_limits`: (0, 0) → `NoPosition`; (4095, 4095) → `Unbounded`; (0, 1023) and (1, 1023) → `Bounded`; `AngleLimits.register()` is `None` and `limit_mode(_)` is `None` |
 | FR-005 edge | `actuator.rs` | `record_limits(3000, 1000)` gives `InvertedLimits` and leaves limits `None` |
 | AX edge | `position.rs`, `register.rs` | AX scale: an angle more than 512 ticks below zero gives a negative tick; encoding it in 2 bytes gives `DoesNotFit` |
@@ -58,6 +64,7 @@ regenerates (research R-4).
 | SC-005 | doctest on `Position` | `goal + Position::from_radians(0.1)` compiles and moves the goal |
 | FR-011 shape | `actuator.rs` | `ActuatorKind::Xm430W350(Xm430W350::new(id))` still answers `id`, `model_number`, `name` (D2) |
 | §2.8: `Describe` never re-exported | `compile_fail,E0603` doctest on `Actuator` | `use dxl_rs_v2::actuator::Describe;` fails (the `actuator` module is private) |
+| module-interfaces §1 (protocol touch, research R-19) | `src/protocol/p2.rs`, `src/protocol/no_alloc.rs` | `P2::broadcast_ping` is gone; `scan_fails_on_the_transport` gives `Err(Transport(Io(BrokenPipe)))`; the no-alloc test counts 5 replies and allocates nothing |
 
 ## 3. Scenario checks, core-2
 
@@ -67,10 +74,10 @@ regenerates (research R-4).
 | SC-001 (per model) | `actuator.rs` | every tick in each model's `min_raw..=max_raw` survives the round trip with that model's `position_scale()` |
 | US2-1 | `actuator.rs` | XM430-W350 `data().goal_position` is (116, 4); AX-12A is (30, 2) |
 | US2-6 | `actuator.rs` | AX-12A `data().limits.min()` / `max()` are CW (6) / CCW (8); XM430 are Min (52) / Max (48) |
-| US2-2 | `actuator.rs` | a new model's `position_limits_raw()` is `None`; after `record_limits` it is `Some(min..=max)` |
-| FR-022 (per model) | `actuator.rs` | every variant: the mode register (if any) is 1 byte, RW, EEPROM; `AngleLimits` only with CW/CCW limits. XM430-W350 and MX-64(2.0): `OperatingMode { 11, X }`; H54-200-S500-R(A): `{ 11, Pro }`; RH-P12-RN: `{ 11, RhP12Rn }`; YM070-210-M001: `{ 33, Y }`; XL-320: `ControlMode(11)`; AX-12A: `AngleLimits` |
+| US2-2 | `actuator.rs` | a new model's `position_limits_raw()` is `None`; after `record_limits` it is `Some(min..=max)`, and stays so after `record_mode` to `Unbounded` or `NoPosition` (the EEPROM limits in every mode, 2026-10-28) |
+| FR-022 (per model) | `actuator.rs` | every variant: the mode register (if any) is 1 byte, RW, EEPROM, and its three lists are disjoint; `AngleLimits` only with CW/CCW limits. `Register` at 11 with lists (bounded / unbounded / no position) `[3]` / `[4, 5]` / `[0, 1, 16]` on XM430-W350 and MX-64(2.0), `[3]` / `[4]` / `[0, 1, 16]` on H54-200-S500-R(A), `[5]` / `[]` / `[0]` on RH-P12-RN, `[2]` / `[]` / `[1]` on XL-320 (Control Mode); at 33 with `[3]` / `[]` / `[0, 1]` on YM070-210-M001; AX-12A: `AngleLimits` |
 | Sealed trait (FR-011, research R-12) | `compile_fail,E0277` doctest on `Actuator` | `struct Mine; impl dxl_rs_v2::Actuator for Mine {}` fails: `Mine: Describe` is not satisfied. This, not the E0603 example, proves users cannot implement `Actuator` |
-| FR-012 | review in the docs pass (T052) | the public `Actuator` declares only `id`, `model_number`, `name`, `position_scale`, `position_limits_raw`, `position_limits` (contracts/core-api.md); no register is reachable through it |
+| FR-012 | review in the docs pass (T055) | the public `Actuator` declares only `id`, `model_number`, `name`, `position_scale`, `position_limits_raw`, `position_limits` (contracts/core-api.md); no register is reachable through it |
 | FR-016 | `error.rs` | `Error::UnsupportedModel` no longer exists; the setup variant is matched as `Error::Setup(SetupError::UnsupportedModel { .. })` |
 
 ## 4. From a user crate

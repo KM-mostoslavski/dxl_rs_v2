@@ -127,13 +127,15 @@ at Setup and never stores a copy (research R-9).
 
 | `data().mode` (`ModeSource`) | Setup read | Example → `LimitMode` |
 |---|---|---|
-| `OperatingMode` (X, MX(2.0), PRO, PRO+, Y) | 1 byte at `register()` | X: 3 → `Bounded`; 4, 5 → `Unbounded`; 0, 1, 16 → `NoPosition` |
-| `ControlMode` (XL-320) | 1 byte at `register()` | 2 (joint) → `Bounded`; 1 (wheel) → `NoPosition` |
+| `Register { register, values }`: Operating Mode (X, MX(2.0), PRO, PRO+, Y, RH-P12-RN) | 1 byte at `register()` | XM430-W350 lists: 3 → `Bounded`; 4, 5 → `Unbounded`; 0, 1, 16 → `NoPosition` |
+| `Register { register, values }`: Control Mode (XL-320) | 1 byte at `register()` | 2 (joint) → `Bounded`; 1 (wheel) → `NoPosition` |
 | `AngleLimits` (AX, MX on P1) | none (`register()` is `None`); CW/CCW from the limit reads | CW = CCW = 0 → `NoPosition`; MX P1 CW = CCW = 4095 → `Unbounded`; else `Bounded` |
 
 The mapping is core's: `ModeSource::limit_mode(value)` for a register value,
-`LimitMode::from_angle_limits(limits)` for `AngleLimits`. When `limit_mode` returns `None`, the
-bus fails Setup with `SetupError::UnknownOperatingMode { id, value }`.
+`LimitMode::from_angle_limits(limits)` for `AngleLimits`. The value lists are the model's own
+`ModeValues`, generated from its table's `operating_modes` (architect 2026-10-28). When
+`limit_mode` returns `None`, the bus fails Setup with
+`SetupError::UnknownOperatingMode { id, value }`.
 
 | `LimitMode` | `cache.check_goal(raw)` | Then |
 |---|---|---|
@@ -216,7 +218,7 @@ The Vecs grow only during Setup. No Cycle call allocates.
 | Declared actuator silent | `SetupError::Missing { id }` | ping(s) |
 | Declared actuator with another model | `SetupError::WrongModel { id, declared, found }` | ping (+ P1 model read) |
 | Target `Id` not held | `SetupError::NotOnBus { id }` | none |
-| Mode value not listed for the family | `SetupError::UnknownOperatingMode { id, value }` | Setup reads up to the mode read |
+| Mode value in none of the model's lists | `SetupError::UnknownOperatingMode { id, value }` | Setup reads up to the mode read |
 | Goal while `Off` or `Faulted` | `ValidationError::ActuatorIsOff { id }` | none |
 | Enable while `Faulted` | `ValidationError::ActuatorFaulted { id }` | none |
 | Goal outside limits (`Bounded`) | `ValidationError::OutOfLimits { id, raw, min, max }` | none |

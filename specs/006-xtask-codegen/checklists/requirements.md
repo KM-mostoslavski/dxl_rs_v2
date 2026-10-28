@@ -40,6 +40,10 @@
 - 2026-10-28: spec aligned with `specs/ideas/module-interfaces.md` §8 (cache without torque
   state, per-protocol lookup with `SetupError`, access and MX on P1 in scope) and with the
   decision that limits follow the operating mode (FR-019).
+- 2026-10-28: decision "the mode values live in the tables" (module-interfaces §2.4b, §3.1).
+  FR-019 and FR-003 now carry `operating_modes` (`ModeSource::Register { register, values }` or
+  `AngleLimits`); a clarification, an edge case and US1 AS6 values were added. The open question
+  "how X1 picks the value list" is closed; plan C6 is dropped as moot.
 - Scope is the gap on top of PR #4; the Assumptions section lists what already exists so the
   plan does not redo it.
 - Cross-module dependencies (core types, tables protocol data, ci per-family builds) are

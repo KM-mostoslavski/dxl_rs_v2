@@ -27,6 +27,9 @@ FR-3.7, FR-6.4, NFR-3, NFR-4; delivery steps 1 and 5. Paths: `src/lib.rs`, `src/
 - Q: Does a hardware fault reported on a `raw-registers` reply set the faulted state? → A: Yes. Raw replies get the same fault check as every other reply; constitution III has no exception. Core is unchanged: recording a fault already gives faulted from any state.
 - Q: Does a `partial-reads` result fail every slot of a Protocol 2 sync group when one actuator fails? → A: No. Each actuator keeps its own result; only a failed instruction fails every slot of the group. Core is unchanged (bus types).
 - Q: `UnsupportedModel` gains the actuator's `Id` and the protocol beyond `{ model_number, feature }` (cross-module conflict 19). Accepted? → A: Yes ("fine by me"). The setup error is `UnsupportedModel { id, model_number, protocol, feature }`.
+- Q: Where do the operating mode value lists live: in core per family, or in the control tables? → A: In the tables. Each table carries its own model's lists (position, unbounded, no position), copied from that model's e-Manual page; codegen emits them with the model. Core decodes a value with them and holds no per-family list, so a new model or family is a data change only. Value 5 shows why: unbounded on X and MX(2.0), position mode on RH-P12-RN.
+- Q: Should the position limits a developer reads return nothing outside position mode, where the firmware ignores them? → A: No. They return the EEPROM limits in every mode; their documentation says the limits are applied to goals only in position mode.
+- Q: Who removes the protocol module's unused broadcast ping helper and the lint expectation on the protocol module that only it keeps fulfilled? → A: The first core PR, as a flagged touch of the protocol module.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -72,9 +75,11 @@ recorded limits. No bus involved.
 8. **Given** actuator 4 whose mode is recorded as velocity (no position), **When** any goal is
    checked, inside the limits or not, **Then** a validation error names actuator 4 and says it
    is not in a position mode.
-9. **Given** an X-series Operating Mode value, **When** core maps it, **Then** 3 gives position
+9. **Given** the value lists of an X-series table (3 position; 4, 5 extended; 0, 1, 16 no
+   position), **When** core maps an Operating Mode value with them, **Then** 3 gives position
    mode, 4 and 5 give extended (no limit check), 0, 1 and 16 give no position, and any other
-   value gives no mode, which Setup reports as an error naming the actuator and the value.
+   value gives no mode, which Setup reports as an error naming the actuator and the value. With
+   the RH-P12-RN lists (5 position, 0 no position), the same value 5 gives position mode.
 10. **Given** an AX actuator whose CW and CCW Angle Limits are both 0, **When** its mode is
     derived, **Then** it is no position (wheel mode); both 4095 on an MX on Protocol 1 gives
     extended (multi-turn); any other pair gives position mode.
@@ -193,7 +198,7 @@ check they come out unchanged and that out-of-limit ticks are refused.
   register size check stops a value the register cannot hold.
 - A goal for an actuator in velocity, current, PWM or wheel mode: refused with a validation
   error naming the actuator, even when its limits are unknown; nothing is sent.
-- An Operating Mode or Control Mode value the family's e-Manual does not list: no mode is
+- An Operating Mode or Control Mode value in none of the model's value lists: no mode is
   guessed; Setup fails with a setup error naming the actuator and the value.
 - The operating mode changes after Setup (a `raw-registers` write to it): the recorded mode
   stays stale until the next Setup. The `bus` module documents this on its raw write.
@@ -234,7 +239,9 @@ check they come out unchanged and that out-of-limit ticks are refused.
 
 - **FR-005**: The module MUST provide a limits record holding a minimum and maximum position in
   raw ticks, as read from the actuator's EEPROM. It MUST expose them both raw and as
-  `Position`. Recording a minimum above the maximum MUST fail with a validation error.
+  `Position`, in every limit mode (the documentation says they are applied to goals only in
+  position mode, FR-021; decided 2026-10-28). Recording a minimum above the maximum MUST fail
+  with a validation error.
 - **FR-006**: The module MUST provide one limit check, used by both the typed and the raw path,
   that, in position mode (FR-021), accepts a tick inside the limits (bounds included) and
   otherwise returns a validation error naming the `Id`, the requested tick and both limits. The
@@ -313,14 +320,16 @@ check they come out unchanged and that out-of-limit ticks are refused.
   not applied; only the register size check of FR-013 stops a value), or no position (velocity,
   current, PWM, wheel mode: every goal is refused with `NotPositionMode`, whatever the limits).
   A new cache is in position mode; Setup records the real mode.
-- **FR-022**: Every model MUST name where its mode comes from: the Operating Mode register with
-  its family's value list, the XL-320 Control Mode register, or (AX, MX on Protocol 1) the CW
-  and CCW Angle Limits already read (both 0: no position; both 4095: unbounded; else position).
-  Core MUST map every listed value to a limit mode, each value cited from its family's e-Manual
-  page. The source per model is generated data; the mapping is core code. Both stay
-  crate-internal (not on the public trait, FR-012).
-- **FR-023**: A mode value not listed for the model's family MUST map to no mode. Setup then
-  fails with `UnknownOperatingMode { id, value }`; no mode is guessed (constitution III).
+- **FR-022**: Every model MUST name where its mode comes from: its mode register (Operating Mode,
+  or the XL-320 Control Mode) with the model's own value lists (position, unbounded, no
+  position), or (AX, MX on Protocol 1) the CW and CCW Angle Limits already read (both 0: no
+  position; both 4095: unbounded; else position). The value lists are control-table data,
+  copied from the model's e-Manual page (decided 2026-10-28); core holds no per-family list.
+  Core MUST map a value to the limit mode of the list that holds it. The source and lists per
+  model are generated data; the mapping is core code. Both stay crate-internal (not on the
+  public trait, FR-012).
+- **FR-023**: A mode value in none of the model's lists MUST map to no mode. Setup then fails
+  with `UnknownOperatingMode { id, value }`; no mode is guessed (constitution III).
 
 ### Key Entities
 
@@ -335,8 +344,9 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - **Limit mode**: one byte per actuator, in the cache: position (limits checked), unbounded
   (register size only), or no position (goals refused). Decided at Setup from the operating
   mode; position until then.
-- **Mode source**: per model, where Setup gets the limit mode: the Operating Mode register and
-  its family's value list, the XL-320 Control Mode register, or the CW/CCW Angle Limits.
+- **Mode source**: per model, where Setup gets the limit mode: the Operating Mode (or XL-320
+  Control Mode) register with the model's value lists from its control table, or the CW/CCW
+  Angle Limits.
 - **Actuator state**: one byte per actuator: torque off, torque on, or faulted (faulted means
   off). Starts torque off; a fault gives faulted in one step; torque on from faulted is refused.
   Defined in core, stored by the `bus` module in an array beside the actuator list.
@@ -368,9 +378,9 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - **SC-007**: Core reaches at least 70 % line coverage without hardware.
 - **SC-008**: The actuator state type is exactly one byte, and the actuator cache record holds
   no torque or fault field and stays 16 bytes with the limit mode in it.
-- **SC-009**: For each family's mode list, all 256 one-byte values are mapped in a test: every
-  value the e-Manual lists gives its documented limit mode, every other value gives no mode
-  (100 %).
+- **SC-009**: For each set of value lists under test (at least the X-series, RH-P12-RN and
+  XL-320 lists of the e-Manual), all 256 one-byte values are mapped in a test: every listed
+  value gives its list's limit mode, every other value gives no mode (100 %).
 
 ## Assumptions
 
@@ -385,7 +395,10 @@ check they come out unchanged and that out-of-limit ticks are refused.
   to `src/error.rs` (`TransportError`, `ProtocolError`, `StatusError` with `StatusReport`,
   `P1Flags`, `P2Code`, `is_hardware_fault`), three validation variants (address out of range,
   packet too large, data length), and `ProtocolVersion`, already re-exported from the crate
-  root. This feature reuses that shape and does not redefine it.
+  root. This feature reuses that shape and does not redefine it. PR #7's `P2::broadcast_ping`
+  is never called (Setup scans with `scan`), and the `expect(dead_code)` on `mod protocol;` in
+  `src/lib.rs` exists only for it: core-1 deletes both, a flagged protocol touch (architect,
+  2026-10-28).
 - **OQ-2 default**: the trait covers Torque Enable, Goal Position, Present Position and the
   position limits only; anything else is `unimplemented!("SRS OQ-2")` where needed (SRS 5.0).
 - **OQ-3 default**: `Position` is radians in `f32`; raw ticks stay available.
@@ -412,12 +425,13 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - **I/O stays in the `bus` module**: the per-slot state array, torque writes, goal writes, reads, fault detection
   (FR-6.2), `clear_fault` and the "goal while off" guard (FR-3.4) use core types but are not
   built here. Reading the mode register at Setup and recording the mode is the bus's; the limit
-  mode, its check and the value mapping are core's (FR-021 to FR-023, decided 2026-10-28).
+  mode, its check and the mapping are core's; the value lists are table data (FR-021 to FR-023,
+  decided 2026-10-28).
 - **`ModelNumber`** (FR-2.5) is a core item in `src/actuator.rs` (cross-module conflict 9): the
   input type of declared setup and of the generated lookup.
 - **Generated side**: extending the trait needs every generated model type to implement the new
-  items, and `cargo xtask` to emit the scale, the limit register mapping, the mode source and the
-  cache field. That is `xtask` module work (SRS §9). Sequencing is decided: core-1 (additive, with
-  shims) → xtask X1 → core-2 (trait cutover); core never regenerates (plan, module-interfaces
-  §7).
+  items, and `cargo xtask` to emit the scale, the limit register mapping, the mode source (with
+  the value lists from each table's `operating_modes`) and the cache field. That is `xtask`
+  module work (SRS §9). Sequencing is decided: core-1 (additive, with shims) → xtask X1 →
+  core-2 (trait cutover); core never regenerates (plan, module-interfaces §7).
 - `src/units.rs` and `src/units/**` are new paths in this feature.

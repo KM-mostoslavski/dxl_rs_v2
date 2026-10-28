@@ -10,8 +10,10 @@
 → SRS module `tables` (SRS §9): paths `control_tables/**`; covers FR-7.1, FR-7.2, FR-7.4,
 NFR-9; delivery steps 3 and 7. Rule: every row comes from the e-Manual; online verification is
 deferred to the first use of a model, and every table not yet verified says so (FR-7.2, amended
-2026-10-27). No-go: `src/**`. Updated 2026-10-28 for the architect's decision "limits follow the
-operating mode" (`specs/ideas/module-interfaces.md` §2.4b): the tables give the mode source.
+2026-10-27). No-go: `src/**`. Updated 2026-10-28 for the architect's decisions "limits follow the
+operating mode" (`specs/ideas/module-interfaces.md` §2.4b): the tables give the mode source, and
+"the mode values live in the tables" (§3.1): each table with a mode row carries
+`operating_modes`.
 
 ## Clarifications
 
@@ -42,6 +44,12 @@ operating mode" (`specs/ideas/module-interfaces.md` §2.4b): the tables give the
   table whose e-Manual page lists one of those registers carries its row with the page's address,
   size, access and area; the MX Protocol 1 tables carry none. The table check requires exactly
   one mode source per table.
+- Q: Where does the meaning of each mode value live (value 5 is an unbounded position mode on X
+  and MX(2.0), but the bounded position mode on RH-P12-RN)? → A: In the tables (architect
+  decision). Every table with an "Operating Mode" or "Control Mode" row carries
+  `operating_modes: (bounded: [...], unbounded: [...], no_position: [...])`, copied from that
+  model's e-Manual page; a table with neither row carries none. The three lists are disjoint.
+  Core holds no per-family list, so a new model or family is a data change only.
 - Q: XW430-T200 and XW430-T333 give the same Model Number (1,270) on the e-Manual. Correct it or
   keep it? → A: Both pages re-checked on 2026-10-28 give 1,270. XW430-T200 is recorded under
   1270, like any product that shares a number (User Story 5, AS4).
@@ -130,12 +138,12 @@ firmware-dependent layout, model number) as e-Manual data. Today the tables hold
 size and name per row, plus scaling for a few registers; the protocol of a table is inferred by
 the analysis script from register names, which groups XL-320 with the Protocol 1 tables. Since
 2026-10-28 position limits follow the operating mode, so each table must also tell codegen where
-the actuator's mode comes from.
+the actuator's mode comes from and what each mode value means.
 
 **Independent Test**: For a verified table, read its capability data and compare each claim
 with the e-Manual page; regenerate the analysis and see the protocol grouping come from the
 recorded data, not from a heuristic; remove the "Operating Mode" row from a copy of an X-series
-table and see the check fail.
+table and see the check fail; remove its `operating_modes` and see the check fail.
 
 **Acceptance Scenarios**:
 
@@ -155,6 +163,12 @@ table and see the check fail.
 6. **Given** a model whose e-Manual page lists an "Operating Mode" or "Control Mode" register,
    **When** its table is written or checked against the page, **Then** that row is present with
    the page's address, size, access and area.
+7. **Given** a table with an "Operating Mode" or "Control Mode" row, **When** a maintainer reads
+   it, **Then** its `operating_modes` lists, for each mode value the page gives, whether goals
+   are checked against the position limits (bounded), are position goals the firmware does not
+   limit (unbounded), or are not position goals (no position), as the page states. The table
+   check fails when a table with a mode row has no `operating_modes`, a table without one has
+   it, or one value sits in two lists.
 
 ---
 
@@ -223,8 +237,9 @@ longer warns about skipped files.
 5. **Given** the e-Manual gives no model number for one of them, **When** the work ends,
    **Then** the table stays unmapped and the map records why.
 6. **Given** an MX Protocol 1 table, **When** it is written, **Then** it has no "Operating Mode"
-   row and carries the CW/CCW Angle Limit pair, from which the mode is derived. If the page lists
-   an Operating Mode register, the work stops and the architect is told.
+   row and no `operating_modes`, and carries the CW/CCW Angle Limit pair, from which the mode is
+   derived. If the page lists an Operating Mode register, the work stops and the architect is
+   told.
 
 ---
 
@@ -255,7 +270,11 @@ longer warns about skipped files.
 - A date in the record is in the future or not a real calendar date: the check rejects it.
 - A table misses the "Operating Mode" row its page lists, or has it at another address or size:
   the row is fixed from the page like any other correction, and the table still gives exactly
-  one mode source.
+  one mode source. A row added this way comes with its `operating_modes` from the same page.
+- A page lists a mode value as reserved (RH-P12-RN: "1 ~ 4 Reserved"), or does not say whether
+  the position limits apply in one of its position modes: a reserved value goes in no list, and
+  an unclear one stops the work and is raised (never guessed). A value in no list fails Setup
+  with `UnknownOperatingMode` (constitution III).
 
 ## Requirements *(mandatory)*
 
@@ -305,8 +324,8 @@ longer warns about skipped files.
   unverified, mapped or not mapped with reason, protocol recorded or not; for every
   dual-protocol model, its table per protocol and its default; and for the map: duplicate
   numbers, missing files, bad firmware ordering. It MUST fail on a missing flag, an invalid
-  record, a map error or a table without exactly one mode source (FR-020), and MUST NOT fail
-  because a table is unverified, so CI can run it.
+  record, a map error, a table without exactly one mode source, or an `operating_modes` field
+  that breaks FR-020, and MUST NOT fail because a table is unverified, so CI can run it.
 - **FR-015**: The analysis report MUST be regenerated from the recorded data after this
   feature and MUST take each table's protocol from FR-005.
 - **FR-016**: Each table MUST stay readable by the existing codegen: new metadata MUST NOT
@@ -331,7 +350,11 @@ longer warns about skipped files.
   on models with neither (AX, MX on Protocol 1), the CW/CCW Angle Limit pair. A mode register
   the page lists MUST be in the table with the page's address, size, access and area; a table
   whose page lists none MUST NOT carry one. Both mode registers in one table, or an "Operating
-  Mode" row beside the CW/CCW pair, is an error (codegen rejects them too).
+  Mode" row beside the CW/CCW pair, is an error (codegen rejects them too). A table with a mode
+  row MUST carry `operating_modes` (architect, 2026-10-28): three lists of mode values
+  (`bounded`, `unbounded`, `no_position`, each a list of 0–255, possibly empty), copied from
+  that model's page; a table without a mode row MUST NOT carry it. A value in two lists is an
+  error. A value the page marks reserved is in no list.
 
 ### Key Entities
 
@@ -346,9 +369,14 @@ longer warns about skipped files.
 - **Model map entry**: one model number → family, display name, per protocol a
   firmware-ordered list of tables, and the default protocol.
 - **Not-mapped record**: a table file the map leaves out, with the reason.
-- **Mode source**: where an actuator's operating mode comes from: its "Operating Mode" row,
-  XL-320's "Control Mode" row, or the CW/CCW Angle Limit pair. Derived by codegen from the rows;
-  not a field of its own.
+- **Mode source**: where an actuator's operating mode comes from and what each value means: its
+  "Operating Mode" row (XL-320: "Control Mode" row) together with the table's `operating_modes`
+  value lists, or, with neither row, the CW/CCW Angle Limit pair. Codegen takes the register
+  from the row and the lists from the field.
+- **Operating modes** (`operating_modes`): per table with a mode row, the mode values in three
+  disjoint lists: `bounded` (position goals checked against the EEPROM limits), `unbounded`
+  (position goals the firmware does not limit), `no_position` (goal position ignored). Copied
+  from the model's page.
 - **Table check**: a repeatable report of the above that CI can run.
 
 ## Success Criteria *(mandatory)*
@@ -373,8 +401,9 @@ longer warns about skipped files.
   grouping matches the recorded data for every table.
 - **SC-007**: 100 % of dual-protocol models select a table on both a Protocol 1 and a Protocol 2
   bus, and 100 % of them have Protocol 2 marked as the default.
-- **SC-008**: 100 % of tables give exactly one mode source in the table check; for the 4
-  priority tables the mode row (or its absence) matches the cited page.
+- **SC-008**: 100 % of tables give exactly one mode source in the table check, and 100 % of
+  tables with a mode row carry `operating_modes` (0 without one carry it); for the 4 priority
+  tables the mode row (or its absence) and the value lists match the cited page.
 
 ## Assumptions
 
@@ -391,8 +420,10 @@ What already exists, so the plan only covers the gaps:
 - Mode sources today: 66 tables have an "Operating Mode" row (65 mapped, plus `xw430_t200`), the
   XL-320 table has a "Control Mode" row, and the 5 AX tables have neither, only the CW/CCW Angle
   Limit pair. Each table already gives exactly one source; this feature checks the rows against
-  the pages and keeps the rule. Reading the mode at Setup and checking goals against it belong
-  to core and the bus; deriving the source from the rows belongs to codegen.
+  the pages and keeps the rule. No table has `operating_modes` yet; this feature adds it to the
+  67 tables with a mode row. Reading the mode at Setup, decoding it with the lists and checking
+  goals against it belong to core and the bus; deriving the source from the rows and the field
+  belongs to codegen.
 - 3 tables are not mapped: `ax_12_plus`, `ax_18f`, `xw430_t200`; codegen skips them with a
   warning (ARCHITECTURE.md "Not implemented yet").
 - MX tables exist only for Protocol 2 firmware (MX-28/64/106 (2.0), model numbers 30, 311,
@@ -413,8 +444,8 @@ Defaults and boundaries:
   explicit unverified flag in the `.ron` metadata and the generated docs, priority AX-12 and
   MX-64, and tables for both protocols with Protocol 2 as the default on dual-protocol models
   (MX on Protocol 1 left the roadmap). Constitution IV carries the same amendment (v1.3.0). The
-  2026-10-28 decision (limits follow the operating mode) is not in the SRS yet; the architect
-  amends it.
+  2026-10-28 decisions (limits follow the operating mode; the mode values live in the tables)
+  are not in the SRS yet; the architect amends it.
 - Delivery step 3's "one X-series model verified" is not done by this feature unless that
   model is needed; the first verified models are AX-12 and MX-64.
 - The verified record follows the SRS §8 "Meanwhile" default (FR-001); the exact shape of the
@@ -424,7 +455,8 @@ Defaults and boundaries:
   a bug is reported against it.
 - The English e-Manual page for the exact model is the source.
 - Teaching codegen to read the per-protocol map, the default protocol, the capability data, the
-  mode source and the flag (for the generated docs) belongs to the `xtask` module. This feature
+  mode source with its `operating_modes` and the flag (for the generated docs) belongs to the
+  `xtask` module. This feature
   defines the data and keeps it readable by today's codegen (FR-016); the plan orders the PRs so
   the map never gets ahead of codegen and CI's regeneration diff check stays green.
 - A correction or a new table regenerates `src/models*`. That output is tool-generated,
@@ -438,6 +470,8 @@ estimates, not measurements):
 
 - Adding the flag (all unverified) and the recorded protocol to 72 tables is mechanical: a few
   hours, protocol looked up per model family.
+- Writing `operating_modes` into the 67 tables with a mode row: one value table and one limit
+  sentence per page, read while the page is open anyway; a few minutes per table.
 - Verifying one table (address, size, name): about 20–40 minutes including review. The 4
   priority tables take about 1.5–3 hours.
 - Writing the 2 other MX Protocol 1 tables (MX-28, MX-106) from the e-Manual: about 30–60

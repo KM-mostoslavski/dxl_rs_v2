@@ -4,8 +4,8 @@
 **Shared contract**: `specs/ideas/module-interfaces.md` section 3 (and 2.4b for the mode source)
 
 This is the format `xtask` (X1) reads. It makes module-interfaces section 3 exact. Where that
-section leaves a choice to this module (`instructions`), the choice is stated here. The table
-check enforces every rule below.
+section leaves a choice to this module (`instructions`, the place of `operating_modes`), the
+choice is stated here. The table check enforces every rule below.
 
 ## 1. Control table: `control_tables/<stem>.ron`
 
@@ -38,12 +38,30 @@ check enforces every rule below.
 The values are an illustration of the shape, not the AX-12A data. A multi-line row keeps its
 fields in the order `address, size, data_name, access, area`, one per line.
 
+A table with an `Operating Mode` or `Control Mode` row (here an X-series table, unverified) also
+carries `operating_modes`, on one line after `protocols` (after `instructions` when present) and
+before `type_info`:
+
+```ron
+(
+  source: Unverified,
+  protocols: [P1, P2],
+  operating_modes: (bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16]),
+  // type_info, unit_info and control_table as above; control_table holds the mode row
+  // { address: 11, size: 1, data_name: "Operating Mode", access: RW, area: EEPROM }
+)
+```
+
+Key order: `source`, `protocols`, `instructions`, `operating_modes`, `type_info`, `unit_info`,
+`control_table`; an absent key is skipped.
+
 | Key | Grammar | Rule |
 |---|---|---|
 | `source` | `Unverified` \| `Verified(url: STRING, verified: STRING)` | required; URL prefix `https://emanual.robotis.com/`; date ISO `YYYY-MM-DD`, real, not in the future |
 | `protocols` | `[PROTO (, PROTO)?]`, `PROTO = P1 \| P2` | required, non-empty, no duplicates; written `[P1]`, `[P2]` or `[P1, P2]` |
 | `instructions` | `[ENTRY, …]`, `ENTRY = (protocol: PROTO, source: STRING, list: [INSTR, …] (, from_fw: INT)?)` | only when `source` is `Verified`, then at least one entry per protocol in `protocols`; `protocol` in `protocols`; `source` URL as above; `list` non-empty, no duplicates; two entries of one protocol differ in `from_fw` |
 | `INSTR` | `Ping \| Read \| Write \| RegWrite \| Action \| FactoryReset \| Reboot \| Clear \| ControlTableBackup \| SyncRead \| SyncWrite \| FastSyncRead \| BulkRead \| BulkWrite \| FastBulkRead` | P1 entries: only `Ping, Read, Write, RegWrite, Action, FactoryReset, Reboot, SyncWrite, BulkRead` |
+| `operating_modes` | `(bounded: [U8, …], unbounded: [U8, …], no_position: [U8, …])`, `U8` an integer 0–255 | present exactly when the table has an `Operating Mode` or `Control Mode` row; all three keys; a list may be empty (`[]`); no value in two lists; values from the model's page (research R-15) [17] |
 | `type_info` | unchanged | `max > min` for values and radians; zero value within `min..=max`. Meaning: `min_radian` and `max_radian` are `(raw − zero) × rad_per_tick` at the min and max values (research R-8) |
 | `unit_info` | unchanged | optional; not read by codegen |
 | `control_table` | `[ROW, …]`, `ROW = { address: INT, size: INT, data_name: STRING, access: ACCESS, area: AREA }` | required, non-empty |
@@ -63,23 +81,29 @@ Extra rules for a table that the map lists (contract 4.3, data part; xtask check
 - Listed under `p1`: no role row and no mode row above address 255 (the mode register counts as
   a role, contract 4.3) [14]; `P1` in `protocols`. Listed under `p2`: `P2` in `protocols`.
 
-Mode source, for every table, mapped or not (module-interfaces 2.4b; research R-15). X1 derives
-`ModelData::mode` from these rows; there is no field for it:
-- `OperatingMode`: one `Operating Mode` row. `ControlMode`: one `Control Mode` row. `AngleLimits`:
-  neither row, and the `CW Angle Limit` + `CCW Angle Limit` pair.
+Mode source, for every table, mapped or not (module-interfaces 2.4b, 3.1; research R-15). X1
+derives `ModelData::mode` from the mode row and `operating_modes`:
+- `Register`: one `Operating Mode` row, or one `Control Mode` row, plus `operating_modes`.
+  `AngleLimits`: neither row, no `operating_modes`, and the `CW Angle Limit` + `CCW Angle Limit`
+  pair.
 - Exactly one source. Two rows of one mode name, both names in one table, an `Operating Mode` row
   in a table with CW/CCW Angle Limit rows, or neither name without the CW/CCW pair is an error.
   [17]
-- `Control Mode` is accepted only in `xl320.ron`: X1 decodes its values as XL-320's. (Tables
-  check only, contract 4.3.)
+- A mode row without `operating_modes`, `operating_modes` without a mode row, or a value in two
+  of its lists is an error. A value outside 0–255 is an error. [17; for X1 a value outside u8 or
+  a missing key is a parse error, 1]
+- `Control Mode` is accepted only in `xl320.ron` (tables check only, contract 4.3). XL-320 is the
+  only table with that register; a second one is raised before it lands.
 - The mode row has `size: 1`, `access: RW` and `area: EEPROM`. [11]
-- A table whose page lists `Operating Mode` or `Control Mode` carries that row; a table whose page
-  lists neither carries neither (the MX Protocol 1 tables, AX). The check cannot see the page;
-  `emanual.py diff` and the reviewer do.
+- A table whose page lists `Operating Mode` or `Control Mode` carries that row and the page's
+  value lists in `operating_modes`; a table whose page lists neither carries neither (the MX
+  Protocol 1 tables, AX). The check cannot see the page; `emanual.py diff` (for the row) and the
+  reviewer (for the row and the lists) do.
 
 Compatibility: today's xtask (`ron` 0.12.2, no `deny_unknown_fields`) reads this format and
-produces identical output (research R-1). X1 may add `deny_unknown_fields` only for the keys
-above.
+produces identical output, `operating_modes` included (research R-1). X1 reads tables with the
+`IMPLICIT_SOME` extension, since `operating_modes` is optional (research R-1). X1 may add
+`deny_unknown_fields` only for the keys above.
 
 ## 2. Model map: `control_tables/dynamixel.ron`
 
