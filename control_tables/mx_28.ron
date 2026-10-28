@@ -1,6 +1,7 @@
 (
   source: Unverified,
   protocols: [P1, P2],
+  operating_modes: (bounded: [3], unbounded: [4], no_position: [1, 16]),
   type_info: {
     value_of_zero_radian_position: 2048,
     value_of_max_radian_position: 4095,
