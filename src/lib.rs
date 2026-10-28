@@ -19,7 +19,7 @@ mod register;
 mod transport;
 mod units;
 
-pub use actuator::Actuator;
+pub use actuator::{Actuator, ModelNumber, TorqueState};
 /// The `embedded-io` crate this one builds on, so users can implement and
 /// call [`Transport`] without a version-matched dependency of their own.
 pub use embedded_io;
