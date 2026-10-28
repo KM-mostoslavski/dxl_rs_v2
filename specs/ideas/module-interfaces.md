@@ -22,7 +22,7 @@ a private or `pub(crate)` module (the sealed pattern PR #7 uses for `Link`, `Pon
 
 | File or path | Owner | Others may |
 |---|---|---|
-| `src/lib.rs` | core | Add only their own `mod x;` line and their own `pub use x::…` lines. List them in the PR. PR #7's `#[cfg_attr(not(test), expect(dead_code, …))]` on `mod protocol;` stays: the bus never calls `P2::broadcast_ping`, so it stays fulfilled (bus plan, deviation 6, checked on `main` 2026-10-28). An `unfulfilled_lint_expectations` error goes to the protocol owner. |
+| `src/lib.rs` | core | Add only their own `mod x;` line and their own `pub use x::…` lines. List them in the PR. core-1 deletes `P2::broadcast_ping` (its only dead item, checked on `main` 2026-10-28) together with PR #7's `#[cfg_attr(not(test), expect(dead_code, …))]` on `mod protocol;` (architect 2026-10-28; a protocol touch, listed in the core-1 PR). |
 | `src/error.rs` | core | PR #7 (merged) added `Transport`, `Protocol`, `Status`. No other module edits it. A missing variant is raised to core. |
 | `src/id.rs`, `src/actuator.rs`, `src/register.rs`, `src/units.rs`, `src/units/**` | core | Nothing. |
 | `src/protocol.rs`, `src/protocol/**` | protocol (PR #7, merged; not one of the five) | Nothing. Section 5 is merged. A further need goes to a protocol follow-up PR. |
@@ -220,11 +220,9 @@ impl Cache {
 // src/actuator.rs, crate-internal (core-1). X1 emits one value per model in `ModelData::mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]       // ModelData derives these
 pub(crate) enum ModeSource {
-    /// "Operating Mode" (X, MX(2.0), PRO, PRO+, Y, RH-P12-RN): 1 byte read at Setup, decoded
-    /// with the value list of `values` (core research R-17, deviation D3).
-    OperatingMode { register: Register, values: ModeValues },
-    /// XL-320 "Control Mode": 1 = wheel → NoPosition, 2 = joint → Bounded.
-    ControlMode(Register),
+    /// "Operating Mode" (X, MX(2.0), PRO, PRO+, Y, RH-P12-RN) or XL-320 "Control Mode":
+    /// 1 byte read at Setup, decoded with the model's own value lists.
+    Register { register: Register, values: ModeValues },
     /// AX, MX on P1: no register; derived from the CW/CCW limits already read.
     /// CW = CCW = 0 → NoPosition (wheel). MX P1 CW = CCW = 4095 → Unbounded (multi-turn).
     AngleLimits,
@@ -234,11 +232,16 @@ impl ModeSource {
     pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode>; // None: not listed
 }
 
-/// Which Operating Mode value list applies. Value 5 is Unbounded on X and Bounded on RH-P12-RN,
-/// so the register alone cannot pick it.
+/// The meaning of each mode value for one model, generated from its table's
+/// `operating_modes` field (architect 2026-10-28: the value lists live in the tables).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ModeValues { X, Pro, Y, RhP12Rn }
+pub(crate) struct ModeValues {
+    pub(crate) bounded: &'static [u8],
+    pub(crate) unbounded: &'static [u8],
+    pub(crate) no_position: &'static [u8],
+}
 impl ModeValues {
+    /// `None` when the value is in no list.
     pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode>;
 }
 impl LimitMode {
@@ -247,31 +250,32 @@ impl LimitMode {
 }
 ```
 
-- Value lists, each cited from the family's e-Manual pages in core research R-17:
+- Decided 2026-10-28: each table carries its own value lists (§3.1 `operating_modes`), copied
+  from that model's e-Manual page. Core holds no per-family list, and a new model or family is a
+  data change only. Value 5 shows why: Unbounded on X and MX(2.0), Bounded on RH-P12-RN (`pro`).
+  Today's lists, cited in core research R-17:
 
-  | Source | Bounded | Unbounded | NoPosition |
+  | Tables | Bounded | Unbounded | NoPosition |
   |---|---|---|---|
-  | `X` (X-series but XL-320, MX(2.0)) | 3 | 4, 5 | 0, 1, 16 |
-  | `Pro` (PRO (A), PRO+) | 3 | 4 | 0, 1, 16 |
-  | `Y` | 3 | — | 0, 1 |
-  | `RhP12Rn` | 5 | — | 0 |
-  | `ControlMode` (XL-320) | 2 | — | 1 |
-  | `AngleLimits` (AX, MX P1) | any other pair | CW = CCW = 4095 | CW = CCW = 0 |
+  | X-series but XL-320, MX(2.0) | 3 | 4, 5 | 0, 1, 16 |
+  | PRO (A), PRO+ | 3 | 4 | 0, 1, 16 |
+  | Y | 3 | — | 0, 1 |
+  | RH-P12-RN | 5 | — | 0 |
+  | XL-320 (Control Mode) | 2 | — | 1 |
+  | AX, MX P1 (no field: `AngleLimits`) | any other pair | CW = CCW = 4095 | CW = CCW = 0 |
 
-- An Operating Mode or Control Mode value not listed for the family (`None`) fails Setup with
+- A register value in no list (`None`) fails Setup with
   `SetupError::UnknownOperatingMode { id, value }` (constitution III: no fallback). The bus
   builds the error; core never guesses a mode.
-- X1 takes the source from the rows, by e-Manual name: an `Operating Mode` row gives
-  `OperatingMode`, a `Control Mode` row gives `ControlMode`, the CW/CCW pair with no mode row
-  gives `AngleLimits`. Each table has exactly one source; codegen and the tables check reject any
-  other mix (§4.3). The register comes from the row, never a per-family constant (address 11 in
-  54 tables, 33 in the 12 Y tables). Today: 66 tables have `Operating Mode` + Min/Max, `xl320`
-  has `Control Mode` + CW/CCW, the 5 AX tables have CW/CCW only; T2's 3 MX P1 tables add CW/CCW
-  only.
-- Open: how X1 picks `values` per table. Core proposes `X` for `x-series` and `mx`, `Y` for
-  `y-series`, `RhP12Rn` for RH-P12-RN and `Pro` for every other `pro` table (core contract,
-  "For X1 (D3)"). Family alone is not enough for RH-P12-RN, so the xtask plan settles how X1
-  tells it apart before X1.
+- X1 takes the register from the row, by e-Manual name: an `Operating Mode` or (XL-320) a
+  `Control Mode` row gives `Register` with the table's `operating_modes`; the CW/CCW pair with no
+  mode row gives `AngleLimits`. Each table has exactly one source; a mode row without
+  `operating_modes`, `operating_modes` without a mode row, or overlapping lists fail codegen and
+  the tables check (§4.3). The address comes from the row, never a per-family constant (11 in 54
+  tables, 33 in the 12 Y tables). Today: 66 tables have `Operating Mode` + Min/Max, `xl320` has
+  `Control Mode` + CW/CCW, the 5 AX tables have CW/CCW only; T2's 3 MX P1 tables add CW/CCW only.
+- `position_limits()` / `position_limits_raw()` return the EEPROM limits in every mode
+  (architect 2026-10-28); the rustdoc says they are applied only in `Bounded` mode.
 - Setup cost: one 1-byte read per actuator for `OperatingMode` and `ControlMode` models, on
   either protocol (X and MX(2.0) on P1 use the same table as on P2); none for `AngleLimits` (AX,
   MX P1).
@@ -480,6 +484,14 @@ ProtocolVersion};`), so core-1 does not add it.
 ## 3. tables → xtask: RON schema
 
 ### 3.1 Per table (`control_tables/<file>.ron`)
+
+`operating_modes` (added in T1, architect 2026-10-28): present exactly when the table has an
+`Operating Mode` or `Control Mode` row, absent otherwise. Values from that model's e-Manual page;
+the lists are disjoint.
+
+```ron
+operating_modes: (bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16]),
+```
 
 ```ron
 (
@@ -732,8 +744,8 @@ pub trait Clock { fn now_us(&mut self) -> u64; }   // any FnMut() -> u64; StdClo
 
 - `P2::sync_read` (`pub(crate)`, inherent) stays the explicit-tier entry (`impl Bus<P2, …>` only).
 - `P2::broadcast_ping` (`pub(crate)`) is `scan` with corrupted replies dropped. Setup uses `scan`
-  (conflict 16), so the bus never calls `broadcast_ping`, and it keeps PR #7's
-  `expect(dead_code)` on `mod protocol;` fulfilled (section 1).
+  (conflict 16), so nothing calls it; core-1 deletes it and the `expect(dead_code)` on
+  `mod protocol;` (section 1, architect 2026-10-28).
 - On a P2 scan, a reply with its error byte set but not 3 data bytes is `Err(Status)`, and one
   from an invalid Id is `Err(Protocol(Malformed))`.
 - `on_unimplemented` makes a no_std `Bus::new` without a named clock report "not a dxl_rs_v2
