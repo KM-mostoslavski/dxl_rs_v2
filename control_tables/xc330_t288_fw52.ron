@@ -1,11 +1,12 @@
 (
   source: Unverified,
+  protocols: [P2],
   type_info: {
     value_of_zero_radian_position: 2048,
     value_of_max_radian_position: 4095,
     value_of_min_radian_position: 0,
-    min_radian: -3.14159265,
-    max_radian: 3.14159265,
+    min_radian: -3.1415927,
+    max_radian: 3.1400587,
   },
   unit_info: [
     {
