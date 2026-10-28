@@ -24,8 +24,8 @@ pub use actuator::{Actuator, ModelNumber, TorqueState};
 /// call [`Transport`] without a version-matched dependency of their own.
 pub use embedded_io;
 pub use error::{
-    Error, P1Flag, P1Flags, P2Code, ProtocolError, StatusError, StatusReport, TransportError,
-    ValidationError,
+    Error, P1Flag, P1Flags, P2Code, ProtocolError, SetupError, StatusError, StatusReport,
+    TransportError, ValidationError,
 };
 pub use id::Id;
 pub use models::ActuatorKind;
