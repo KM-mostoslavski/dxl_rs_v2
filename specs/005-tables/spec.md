@@ -53,6 +53,12 @@ operating mode" (`specs/ideas/module-interfaces.md` §2.4b): the tables give the
 - Q: XW430-T200 and XW430-T333 give the same Model Number (1,270) on the e-Manual. Correct it or
   keep it? → A: Both pages re-checked on 2026-10-28 give 1,270. XW430-T200 is recorded under
   1270, like any product that shares a number (User Story 5, AS4).
+- Q: The test robot has 10 RX-28 on Protocol 1, and `control_tables/` has no RX table. Add it,
+  and in which PR? → A: Add it in T1, verified against its e-Manual page like AX-12A (architect
+  decision): `rx_28.ron` (Protocol 1, mode source the CW/CCW Angle Limit pair, no
+  `operating_modes`), mapped under model number 28 with family `rx`, compiled in behind a new
+  default Cargo feature `rx`. This is T1's only generated change. The constitution's feature list
+  and the SRS gain `rx` through the architect.
 
 ## User Scenarios & Testing *(mandatory)*
 

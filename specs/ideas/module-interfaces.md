@@ -950,6 +950,11 @@ Open:
   19); the roadmap line "AX-12+, AX-18F, XW430-T200 … Adding the number is enough" is stale (the
   numbers are shared, §3.2). Then regenerate `docs/srs/modules/*.md`; `bus.md` also predates the
   clock-before-`N` change.
+- RX-28 (architect 2026-10-28; tables spec Clarifications): T1 adds `rx_28.ron` (verified,
+  Protocol 1, mode source CW/CCW Angle Limit, no `operating_modes`), maps 28 with family `rx`
+  and adds the default Cargo feature `rx`. To follow: the constitution's feature list and the
+  SRS gain `rx`; X1 accepts family `rx` and its model counts include RX-28; ci adds `rx` to the
+  no_std feature set; `CLAUDE.md`'s no_std command lists `rx`.
 - AX-18F is recorded as `SameNumberAs(18)` (tables plan, deviation 2): the AX-18A page covers
   "AX-18F, AX-18A", number 18, same layout. Data only; confirm.
 - `cache_mut` misuse (core research R-12): generic user code bounded on `A: Actuator` can call
