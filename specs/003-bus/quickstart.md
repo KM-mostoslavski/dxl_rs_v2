@@ -68,7 +68,7 @@ Every row runs against `MockTransport` with `MockTime::ticker`. "Zero bytes" mea
 | US1-2 | `setup.rs` | Silent ID → `SetupError::Missing`; other model → `WrongModel`; `actuators()` empty afterwards |
 | US1-2 (early) | `setup.rs` | Compiled-out or unknown model in a declared list → `UnsupportedModel`, zero bytes |
 | US1-3 | `setup.rs` | Limit-read timeout → `Err(Timeout)`; list empty; no default used |
-| US1-4 | `setup.rs` | 3 declared on `Bus<_, _, 2, _>` → `TooManyActuators { capacity: 2 }`, zero bytes |
+| US1-4 | `setup.rs` | 3 declared on `Bus<_, _, _, 2>` → `TooManyActuators { capacity: 2 }`, zero bytes |
 | US1-5, US3-2 | `src/bus/actuator_ref.rs` | Goal while `Off` or `Faulted` → `ActuatorIsOff`, zero bytes |
 | US1-6, US4-3 | `actuator_ref.rs` | Goal outside limits (raw, and radians that round outside) → `OutOfLimits`, zero bytes |
 | US1-7, FR-022 | `actuator_ref.rs` | Goal inside limits → exactly one Write packet, byte-exact; nothing read after it |

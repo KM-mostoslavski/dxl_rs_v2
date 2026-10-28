@@ -15,7 +15,7 @@ FR-6.2, FR-6.3, FR-6.5, FR-8, NFR-1, NFR-2; delivery steps 4, 5, 6, 9, 10. Desig
 
 ### Session 2026-10-27
 
-- Q: Q1: is the time source part of the bus's type or carried another way? → A: A fourth type parameter with a default (system clock under std): zero bytes for a stateless clock, no indirect call, works with an owned hardware timer.
+- Q: Q1: is the time source part of the bus's type or carried another way? → A: A type parameter with a default (third, before capacity, since 2026-10-28) (system clock under std): zero bytes for a stateless clock, no indirect call, works with an owned hardware timer.
 - Q: Q2: is autoscan available in no_std? → A: Yes, if possible; checked: it needs no allocation (broadcast ping, P1 sweep, model lookup, fixed-capacity list), so it is available.
 - Q: Q4: one combined torque/fault state or two flags? → A: One combined state (off / on / faulted) in one byte; flags cost padding and a low memory footprint is preferred.
 - Q: Where is the one-byte torque/fault state stored? → A: Not in the actuator structs (that adds padding): in a bus-owned array of one byte per slot, beside the actuator list.
@@ -335,8 +335,9 @@ uncapped variant through the mock; without `std`, the variant does not compile.
   an upper bound, not an exact count; exceeding it during setup is an error (FR-1.2).
 - **FR-003**: The bus MUST bound every wait for a reply with a monotonic time source the user
   supplies (any function returning microseconds), or the system clock under `std`. The time
-  source is part of the bus's compile-time type, as a fourth type parameter after capacity
-  with a default (the system clock under `std`), so the std user never names it. This takes
+  source is part of the bus's compile-time type, as the third type parameter, before capacity,
+  with a default (the system clock under `std`), so the std user never names it and a no_std
+  user writes `Bus<P2, Uart, Mono>` (moved before capacity 2026-10-28). This takes
   no space for a clock with no state, needs no indirect call, and accepts a clock that owns a
   hardware timer. SRS FR-1.1, 4.1 and §7 need the extra parameter (deviation).
 - **FR-004**: The bus MUST take a reply timeout, a scan wait and a retry count at construction,

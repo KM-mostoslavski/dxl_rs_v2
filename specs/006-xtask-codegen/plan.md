@@ -4,7 +4,7 @@
 **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/006-xtask-codegen/spec.md`, the cross-module contract
-`specs/ideas/module-interfaces.md` (cited as "contract §n"), constitution v1.2.0, and the
+`specs/ideas/module-interfaces.md` (cited as "contract §n"), constitution v1.3.0, and the
 2026-10-27 architect decisions (SRS patch pending).
 
 ## Summary

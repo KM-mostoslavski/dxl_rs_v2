@@ -4,7 +4,7 @@
 time) | **Date**: 2026-10-27 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/004-core/spec.md`, SRS module `docs/srs/modules/core.md`,
-the cross-module contract `specs/ideas/module-interfaces.md` (sections 1, 2, 7), constitution 1.2.0.
+the cross-module contract `specs/ideas/module-interfaces.md` (sections 1, 2, 7), constitution 1.3.0.
 
 ## Summary
 
@@ -74,7 +74,7 @@ core-2 ≈ 250 lines.
 | III. Nothing Hidden | `TorqueState` starts `Off`. `Faulted` is off. No constructor fills limits from a table (FR-007). The limit check refuses when limits are unknown. | PASS, with one transitional exception (Complexity Tracking row 2) |
 | IV. e-Manual Is the Only Source | Core holds no table facts. Scale and registers come from the tables module. Test values are checked against the e-Manual pages cited in research R-7 and R-9. | PASS |
 | V. Committed, Data-Driven Codegen | Core never edits `src/models*`. Each core PR leaves `cargo xtask codegen` output unchanged. | PASS |
-| VI. Typed, Static, Panic-Free API | `Position` newtype, raw `i32` path kept. Static dispatch only. Every conversion returns `Result`. Error categories become five (adds `Setup`). | PASS, with a wording flag: VI says "transport, protocol, status and validation"; `Setup` was added by the architect on 2026-10-27 (SRS FR-6.4 patch). The constitution text needs a PATCH amendment. |
+| VI. Typed, Static, Panic-Free API | `Position` newtype, raw `i32` path kept. Static dispatch only. Every conversion returns `Result`. Error categories become five (adds `Setup`). | PASS, with a wording flag: VI says "transport, protocol, status and validation"; `Setup` was added by the architect on 2026-10-27 (SRS FR-6.4 patch). Constitution 1.3.0 (2026-10-28) lists it. |
 | VII. DX First | `goal + Position::from_radians(0.1)` in one expression. Every public item documented (`missing_docs` from PR #7). No feature changes core behaviour. Breaking changes (`UnsupportedModel` moves) are called out in the PR. | PASS |
 | Workflow: one module per PR | Core ships as core-1 and core-2. | **DEVIATION**: Complexity Tracking row 1. Needs the architect's approval (module-interfaces §9). |
 | Workflow: gates (fmt, clippy, test, no_std, codegen diff, ≥ 70 % coverage) | Each PR runs all of them. core-1 also makes `--no-default-features` pass under `-D warnings` (today it fails, reproduced). | PASS |

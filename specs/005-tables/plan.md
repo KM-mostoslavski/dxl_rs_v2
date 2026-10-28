@@ -4,7 +4,7 @@
 implementation) | **Date**: 2026-10-27 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/005-tables/spec.md`, the shared contract
-`specs/ideas/module-interfaces.md` (sections 1, 3 and 7), constitution v1.2.0 and
+`specs/ideas/module-interfaces.md` (sections 1, 3 and 7), constitution v1.3.0 and
 `docs/srs/modules/tables.md`.
 
 ## Summary
@@ -87,7 +87,7 @@ comment mentions `from_fw` once more). After T2: 75 tables, 66 model numbers, 72
 | Workflow: one SRS module per PR | Two PRs (T1, T2), as contract section 7 schedules. | **DEVIATION**, see Complexity Tracking |
 | Workflow: PR that verifies or changes a table cites URL and date | PR description lists, per changed table, its flag and every corrected or removed row (FR-017). The check prints that list. | PASS |
 | Workflow: gates (fmt, clippy, test, no_std, codegen no-diff, coverage ≥ 70 %) | No Rust source changes; coverage is unchanged. Python tests are extra. | PASS |
-| Governance: SRS and module copy agree | `docs/srs/modules/tables.md` is the pre-amendment copy (FR-7.2 "every entry verified online", roadmap "MX P1 later"). Constitution 1.2.0 and the spec carry the 2026-10-27 amendment. Architect regenerates the copy. Not edited here. | FLAGGED |
+| Governance: SRS and module copy agree | `docs/srs/modules/tables.md` is the pre-amendment copy (FR-7.2 "every entry verified online", roadmap "MX P1 later"). Constitution 1.3.0 and the spec carry the 2026-10-27 amendment. Architect regenerates the copy. Not edited here. | FLAGGED |
 
 Post-design re-check (after Phase 1): unchanged. The schema, the tools and the PR split keep every
 principle. The only exceptions are the two-PR split and the stale module copy, both already
