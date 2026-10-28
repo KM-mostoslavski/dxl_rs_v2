@@ -41,3 +41,4 @@ pub use transport::SerialTransport;
 pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
+pub use units::{Position, PositionScale};

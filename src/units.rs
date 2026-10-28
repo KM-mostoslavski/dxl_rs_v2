@@ -6,3 +6,6 @@
 //! values the typed form cannot hold or registers it does not cover.
 
 mod position;
+
+pub(crate) use position::Limits;
+pub use position::{Position, PositionScale};
