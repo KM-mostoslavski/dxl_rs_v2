@@ -45,7 +45,7 @@ impl embedded_io::ReadReady for SerialTransport;
 
 `NativePort` is a private alias for `serialport::TTYPort` (Unix) or `serialport::COMPort`
 (Windows); rustdoc shows the concrete type. `write` maps `Ok(0)` for a non-empty buffer to
-`WriteZero`. `reply`/`reply_at` on the mock wait for the next send after they are scripted.
+`TimedOut` (a Windows write timeout; `embedded-io` forbids `Ok(0)`). `reply`/`reply_at` on the mock wait for the next send after they are scripted.
 
 Re-exported as `dxl_rs_v2::SerialTransport`, with the `serialport` crate as
 `dxl_rs_v2::serialport` (std) and `embedded-io` as `dxl_rs_v2::embedded_io` (always). Docs include the FTDI latency-timer note (16 ms
