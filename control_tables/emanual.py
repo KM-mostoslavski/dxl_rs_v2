@@ -71,6 +71,7 @@ PAGES: dict[str, str] = {
     "pm54_040_s250": "https://emanual.robotis.com/docs/en/dxl/p/pm54-040-s250-r/",
     "pm54_060_s250": "https://emanual.robotis.com/docs/en/dxl/p/pm54-060-s250-r/",
     "rh_p12_rn": "https://emanual.robotis.com/docs/en/platform/rh_p12_rna/",
+    "rx_28": "https://emanual.robotis.com/docs/en/dxl/rx/rx-28/",
     "xc330_m181": "https://emanual.robotis.com/docs/en/dxl/x/xc330-m181/",
     "xc330_m181_fw52": "https://emanual.robotis.com/docs/en/dxl/x/xc330-m181/",
     "xc330_m288": "https://emanual.robotis.com/docs/en/dxl/x/xc330-m288/",
