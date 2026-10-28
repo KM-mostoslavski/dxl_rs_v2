@@ -17,6 +17,7 @@ pub mod models;
 mod protocol;
 mod register;
 mod transport;
+mod units;
 
 pub use actuator::Actuator;
 /// The `embedded-io` crate this one builds on, so users can implement and

@@ -52,6 +52,18 @@ impl fmt::Display for FeatureHint {
     }
 }
 
+/// Formats where a [`ValidationError::DoesNotFit`] value had to fit.
+struct FitsIn(u8);
+
+impl fmt::Display for FitsIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            0 => f.write_str("in 32 bits"),
+            size => write!(f, "a {size}-byte register"),
+        }
+    }
+}
+
 /// A value rejected before anything was sent on the bus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -84,6 +96,104 @@ pub enum ValidationError {
         expected: usize,
         /// The size of the slice that was passed, in bytes.
         got: usize,
+    },
+
+    /// A goal was given while the actuator's torque is off. A faulted
+    /// actuator counts as off.
+    #[error(
+        "actuator {} has torque off; enable torque before setting a goal",
+        id.get()
+    )]
+    ActuatorIsOff {
+        /// The actuator the goal was for.
+        id: Id,
+    },
+
+    /// Torque was to be enabled on a faulted actuator.
+    #[error(
+        "actuator {} is faulted; clear the fault before enabling torque",
+        id.get()
+    )]
+    ActuatorFaulted {
+        /// The faulted actuator.
+        id: Id,
+    },
+
+    /// A goal tick lies outside the position limits read from the
+    /// actuator's EEPROM. Both bounds are allowed.
+    #[error("goal {raw} for actuator {} is outside its limits {min}..={max}", id.get())]
+    OutOfLimits {
+        /// The actuator the goal was for.
+        id: Id,
+        /// The goal, in raw ticks.
+        raw: i32,
+        /// The minimum position limit, in raw ticks.
+        min: i32,
+        /// The maximum position limit, in raw ticks.
+        max: i32,
+    },
+
+    /// A goal was checked before Setup read the actuator's position limits.
+    /// Limits are never taken from a control table's defaults.
+    #[error("limits of actuator {} are not known; they are read at setup", id.get())]
+    LimitsUnknown {
+        /// The actuator the goal was for.
+        id: Id,
+    },
+
+    /// The actuator reports a minimum position limit above its maximum.
+    #[error(
+        "actuator {} reports a minimum limit {min} above its maximum {max}",
+        id.get()
+    )]
+    InvertedLimits {
+        /// The actuator that reported the limits.
+        id: Id,
+        /// The minimum position limit it reports, in raw ticks.
+        min: i32,
+        /// The maximum position limit it reports, in raw ticks.
+        max: i32,
+    },
+
+    /// An angle is NaN or infinite, so no tick matches it.
+    #[error("angle is not a finite number")]
+    NotFinite,
+
+    /// A value does not fit a register of `size` bytes, or, when `size` is
+    /// 0, does not fit an `i32`. Values are never truncated.
+    #[error("value {raw} does not fit {}", FitsIn(*size))]
+    DoesNotFit {
+        /// The value that does not fit.
+        raw: i64,
+        /// The register size in bytes; `size` 0 = does not fit `i32`.
+        size: u8,
+    },
+
+    /// A caller buffer or value slice does not have one slot per target.
+    #[error("buffer has {got} slots for {targets} targets")]
+    BufferLength {
+        /// The number of target actuators.
+        targets: usize,
+        /// The number of slots that were passed.
+        got: usize,
+    },
+
+    /// An actuator ID appears more than once in a target or declared list.
+    #[error("actuator {} is listed more than once", id.get())]
+    DuplicateId {
+        /// The repeated ID.
+        id: Id,
+    },
+
+    /// The actuator's operating mode ignores Goal Position: velocity,
+    /// current, PWM or wheel mode.
+    #[error(
+        "actuator {} is not in a position mode; it ignores goal positions",
+        id.get()
+    )]
+    NotPositionMode {
+        /// The actuator the goal was for.
+        id: Id,
     },
 }
 
@@ -408,6 +518,81 @@ mod tests {
         ];
         for (err, msg) in cases {
             assert_eq!(Error::from(err).to_string(), msg);
+        }
+    }
+
+    fn core_validation_cases() -> [(ValidationError, &'static str); 11] {
+        [
+            (
+                ValidationError::ActuatorIsOff { id: id(4) },
+                "actuator 4 has torque off; enable torque before setting a goal",
+            ),
+            (
+                ValidationError::ActuatorFaulted { id: id(4) },
+                "actuator 4 is faulted; clear the fault before enabling torque",
+            ),
+            (
+                ValidationError::OutOfLimits {
+                    id: id(3),
+                    raw: 3001,
+                    min: 1000,
+                    max: 3000,
+                },
+                "goal 3001 for actuator 3 is outside its limits 1000..=3000",
+            ),
+            (
+                ValidationError::LimitsUnknown { id: id(3) },
+                "limits of actuator 3 are not known; they are read at setup",
+            ),
+            (
+                ValidationError::InvertedLimits {
+                    id: id(3),
+                    min: 3000,
+                    max: 1000,
+                },
+                "actuator 3 reports a minimum limit 3000 above its maximum 1000",
+            ),
+            (ValidationError::NotFinite, "angle is not a finite number"),
+            (
+                ValidationError::DoesNotFit {
+                    raw: 70000,
+                    size: 2,
+                },
+                "value 70000 does not fit a 2-byte register",
+            ),
+            (
+                ValidationError::DoesNotFit {
+                    raw: 3_000_000_000,
+                    size: 0,
+                },
+                "value 3000000000 does not fit in 32 bits",
+            ),
+            (
+                ValidationError::BufferLength { targets: 3, got: 2 },
+                "buffer has 2 slots for 3 targets",
+            ),
+            (
+                ValidationError::DuplicateId { id: id(5) },
+                "actuator 5 is listed more than once",
+            ),
+            (
+                ValidationError::NotPositionMode { id: id(4) },
+                "actuator 4 is not in a position mode; it ignores goal positions",
+            ),
+        ]
+    }
+
+    #[test]
+    fn core_validation_messages() {
+        for (err, msg) in core_validation_cases() {
+            assert_eq!(Error::from(err).to_string(), msg);
+        }
+    }
+
+    #[test]
+    fn validation_converts_under_its_category() {
+        for (err, _) in core_validation_cases() {
+            assert_eq!(Error::from(err), Error::Validation(err));
         }
     }
 
