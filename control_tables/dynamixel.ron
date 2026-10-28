@@ -1,49 +1,66 @@
-// Model number -> model entry, read by `cargo xtask codegen`.
+// Model number -> model entry, read by `cargo xtask codegen` and checked by
+// `python3 control_tables/check_tables.py`.
 //
-// family: Cargo feature that compiles the model in.
-// name:   display name.
-// tables: control tables (file stems in this directory) by firmware version.
-//         Each applies from `from_fw` up to the next entry's `from_fw`.
+// family:  the Cargo feature that compiles the model in: "ax", "mx", "rx",
+//          "x-series", "y-series" or "pro".
+// name:    the product name on the model's e-Manual page.
+// also:    optional; other products sold under the same model number.
+// p1:      the control tables (file stems in this directory) the model uses on
+//          a Protocol 1.0 bus, in firmware order. Each applies from `from_fw`
+//          up to the next item's `from_fw`; the first `from_fw` is 0 and they
+//          strictly increase. Every table listed here has P1 in its `protocols`.
+// p2:      the same for a Protocol 2.0 bus (tables with P2 in `protocols`).
+//          A model has `p1`, `p2` or both. One file may sit in both lists of
+//          its number, never under two numbers.
+// default: P2, present exactly when both `p1` and `p2` exist.
+// tables:  legacy list read by today's codegen; in this release it equals the
+//          default list (or the only list). It is removed once codegen reads
+//          `p1` and `p2`.
+//
+// not_mapped: every table file that no model number points to, with the
+//          reason: `NoModelNumber` (its page gives no number) or
+//          `SameNumberAs(n)` (its page gives number n, already in `models`).
+//          A table is never left out of `models` for being unverified.
 (
   models: {
-    12: (family: "ax", name: "AX-12A", tables: [(from_fw: 0, file: "ax_12a")]),
-    18: (family: "ax", name: "AX-18A", tables: [(from_fw: 0, file: "ax_18a")]),
-    300: (family: "ax", name: "AX-12W", tables: [(from_fw: 0, file: "ax_12w")]),
-    30: (family: "mx", name: "MX-28(2.0)", tables: [(from_fw: 0, file: "mx_28")]),
-    311: (family: "mx", name: "MX-64(2.0)", tables: [(from_fw: 0, file: "mx_64")]),
-    321: (family: "mx", name: "MX-106(2.0)", tables: [(from_fw: 0, file: "mx_106")]),
-    350: (family: "x-series", name: "XL-320", tables: [(from_fw: 0, file: "xl320")]),
-    1000: (family: "x-series", name: "XH430-W350", tables: [(from_fw: 0, file: "xh430_w350")]),
-    1001: (family: "x-series", name: "XD430-T350", tables: [(from_fw: 0, file: "xd430_t350")]),
-    1010: (family: "x-series", name: "XH430-W210", tables: [(from_fw: 0, file: "xh430_w210")]),
-    1011: (family: "x-series", name: "XD430-T210", tables: [(from_fw: 0, file: "xd430_t210")]),
-    1020: (family: "x-series", name: "XM430-W350", tables: [(from_fw: 0, file: "xm430_w350")]),
-    1030: (family: "x-series", name: "XM430-W210", tables: [(from_fw: 0, file: "xm430_w210")]),
-    1040: (family: "x-series", name: "XH430-V350", tables: [(from_fw: 0, file: "xh430_v350")]),
-    1050: (family: "x-series", name: "XH430-V210", tables: [(from_fw: 0, file: "xh430_v210")]),
-    1060: (family: "x-series", name: "XL430-W250", tables: [(from_fw: 0, file: "xl430_w250")]),
-    1070: (family: "x-series", name: "XC430-W150", tables: [(from_fw: 0, file: "xc430_w150")]),
-    1080: (family: "x-series", name: "XC430-W240", tables: [(from_fw: 0, file: "xc430_w240")]),
-    1090: (family: "x-series", name: "2XL430-W250", tables: [(from_fw: 0, file: "2xl430_w250")]),
-    1100: (family: "x-series", name: "XH540-W270", tables: [(from_fw: 0, file: "xh540_w270")]),
-    1101: (family: "x-series", name: "XD540-T270", tables: [(from_fw: 0, file: "xd540_t270")]),
-    1110: (family: "x-series", name: "XH540-W150", tables: [(from_fw: 0, file: "xh540_w150")]),
-    1111: (family: "x-series", name: "XD540-T150", tables: [(from_fw: 0, file: "xd540_t150")]),
-    1120: (family: "x-series", name: "XM540-W270", tables: [(from_fw: 0, file: "xm540_w270")]),
-    1130: (family: "x-series", name: "XM540-W150", tables: [(from_fw: 0, file: "xm540_w150")]),
-    1140: (family: "x-series", name: "XH540-V270", tables: [(from_fw: 0, file: "xh540_v270")]),
-    1150: (family: "x-series", name: "XH540-V150", tables: [(from_fw: 0, file: "xh540_v150")]),
-    1160: (family: "x-series", name: "2XC430-W250", tables: [(from_fw: 0, file: "2xc430_w250")]),
-    1170: (family: "x-series", name: "XW540-T260", tables: [(from_fw: 0, file: "xw540_t260")]),
-    1180: (family: "x-series", name: "XW540-T140", tables: [(from_fw: 0, file: "xw540_t140")]),
-    1190: (family: "x-series", name: "XL330-M077", tables: [(from_fw: 0, file: "xl330_m077_fw52"), (from_fw: 53, file: "xl330_m077")]),
-    1200: (family: "x-series", name: "XL330-M288", tables: [(from_fw: 0, file: "xl330_m288_fw52"), (from_fw: 53, file: "xl330_m288")]),
-    1210: (family: "x-series", name: "XC330-T181", tables: [(from_fw: 0, file: "xc330_t181_fw52"), (from_fw: 53, file: "xc330_t181")]),
-    1220: (family: "x-series", name: "XC330-T288", tables: [(from_fw: 0, file: "xc330_t288_fw52"), (from_fw: 53, file: "xc330_t288")]),
-    1230: (family: "x-series", name: "XC330-M181", tables: [(from_fw: 0, file: "xc330_m181_fw52"), (from_fw: 53, file: "xc330_m181")]),
-    1240: (family: "x-series", name: "XC330-M288", tables: [(from_fw: 0, file: "xc330_m288_fw52"), (from_fw: 53, file: "xc330_m288")]),
-    1270: (family: "x-series", name: "XW430-T333", tables: [(from_fw: 0, file: "xw430_t333")]),
-    1310: (family: "x-series", name: "XW540-H260", tables: [(from_fw: 0, file: "xw540_h260")]),
+    12: (family: "ax", name: "AX-12A", p1: [(from_fw: 0, file: "ax_12a")], tables: [(from_fw: 0, file: "ax_12a")]),
+    18: (family: "ax", name: "AX-18A", p1: [(from_fw: 0, file: "ax_18a")], tables: [(from_fw: 0, file: "ax_18a")]),
+    300: (family: "ax", name: "AX-12W", p1: [(from_fw: 0, file: "ax_12w")], tables: [(from_fw: 0, file: "ax_12w")]),
+    30: (family: "mx", name: "MX-28(2.0)", p1: [(from_fw: 0, file: "mx_28")], p2: [(from_fw: 0, file: "mx_28")], default: P2, tables: [(from_fw: 0, file: "mx_28")]),
+    311: (family: "mx", name: "MX-64(2.0)", p1: [(from_fw: 0, file: "mx_64")], p2: [(from_fw: 0, file: "mx_64")], default: P2, tables: [(from_fw: 0, file: "mx_64")]),
+    321: (family: "mx", name: "MX-106(2.0)", p1: [(from_fw: 0, file: "mx_106")], p2: [(from_fw: 0, file: "mx_106")], default: P2, tables: [(from_fw: 0, file: "mx_106")]),
+    350: (family: "x-series", name: "XL-320", p2: [(from_fw: 0, file: "xl320")], tables: [(from_fw: 0, file: "xl320")]),
+    1000: (family: "x-series", name: "XH430-W350", p1: [(from_fw: 0, file: "xh430_w350")], p2: [(from_fw: 0, file: "xh430_w350")], default: P2, tables: [(from_fw: 0, file: "xh430_w350")]),
+    1001: (family: "x-series", name: "XD430-T350", p1: [(from_fw: 0, file: "xd430_t350")], p2: [(from_fw: 0, file: "xd430_t350")], default: P2, tables: [(from_fw: 0, file: "xd430_t350")]),
+    1010: (family: "x-series", name: "XH430-W210", p1: [(from_fw: 0, file: "xh430_w210")], p2: [(from_fw: 0, file: "xh430_w210")], default: P2, tables: [(from_fw: 0, file: "xh430_w210")]),
+    1011: (family: "x-series", name: "XD430-T210", p1: [(from_fw: 0, file: "xd430_t210")], p2: [(from_fw: 0, file: "xd430_t210")], default: P2, tables: [(from_fw: 0, file: "xd430_t210")]),
+    1020: (family: "x-series", name: "XM430-W350", p1: [(from_fw: 0, file: "xm430_w350")], p2: [(from_fw: 0, file: "xm430_w350")], default: P2, tables: [(from_fw: 0, file: "xm430_w350")]),
+    1030: (family: "x-series", name: "XM430-W210", p1: [(from_fw: 0, file: "xm430_w210")], p2: [(from_fw: 0, file: "xm430_w210")], default: P2, tables: [(from_fw: 0, file: "xm430_w210")]),
+    1040: (family: "x-series", name: "XH430-V350", p1: [(from_fw: 0, file: "xh430_v350")], p2: [(from_fw: 0, file: "xh430_v350")], default: P2, tables: [(from_fw: 0, file: "xh430_v350")]),
+    1050: (family: "x-series", name: "XH430-V210", p1: [(from_fw: 0, file: "xh430_v210")], p2: [(from_fw: 0, file: "xh430_v210")], default: P2, tables: [(from_fw: 0, file: "xh430_v210")]),
+    1060: (family: "x-series", name: "XL430-W250", p1: [(from_fw: 0, file: "xl430_w250")], p2: [(from_fw: 0, file: "xl430_w250")], default: P2, tables: [(from_fw: 0, file: "xl430_w250")]),
+    1070: (family: "x-series", name: "XC430-W150", p1: [(from_fw: 0, file: "xc430_w150")], p2: [(from_fw: 0, file: "xc430_w150")], default: P2, tables: [(from_fw: 0, file: "xc430_w150")]),
+    1080: (family: "x-series", name: "XC430-W240", p1: [(from_fw: 0, file: "xc430_w240")], p2: [(from_fw: 0, file: "xc430_w240")], default: P2, tables: [(from_fw: 0, file: "xc430_w240")]),
+    1090: (family: "x-series", name: "2XL430-W250", p1: [(from_fw: 0, file: "2xl430_w250")], p2: [(from_fw: 0, file: "2xl430_w250")], default: P2, tables: [(from_fw: 0, file: "2xl430_w250")]),
+    1100: (family: "x-series", name: "XH540-W270", p1: [(from_fw: 0, file: "xh540_w270")], p2: [(from_fw: 0, file: "xh540_w270")], default: P2, tables: [(from_fw: 0, file: "xh540_w270")]),
+    1101: (family: "x-series", name: "XD540-T270", p1: [(from_fw: 0, file: "xd540_t270")], p2: [(from_fw: 0, file: "xd540_t270")], default: P2, tables: [(from_fw: 0, file: "xd540_t270")]),
+    1110: (family: "x-series", name: "XH540-W150", p1: [(from_fw: 0, file: "xh540_w150")], p2: [(from_fw: 0, file: "xh540_w150")], default: P2, tables: [(from_fw: 0, file: "xh540_w150")]),
+    1111: (family: "x-series", name: "XD540-T150", p1: [(from_fw: 0, file: "xd540_t150")], p2: [(from_fw: 0, file: "xd540_t150")], default: P2, tables: [(from_fw: 0, file: "xd540_t150")]),
+    1120: (family: "x-series", name: "XM540-W270", p1: [(from_fw: 0, file: "xm540_w270")], p2: [(from_fw: 0, file: "xm540_w270")], default: P2, tables: [(from_fw: 0, file: "xm540_w270")]),
+    1130: (family: "x-series", name: "XM540-W150", p1: [(from_fw: 0, file: "xm540_w150")], p2: [(from_fw: 0, file: "xm540_w150")], default: P2, tables: [(from_fw: 0, file: "xm540_w150")]),
+    1140: (family: "x-series", name: "XH540-V270", p1: [(from_fw: 0, file: "xh540_v270")], p2: [(from_fw: 0, file: "xh540_v270")], default: P2, tables: [(from_fw: 0, file: "xh540_v270")]),
+    1150: (family: "x-series", name: "XH540-V150", p1: [(from_fw: 0, file: "xh540_v150")], p2: [(from_fw: 0, file: "xh540_v150")], default: P2, tables: [(from_fw: 0, file: "xh540_v150")]),
+    1160: (family: "x-series", name: "2XC430-W250", p1: [(from_fw: 0, file: "2xc430_w250")], p2: [(from_fw: 0, file: "2xc430_w250")], default: P2, tables: [(from_fw: 0, file: "2xc430_w250")]),
+    1170: (family: "x-series", name: "XW540-T260", p1: [(from_fw: 0, file: "xw540_t260")], p2: [(from_fw: 0, file: "xw540_t260")], default: P2, tables: [(from_fw: 0, file: "xw540_t260")]),
+    1180: (family: "x-series", name: "XW540-T140", p1: [(from_fw: 0, file: "xw540_t140")], p2: [(from_fw: 0, file: "xw540_t140")], default: P2, tables: [(from_fw: 0, file: "xw540_t140")]),
+    1190: (family: "x-series", name: "XL330-M077", p2: [(from_fw: 0, file: "xl330_m077_fw52"), (from_fw: 53, file: "xl330_m077")], tables: [(from_fw: 0, file: "xl330_m077_fw52"), (from_fw: 53, file: "xl330_m077")]),
+    1200: (family: "x-series", name: "XL330-M288", p2: [(from_fw: 0, file: "xl330_m288_fw52"), (from_fw: 53, file: "xl330_m288")], tables: [(from_fw: 0, file: "xl330_m288_fw52"), (from_fw: 53, file: "xl330_m288")]),
+    1210: (family: "x-series", name: "XC330-T181", p2: [(from_fw: 0, file: "xc330_t181_fw52"), (from_fw: 53, file: "xc330_t181")], tables: [(from_fw: 0, file: "xc330_t181_fw52"), (from_fw: 53, file: "xc330_t181")]),
+    1220: (family: "x-series", name: "XC330-T288", p2: [(from_fw: 0, file: "xc330_t288_fw52"), (from_fw: 53, file: "xc330_t288")], tables: [(from_fw: 0, file: "xc330_t288_fw52"), (from_fw: 53, file: "xc330_t288")]),
+    1230: (family: "x-series", name: "XC330-M181", p2: [(from_fw: 0, file: "xc330_m181_fw52"), (from_fw: 53, file: "xc330_m181")], tables: [(from_fw: 0, file: "xc330_m181_fw52"), (from_fw: 53, file: "xc330_m181")]),
+    1240: (family: "x-series", name: "XC330-M288", p2: [(from_fw: 0, file: "xc330_m288_fw52"), (from_fw: 53, file: "xc330_m288")], tables: [(from_fw: 0, file: "xc330_m288_fw52"), (from_fw: 53, file: "xc330_m288")]),
+    1270: (family: "x-series", name: "XW430-T333", p1: [(from_fw: 0, file: "xw430_t333")], p2: [(from_fw: 0, file: "xw430_t333")], default: P2, tables: [(from_fw: 0, file: "xw430_t333")]),
+    1310: (family: "x-series", name: "XW540-H260", p1: [(from_fw: 0, file: "xw540_h260")], p2: [(from_fw: 0, file: "xw540_h260")], default: P2, tables: [(from_fw: 0, file: "xw540_h260")]),
     2000: (family: "pro", name: "PH42-020-S300", tables: [(from_fw: 0, file: "ph42_020_s300")]),
     2010: (family: "pro", name: "PH54-100-S500", tables: [(from_fw: 0, file: "ph54_100_s500")]),
     2020: (family: "pro", name: "PH54-200-S500", tables: [(from_fw: 0, file: "ph54_200_s500")]),
@@ -70,4 +87,9 @@
     53769: (family: "pro", name: "H54-100-S500-RA", tables: [(from_fw: 0, file: "h54_100_s500_ra")]),
     54025: (family: "pro", name: "H54-200-S500-RA", tables: [(from_fw: 0, file: "h54_200_s500_ra")]),
   },
+  not_mapped: [
+    (file: "ax_12_plus", reason: SameNumberAs(12)),
+    (file: "ax_18f", reason: SameNumberAs(18)),
+    (file: "xw430_t200", reason: SameNumberAs(1270)),
+  ],
 )
