@@ -472,7 +472,7 @@ impl LimitMode {
 /// limits read from its EEPROM at Setup.
 ///
 /// It holds no torque state, no fault state and no fault report: the bus
-/// keeps a [`TorqueState`](crate::TorqueState) per actuator beside it.
+/// keeps a [`TorqueState`] per actuator beside it.
 ///
 /// [`Cache::check_goal`] is the one limit check, for typed and raw goals
 /// alike. Limits follow the operating mode: in [`LimitMode::Unbounded`]
@@ -480,9 +480,12 @@ impl LimitMode {
 /// constructor fills limits from a control table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cache {
+    /// The actuator's ID. Never changes.
     id: Id,
+    /// How goals are checked; `Bounded` until Setup records the mode.
     #[allow(dead_code, reason = "read by check_goal, called by bus-1")]
     mode: LimitMode,
+    /// The EEPROM limits, or `None` until Setup records them.
     limits: Option<Limits>,
 }
 

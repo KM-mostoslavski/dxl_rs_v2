@@ -84,12 +84,19 @@ impl SubAssign for Position {
 /// linearly, as multi-turn positions do.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PositionScale {
+    /// `type_info.value_of_zero_radian_position`.
     zero_raw: i32,
+    /// `type_info.value_of_min_radian_position`.
     min_raw: i32,
+    /// `type_info.value_of_max_radian_position`.
     max_raw: i32,
+    /// `type_info.min_radian`.
     min_rad: f32,
+    /// `type_info.max_radian`.
     max_rad: f32,
+    /// `(max_rad - min_rad) / (max_raw - min_raw)`, computed once.
     radians_per_tick: f32,
+    /// The inverse slope, so `to_raw` needs no division.
     ticks_per_radian: f32,
 }
 
@@ -173,7 +180,9 @@ fn round_half_away(x: f32) -> i64 {
 /// table's defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
+    /// Min Position Limit, or CW Angle Limit.
     min: i32,
+    /// Max Position Limit, or CCW Angle Limit.
     max: i32,
 }
 
