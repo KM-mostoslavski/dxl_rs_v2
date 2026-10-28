@@ -52,6 +52,9 @@ contract; tests match on file plus key words):
 error: control_tables/xm430_w350.ron: missing role Goal Position (row "Goal Position")
 error: control_tables/ax_12a.ron: role Torque Enable must be RW/RAM, found R/RAM
 error: control_tables/ph54_200_s500.ron: listed under p1 but Goal Position is at address 564 (> 255)
+error: control_tables/xm430_w350.ron: no mode source: needs an "Operating Mode" or "Control Mode" row, or CW/CCW Angle Limit rows
+error: control_tables/ax_12a.ron: "Operating Mode" row beside CW/CCW Angle Limit rows (only "Control Mode" may sit beside them)
+error: control_tables/xm430_w350.ron: role Operating Mode must be 1 byte in EEPROM, found 2 bytes in EEPROM
 error: control_tables/dynamixel.ron: model 1190: p2 from_fw must strictly increase
 error: control_tables/dynamixel.ron: model 1020: unknown family "x_series" (expected ax, mx, x-series, y-series, pro)
 ```

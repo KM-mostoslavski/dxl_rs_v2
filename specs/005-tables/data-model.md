@@ -24,6 +24,7 @@ Validation:
 - Every field above comes from the e-Manual; a value the page does not give is left out.
 - Brace style stays (`{ key: value }`); no real map appears in a table.
 - A table mapped under `p1` must list `P1` in `protocols`; under `p2`, `P2`.
+- Exactly one mode source, from the rows (see "Mode source" below).
 
 ## Verification flag (`source`)
 
@@ -65,7 +66,34 @@ Validation:
   `CW/CCW Angle Limit`, RW/EEPROM. A `Firmware Version` row. `Model Number` at address 0, size 2,
   R/EEPROM.
 - In a mapped table, no two rows give the same register constant (ron-schema.md section 1).
-- In a table mapped under `p1`, no role row above address 255.
+- In a table mapped under `p1`, no role row and no mode row above address 255.
+
+## Mode source (derived from the rows, not a field)
+
+How the bus learns an actuator's operating mode at Setup, so a goal is checked only where the
+firmware applies the limits (module-interfaces §2.4b, architect 2026-10-28). X1 emits it as
+`ModelData::mode: ModeSource`. The tables give the rows; the values (which mode means what) are
+core's.
+
+| `ModeSource` | Rows in the table | Models |
+|---|---|---|
+| `OperatingMode { register, values }` | one `Operating Mode` row, no CW/CCW Angle Limit row | X, MX(2.0), PRO, PRO+, RH-P12-RN, Y |
+| `ControlMode(Register)` | one `Control Mode` row (the CW/CCW pair is also there, as the limits) | XL-320 only |
+| `AngleLimits` | neither mode row; `CW Angle Limit` + `CCW Angle Limit` | AX, MX on Protocol 1 |
+
+`register` comes from the row. `values` (which Operating Mode value list applies) is open in
+module-interfaces §2.4b; the tables carry nothing for it until core, xtask and tables agree
+(research R-15).
+
+Validation (every table, mapped or not; codegen checks 11 and 17, plus the `xl320` rule;
+research R-15):
+- Exactly one source: at most one row of each mode name, never both names in one table, no
+  `Operating Mode` row beside CW/CCW Angle Limit rows; with neither mode row, the CW/CCW pair
+  must be present.
+- `Control Mode` only in `xl320`.
+- The mode row is 1 byte, `RW`, `EEPROM`. Its address, size, access and area are the page's; a
+  page that lists a mode register means the table carries that row, and a page that lists none
+  means the table carries none (FR-020).
 
 ## Instruction entry (`instructions[i]`)
 
@@ -151,6 +179,8 @@ Map validation (FR-008 to FR-012, FR-019, contract 3.2):
   across its `p2` list.
 - No two mapped files give the same type identifier; no mapped file gives the module identifier
   `tests` or a Rust keyword (ron-schema.md section 2).
+- T1: legacy `tables` equals the default (or only) list. From T2 on, any `tables` key in a model
+  entry is an error.
 
 Relationships:
 
@@ -158,6 +188,7 @@ Relationships:
 Model entry 1 ──p1/p2── * Table ref ──file── 1 Control table
 Not-mapped record ──file── 1 Control table ;  SameNumberAs(n) ── 1 Model entry n
 Control table 1 ── * Register row ; 0..* Instruction entry ; 1 Verification flag
+Control table 1 ── 1 Mode source (derived from 1 mode row, or from the CW/CCW pair)
 ```
 
 Data after each PR:
@@ -169,6 +200,8 @@ Data after each PR:
 | Mapped files | 69 | 69 | 72 |
 | `not_mapped` | none (3 warnings) | 3 records | 3 records |
 | `Verified` tables | 0 | 1 (AX-12A) | 4 (+ MX-64(2.0), AX-12+, MX-64 P1) |
+| Mode source `OperatingMode` / `ControlMode` / `AngleLimits` (all tables) | 66 / 1 / 5 | 66 / 1 / 5 | 66 / 1 / 8 |
+| Model entry key `tables` | every entry | every entry (legacy) | none (an error) |
 
 ## Table check report
 

@@ -4,7 +4,8 @@
 **Cross-module source**: `specs/ideas/module-interfaces.md` §2
 
 Signatures are the contract. Bodies, private fields, private helpers and tests are not. Items
-match module-interfaces §2; differences are marked **D1**/**D2** (see plan.md).
+match module-interfaces §2; differences are marked **D1**/**D2**/**D3** (see plan.md). The limit
+mode (§2.4b) and its two errors were decided by the architect on 2026-10-28.
 
 ## Public (re-exported at the crate root)
 
@@ -78,15 +79,19 @@ impl PositionScale {
 ```
 
 Root re-exports added by core: `ModelNumber`, `TorqueState`, `Position`, `PositionScale`,
-`SetupError`, and `ProtocolVersion` (`pub use protocol::ProtocolVersion;`) if PR #7 has not added
-it, since core-1 is the first PR to put it in a public API (`SetupError::UnsupportedModel`)
-(plus the existing `Actuator`, `Error`, `ValidationError`, `Id`). The rest of the
-module-interfaces §2.8 list comes from other modules.
+`SetupError` (plus the existing `Actuator`, `Error`, `ValidationError`, `Id`). `ProtocolVersion`,
+which `SetupError::UnsupportedModel` puts in core's public API, is already re-exported by PR #7
+(merged into `main`: `pub use protocol::{Clock, P1, P2, Protocol, ProtocolVersion};`). core-1 only
+checks that line and adds none. The rest of the module-interfaces §2.8 list comes from other
+modules.
 
 Doc requirements: `Position` states the unit, the zero reference, and the `f32` limit (exact
 ticks up to an offset of 2²⁴, research R-6). `TorqueState` documents the transition table.
-`Actuator` has an example of a generic function over `A: Actuator` and a `compile_fail,E0603`
-example showing `Describe` cannot be named.
+`Actuator` has an example of a generic function over `A: Actuator`, a `compile_fail,E0603`
+example showing `Describe` cannot be named (never re-exported, §2.8), and from core-2 a
+`compile_fail,E0277` example showing a user type cannot implement `Actuator` (the seal). Each
+`ModeValues` variant, the XL-320 `ControlMode` arm and `LimitMode::from_angle_limits` cite their
+e-Manual page (research R-17).
 
 ## Crate-internal (for xtask and bus)
 
@@ -104,14 +109,60 @@ impl Limits {
 }
 
 // src/actuator.rs
+/// How a goal position is checked, decided at Setup from the operating mode (§2.4b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub(crate) enum LimitMode {
+    #[default]
+    Bounded = 0,     // position mode: EEPROM limits apply
+    Unbounded = 1,   // extended / current-based position, MX multi-turn: register size only
+    NoPosition = 2,  // velocity, current, PWM, wheel: every goal is NotPositionMode
+}
+impl LimitMode {
+    /// AX, MX on P1: CW = CCW = 0 → NoPosition; CW = CCW = 4095 → Unbounded; else Bounded.
+    pub(crate) const fn from_angle_limits(limits: Limits) -> Self;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Cache { /* id: Id, limits: Option<Limits> */ }
+pub struct Cache { /* id: Id, mode: LimitMode, limits: Option<Limits> */ } // 16 bytes
 impl Cache {
-    pub(crate) const fn new(id: Id) -> Self;
+    pub(crate) const fn new(id: Id) -> Self;                // mode Bounded, limits None
     pub(crate) const fn id(&self) -> Id;
     pub(crate) const fn limits(&self) -> Option<Limits>;
     pub(crate) fn record_limits(&mut self, min: i32, max: i32) -> Result<Limits, ValidationError>;
+    pub(crate) fn record_mode(&mut self, mode: LimitMode);
+    /// Bounded: `LimitsUnknown`, `OutOfLimits`, else `Ok(raw)`. Unbounded: `Ok(raw)`.
+    /// NoPosition: `NotPositionMode { id }`.
     pub(crate) fn check_goal(&self, raw: i32) -> Result<i32, ValidationError>;
+}
+
+/// Where Setup gets the limit mode. One per model, in `ModelData::mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModeSource {
+    /// "Operating Mode" (X, MX(2.0), PRO, PRO+, Y, RH-P12-RN): 1 byte read at Setup. (D3)
+    OperatingMode { register: Register, values: ModeValues },
+    /// XL-320 "Control Mode": 1 = wheel → NoPosition, 2 = joint → Bounded.
+    ControlMode(Register),
+    /// AX, MX on P1: no register; `LimitMode::from_angle_limits` on the limits read at Setup.
+    AngleLimits,
+}
+impl ModeSource {
+    /// The 1-byte register Setup reads; `None` for `AngleLimits`.
+    pub(crate) const fn register(self) -> Option<Register>;
+    /// `None`: not listed for this family (the bus returns `UnknownOperatingMode`), or `AngleLimits`.
+    pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode>;
+}
+
+/// Which e-Manual Operating Mode list applies (D3). Values: research R-17.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModeValues {
+    X,        // X-series, MX(2.0): 0, 1, 16 NoPosition; 3 Bounded; 4, 5 Unbounded
+    Pro,      // PRO (A), PRO+: 0, 1, 16 NoPosition; 3 Bounded; 4 Unbounded
+    Y,        // Y: 0, 1 NoPosition; 3 Bounded
+    RhP12Rn,  // RH-P12-RN: 0 NoPosition; 5 Bounded
+}
+impl ModeValues {
+    pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode>;
 }
 
 impl TorqueState {
@@ -132,6 +183,7 @@ pub struct ModelData {
     pub(crate) present_position: Register,
     pub(crate) limits: LimitRegisters,
     pub(crate) hardware_error: Option<Register>,
+    pub(crate) mode: ModeSource,
     pub(crate) scale: PositionScale,
 }
 
@@ -190,7 +242,7 @@ impl Register {
 | Item | Path |
 |---|---|
 | `Describe` | `crate::actuator::Describe` (or `crate::actuator::sealed::Describe`) |
-| `Cache`, `ModelData`, `LimitRegisters`, `Protocols`, `ModelNumber`, `TorqueState` | `crate::actuator::…` |
+| `Cache`, `ModelData`, `LimitRegisters`, `Protocols`, `ModelNumber`, `TorqueState`, `LimitMode`, `ModeSource`, `ModeValues` | `crate::actuator::…` |
 | `Register`, `Access`, `Area` | `crate::register::…` |
 | `Position`, `PositionScale` | `crate::units::…` (also `crate::…`) |
 | `Limits` | `crate::units::Limits` |
@@ -202,6 +254,19 @@ not with `Register::new`. It compiles against core-1 and core-2. core-2 has no `
 
 **For X1 (D2)**: core-1 removes the core tests of `ActuatorKind::new`. X1 owns tests of the
 lookup (firmware split, unknown number, family off).
+
+**For X1 (D3)**: every `DATA` sets `mode`. Proposed rule (xtask's plan decides how it gets
+there): a table with an "Operating Mode" row gives
+`ModeSource::OperatingMode { register: reg(…), values }`, with `values` = `X` for the
+`x-series` and `mx` families, `Y` for `y-series`, `RhP12Rn` for RH-P12-RN and `Pro` for every
+other `pro` table. XL-320's "Control Mode" row gives `ControlMode(reg(…))`. A table with
+CW/CCW Angle Limit and neither row (AX, MX on P1) gives `AngleLimits`.
+
+**For bus (D3)**: Setup, after the limits are recorded: if `data().mode.register()` is
+`Some(r)`, read `r` (1 byte) and map it with `data().mode.limit_mode(value)`, where `None` fails
+Setup with `SetupError::UnknownOperatingMode { id, value }`; else use
+`LimitMode::from_angle_limits(limits)`. Then `cache_mut().record_mode(mode)`. The goal path
+calls `cache().check_goal(raw)` as before; it applies the mode.
 
 ## Errors
 
@@ -233,6 +298,7 @@ pub enum ValidationError {
     DoesNotFit { raw: i64, size: u8 },       // size 0 = does not fit i32
     BufferLength { targets: usize, got: usize },
     DuplicateId { id: Id },
+    NotPositionMode { id: Id },              // 2026-10-28
 }
 
 #[non_exhaustive]
@@ -242,11 +308,13 @@ pub enum SetupError {
     Missing { id: Id },
     WrongModel { id: Id, declared: u16, found: u16 },
     NotOnBus { id: Id },
+    UnknownOperatingMode { id: Id, value: u8 }, // 2026-10-28
 }
 ```
 
 Every field is documented (`missing_docs`). `Error::Setup` uses `#[error(transparent)]` like the
-other categories.
+other categories. `UnsupportedModel` carries `id` and `protocol` beyond SRS FR-2.4's
+`{ model_number, feature }` (conflict 19, accepted by the architect on 2026-10-28).
 
 ### Error messages
 
@@ -265,11 +333,13 @@ Fixed texts, checked by tests (SC-004). `{id}` is `id.get()`. `ProtocolVersion` 
 | `DoesNotFit { raw: 3000000000, size: 0 }` | `value 3000000000 does not fit in 32 bits` |
 | `BufferLength { targets: 3, got: 2 }` | `buffer has 2 slots for 3 targets` |
 | `DuplicateId { id: 5 }` | `actuator 5 is listed more than once` |
+| `NotPositionMode { id: 4 }` | `actuator 4 is not in a position mode; it ignores goal positions` |
 | `SetupError::UnsupportedModel { id: 3, model_number: 1020, protocol: P1, feature: Some("x-series") }` | `actuator 3 reports model number 1020, not supported on Protocol 1 (enable the `x-series` feature)` |
 | same, `feature: None` | `actuator 3 reports model number 1020, not supported on Protocol 1` |
 | `TooManyActuators { capacity: 32 }` | `more actuators answered than the bus capacity of 32` |
 | `Missing { id: 5 }` | `declared actuator 5 did not answer` |
 | `WrongModel { id: 5, declared: 1020, found: 12 }` | `actuator 5 was declared as model number 1020 but reports 12` |
 | `NotOnBus { id: 7 }` | `actuator 7 is not on this bus` |
+| `UnknownOperatingMode { id: 5, value: 7 }` | `actuator 5 reports unknown operating mode 7` |
 
 Existing messages (`InvalidId`, PR #7 variants) do not change.

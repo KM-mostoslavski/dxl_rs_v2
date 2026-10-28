@@ -1,9 +1,10 @@
 # Research: Control tables
 
-**Feature**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md) | **Date**: 2026-10-27
+**Feature**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md) | **Date**: 2026-10-27, updated
+2026-10-28 (R-9 to R-11, R-15: limits follow the operating mode; XW430-T200 re-check)
 
 Sources: `control_tables/*.ron` and `xtask/src/codegen.rs` on `dev`; `ron` 0.12.2 (xtask lock
-file); module-interfaces sections 3, 4.3 and 7; e-Manual pages fetched 2026-10-27 (raw HTML
+file); module-interfaces sections 2.4b, 3, 4.3 and 7; e-Manual pages fetched 2026-10-27 (raw HTML
 parsed, not summaries): AX-12A, AX-18A, MX-28, MX-64, MX-106, MX-28(2.0), MX-64(2.0), XM430-W350,
 2XL430-W250, XL330-M077, XL-320, XW430-T200, XW430-T333, PH54-200-S500-R, H54-200-S500-R(A),
 RH-P12-RN, RH-P12-RN(A), Protocol 1.0, Protocol 2.0. Prototypes in a scratch copy of the repo
@@ -192,15 +193,16 @@ XL-320 scale. Fixing it in X1: rejected, `control_tables/**` is ours.
 
 **Decision**: a table is marked `Verified` only after every value in the file is checked on the
 cited page on that date: every row (address, size, name, access, area), `type_info`, every
-`unit_info` entry, `protocols`, and `instructions` (on the protocol pages). A row or `unit_info`
-entry the page does not give is removed. Pages:
+`unit_info` entry, `protocols`, `instructions` (on the protocol pages), and the mode source
+(R-15: the `Operating Mode` or `Control Mode` row the page lists, or that the page lists none). A
+row or `unit_info` entry the page does not give is removed. Pages:
 
-| Table | Page | Model Number on page | PR |
-|---|---|---|---|
-| `ax_12a` | `https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/` | 12 | T1 |
-| `mx_64` (MX-64(2.0)) | `https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/` | 311 | T2 |
-| `ax_12_plus` | `https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/` | 12 | T2 |
-| `mx_64_p1` | `https://emanual.robotis.com/docs/en/dxl/mx/mx-64/` | 310 | T2 |
+| Table | Page | Model Number on page | Mode source expected (R-15) | PR |
+|---|---|---|---|---|
+| `ax_12a` | `https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/` | 12 | CW/CCW pair, no mode row | T1 |
+| `mx_64` (MX-64(2.0)) | `https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/` | 311 | `Operating Mode` (11, 1) | T2 |
+| `ax_12_plus` | `https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/` | 12 | CW/CCW pair, no mode row | T2 |
+| `mx_64_p1` | `https://emanual.robotis.com/docs/en/dxl/mx/mx-64/` | 310 | CW/CCW pair, no mode row | T2 |
 
 Rule: a verification lands in T1 only if it changes nothing codegen reads today (an address, a
 size, or a name that changes the const ident). A name that differs only in case (e.g. "BUS
@@ -238,12 +240,15 @@ product name goes into `also` on the existing entry in T2:
 
 **Rationale**: FR-011, FR-012, US5 AS4. Keeping the files (rather than deleting them) follows the
 contract example and keeps a table to verify for AX-12+ (FR-018). The XW430-T200 number is what the
-page says; it equals XW430-T333's, which looks like an e-Manual error. It is raised to the
-architect, not corrected from memory.
+page says, and it equals XW430-T333's. The architect asked for an e-Manual re-check: both pages
+give 1,270 (2026-10-28), so the record stands. If a real XW430-T200 reports another number, the
+bus fails Setup with `UnsupportedModel`, which is safe. Codegen skips the three files; once X1
+reads `not_mapped` it no longer warns about them (contract 4.3).
 
-**Alternatives considered**: delete identical files. Allowed by US5 AS4, but the contract keeps
-`ax_12_plus`; left to the architect as a later cleanup. `NoModelNumber` for XW430-T200 (contract
-example): rejected, the page gives a number.
+**Alternatives considered**: delete identical files. Rejected for now: the contract keeps
+`ax_12_plus`, and it is the table AX-12+ is verified in. Left to the architect as a later
+cleanup. `NoModelNumber` for XW430-T200 (an earlier draft of the contract example): rejected, the
+page gives a number.
 
 ## R-11 MX tables for Protocol 1 firmware
 
@@ -256,6 +261,9 @@ is verified; the other two stay `Unverified` (US5 AS2).
 Type register and point to MX(2.0) for Protocol 2, so `protocols: [P1]`. Separate numbers mean no
 clash with 30, 311, 321. File stems `*_p1` match the contract example and give the types `Mx64P1`
 etc. A firmware boundary inside one page is mapped only when the page states it (spec edge case).
+The tables carry no `Operating Mode` row: their mode comes from the CW/CCW Angle Limit pair
+(contract 2.4b, R-15). If a page lists an Operating Mode register, the work stops and it is
+raised.
 
 **Alternatives considered**: put the P1 tables under 30/311/321 `p1`. Rejected: the pages give
 different numbers; those entries already get `p1` = the MX(2.0) table (Protocol Type 1).
@@ -302,8 +310,60 @@ so no extra lookup is needed. Not removing them would keep non-e-Manual names in
 mistakes now, and the spec's edge case says a found mistake is fixed and listed. Remove them in T1:
 rejected, it changes generated output before X1.
 
+## R-15 Mode source: which rows give the operating mode
+
+**Decision**: no new field. The mode source is derived from rows the tables already have. Every
+table gives exactly one source (module-interfaces §2.4b, architect 2026-10-28):
+
+| Source | Rows | Tables today | After T2 |
+|---|---|---|---|
+| `OperatingMode` | one `Operating Mode` row, no CW/CCW row | 66: X, MX(2.0), PRO, PRO+, RH, Y (65 mapped + `xw430_t200`); address 11 in 54, 33 in the 12 Y tables; size 1 | 66 |
+| `ControlMode` | one `Control Mode` row | 1: `xl320` (address 11, size 1; it also has the CW/CCW pair, as its limits) | 1 |
+| `AngleLimits` | neither mode row; `CW Angle Limit` + `CCW Angle Limit` | 5: AX (3 mapped + `ax_12_plus`, `ax_18f`); 6 and 8, size 2 | 8 (+ `mx_28_p1`, `mx_64_p1`, `mx_106_p1`) |
+
+The check (every table, mapped or not; contracts/ron-schema.md §1). The first four rules are
+codegen's checks 17, 11 and 14 (spec 006 data-model §3, contract 4.3); the check repeats them
+(plan deviation 4) and adds the last two (plan deviation 5):
+- at most one `Operating Mode` row and at most one `Control Mode` row, never both in one table;
+- no `Operating Mode` row in a table with CW/CCW Angle Limit rows;
+- with neither mode row, the CW/CCW Angle Limit pair must be present; otherwise "no mode source";
+- the mode row is 1 byte, `RW`, `EEPROM` (contract 2.4b: "1 byte read at Setup", "It is EEPROM");
+  in a table under `p1` it is at address ≤ 255, like the roles (it is read at Setup on a
+  Protocol 1 bus too);
+- a `Control Mode` row only in `xl320`: X1 decodes its values as XL-320's (1 wheel, 2 joint);
+- the rules apply to unmapped tables too, so a file is ready the day it is mapped.
+
+Every table passes today. T1 confirms each mode row against its page while filling `access` and
+`area` (R-7): a page that lists a mode register the table lacks, at another address or size, or a
+table row the page does not list, is a finding. The fix changes a generated const, so it lands in
+T2 with the other row corrections (R-14). The verified tables check it as part of R-9.
+
+**Rationale**: FR-020. X1 takes the source from the rows by e-Manual name and rejects any other
+mix (contract 2.4b, 4.3). Requiring exactly one means nothing is resolved silently
+(constitution III), and repeating codegen's rule in T1 means X1 never meets a table it rejects.
+The rows are e-Manual data like any other (FR-003); a separate field would be a second statement
+of the same fact that could disagree with the row.
+
+**Alternatives considered**:
+- A `mode` field in each table. Rejected: contract 3.1 has none, and the e-Manual row is the
+  source.
+- Derive the source from the family. Rejected: XL-320 is `x-series` but has `Control Mode`, and
+  MX on Protocol 1 is `mx` but has no `Operating Mode` (constitution IV: data, not names).
+- Accept `Control Mode` in any table. Rejected: its values are XL-320's; a new model with that row
+  needs its own decoding in core first.
+- Resolve a table with two sources by an order of names. Rejected: it would hide a table error;
+  codegen rejects it too (check 17).
+
+**Open (module-interfaces §2.4b)**: which Operating Mode value list (`ModeValues`: X, Pro, Y,
+RhP12Rn) X1 attaches to each table. Family alone is not enough (RH-P12-RN is `pro`, and value 5
+means different modes on X and RH-P12-RN). Core, xtask and tables agree before X1. If the answer
+is a table field (for example the value list read from each page's Operating Mode table), it is a
+contract 3.1 change and a T1 task before T1 merges. Until it is decided, the tables add nothing.
+
 ## Summary of unknowns
 
-Every Technical Context item is resolved. Open items are for the architect, not blockers: the shared
-number 1270 (R-10), AX-12+ page citation (R-9), approval of the T1/T2 split (plan), and CI wiring of
-the check (R-12).
+Every Technical Context item is resolved. Open items are for the architect, not blockers: AX-12+
+page citation (R-9), approval of the T1/T2 split (plan), CI wiring of the check (R-12), and the SRS
+amendment for the 2026-10-28 decision (plan Constitution Check), and how X1 picks the Operating
+Mode value list per table (R-15, open in module-interfaces §2.4b). The shared number 1270 is
+resolved: both pages give it (R-10, re-checked 2026-10-28).

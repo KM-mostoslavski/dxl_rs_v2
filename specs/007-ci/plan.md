@@ -4,12 +4,17 @@
 **Date**: 2026-10-27 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/007-ci/spec.md`, SRS module `docs/srs/modules/ci.md`,
-shared contract `specs/ideas/module-interfaces.md`.
+shared contract `specs/ideas/module-interfaces.md`, constitution v1.3.0
+(`.specify/memory/constitution.md`). The contract and the constitution are on `dev` only; they
+reach `main` with the dev merge, not with the ci PR, so these docs cite them by repo path.
+
+**Updated**: 2026-10-28 (PR #7 merged; one missing-docs mechanism, no `Cargo.toml` change; table
+check gets FR-016; `ov-aiignore.yml` is a human precondition).
 
 ## Summary
 
 Close the gaps between what the SRS and constitution promise and what `ci.yml` proves. All
-changes are in `.github/workflows/ci.yml`, plus one lint table in `Cargo.toml`.
+changes are in `.github/workflows/ci.yml`. `Cargo.toml` is not changed.
 
 - **no_std, heap-free (P1)**: the no_std job builds the library for `thumbv7em-none-eabihf`
   with no features, `alloc` alone, every heap-free feature, and every no_std feature. It keeps
@@ -23,11 +28,12 @@ changes are in `.github/workflows/ci.yml`, plus one lint table in `Cargo.toml`.
 - **Tests and clippy with all features (P1)**: two more steps in the Linux job.
 - **Coverage figure (P2)**: written to the run summary before the 70 % gate, pass or fail. No
   write permission.
-- **Docs (P2)**: `missing_docs` is set in `Cargo.toml` and fails every leg under `-D warnings`.
-  A docs job fails on any rustdoc warning. A compile-fail job checks error codes on a pinned
-  toolchain (stable 1.97.1 with `RUSTC_BOOTSTRAP=1`), with all features, defaults, and `std`
-  off, so feature-off examples run too.
-- **Table check**: runs the tables module's `check_tables.py` and its unit tests.
+- **Docs (P2)**: `#![warn(missing_docs)]` in `src/lib.rs` (core's line, on `main` since PR #7)
+  fails every leg under `-D warnings`; ci adds no second lint (R-5). A docs job fails on any
+  rustdoc warning. A compile-fail job checks error codes on a pinned toolchain (stable 1.97.1
+  with `RUSTC_BOOTSTRAP=1`), with all features, defaults, and `std` off, so feature-off
+  examples run too.
+- **Table check (FR-016)**: runs the tables module's `check_tables.py` and its unit tests.
 - **Desktop OSes (P2)**: build and crate tests on Windows and macOS; Linux is the existing job.
 - **Hygiene**: read-only permissions, cancel stale PR runs, no path filters, descriptive check
   names, `persist-credentials: false`, a 20-minute time-out per job.
@@ -48,7 +54,8 @@ latest stable on runners; one pinned toolchain, 1.97.1, for the compile-fail che
 **Testing**: Seeded faults on throwaway branches, one per promise
 ([quickstart.md § 2](quickstart.md#2-seeded-faults-sc-001)). Local reproduction of every gate
 ([quickstart.md § 1](quickstart.md#1-run-the-gates-locally)). The feature-set rule and every
-command were prototyped on scratch copies of `dev` and PR #7 (research R-16).
+command were prototyped on scratch copies of `dev` and PR #7, and re-run on a scratch copy of
+`main` on 2026-10-28 with the seeded faults (research R-16).
 
 **Target Platform**: GitHub-hosted `ubuntu-latest`, `windows-latest`, `macos-latest`; cross
 target `thumbv7em-none-eabihf`.
@@ -58,12 +65,14 @@ target `thumbv7em-none-eabihf`.
 **Performance Goals**: full PR run ≤ 15 min with a warm cache (SC-003). 36 jobs today; legs are
 single-crate builds or single-crate lib tests.
 
-**Constraints**: only `.github/workflows/**` (never `ov-*.yml`) and `Cargo.toml` (`[lints]` only;
-no feature or dependency edit). No secrets, read-only token, GitHub-hosted runners. No path
-filters. No `continue-on-error` on a blocking check. No gate removed or weakened (FR-001).
+**Constraints**: only `.github/workflows/**` (never `ov-*.yml`). `Cargo.toml` is in `ci`'s paths,
+but this feature changes no line of it (FR-015). No secrets, read-only token, GitHub-hosted
+runners. No path filters. No `continue-on-error` on a blocking check. No gate removed or weakened
+(FR-001).
 
-**Scale/Scope**: one workflow file (4 jobs kept, 8 added), 2 lines in `Cargo.toml`. 11 host,
-7 target and 7 test feature sets today, growing by up to three per new feature.
+**Scale/Scope**: one workflow file (4 jobs kept, 8 added), no `Cargo.toml` change. 11 host,
+7 target and 7 test feature sets today, growing by up to three per new feature (13, 9 and 9 once
+bus-5 declares `partial-reads` and `raw-registers`).
 
 No NEEDS CLARIFICATION remains. Every unknown is resolved in [research.md](research.md).
 
@@ -82,16 +91,14 @@ No NEEDS CLARIFICATION remains. Every unknown is resolved in [research.md](resea
 | VII. Developer Experience First | `missing_docs` enforced in every feature set; doc warnings fail; every check name says what it proves; each check is reproducible locally with one command (contract § "Reproduce a check locally"). | PASS |
 | Technical Constraints | Edition 2024, workspace with `xtask`, features unchanged. | PASS |
 | Workflow: quality gates | Every constitution gate keeps running at the same strength (FR-001). New gates are added on top. Adding them to the constitution's list is the architect's call. | PASS |
-| Workflow: one module per PR | Touches only `ci`'s paths: `.github/workflows/ci.yml` and the `[lints]` table of `Cargo.toml` (module-interfaces.md § 1). | PASS |
+| Workflow: one module per PR | Touches only `ci`'s paths: `.github/workflows/ci.yml` (module-interfaces.md § 1). No `Cargo.toml` line. | PASS |
 | Workflow: no AI attribution | Applies to the PR, not the plan. | PASS (at PR time) |
-| Governance: SRS and ARCHITECTURE.md agree | NFR-1, NFR-6, FR-7.3 met. The 2026-10-27 SRS patch does not change CI. | PASS |
+| Governance: SRS and ARCHITECTURE.md agree | NFR-1, NFR-6, FR-7.3 met. The 2026-10-27 SRS patch does not change CI, nor do the 2026-10-28 decisions (mode-aware limits, `raw-registers` replies observed, per-slot `partial-reads`): bus-5's tests run with `partial-reads,raw-registers` through the all-features run and their own test legs. | PASS |
 
 Post-design re-check (after Phase 1): unchanged, all PASS. The design needs no exception.
 
-Two interpretations are recorded, not violations:
+One interpretation is recorded, not a violation:
 
-- FR-015 says "package metadata only" in `Cargo.toml`. The shared contract gives `ci` the
-  `[lints]` table. A lint level is neither a feature nor a dependency (R-5).
 - FR-002 names "every model family plus `mock`". The plan builds "every feature that needs
   neither `std` nor `alloc`", which is that set today and grows by itself (R-3). Stronger, never
   weaker.
@@ -124,8 +131,8 @@ specs/007-ci/
 │                        # NEW: feature-sets, feature-set (matrix), feature-test (matrix),
 │                        # features (aggregate), docs, compile-fail, control-tables,
 │                        # os (Windows, macOS)
-└── ov-aiignore.yml      # NOT touched (no-go)
-Cargo.toml               # MODIFIED: + [lints.rust] missing_docs = "warn". Nothing else.
+└── ov-aiignore.yml      # NOT touched (no-go); the human commits it to main first
+Cargo.toml               # NOT changed (FR-015; missing_docs stays in src/lib.rs, R-5)
 ```
 
 Not touched: `src/**`, `xtask/**`, `control_tables/**`, `.cargo/config.toml`,
@@ -139,22 +146,29 @@ check and the PR shows them under one `CI /` prefix. The `jq` program lives inli
 
 ## PR split
 
-One PR. The change is one file plus two lines, well inside one review.
+One PR. The change is one file, well inside one review.
 
-Delivery order (module-interfaces.md § 7): the ci PR merges **after PR #7 and core-1**.
+Delivery order (module-interfaces.md § 7): the ci PR merges **after core-1**. PR #7 (step P) is
+merged (2026-10-28).
 
-- PR #7 documents the two `UnsupportedModel` fields that would make the missing-docs gate red.
+- PR #7 documented the two `UnsupportedModel` fields and added `#![warn(missing_docs)]` to
+  `src/lib.rs`, so the missing-docs gate is green on `main`.
 - core-1 removes the `Register::new` "never used" warning that makes every no-family build red
-  under `-D warnings` (conflict 14; confirmed on scratch copies, R-16).
+  under `-D warnings` (conflict 14; confirmed on scratch copies of `dev`, PR #7 and `main`,
+  R-16).
 
-The rest (coverage summary, docs, compile-fail, OSes, permissions) would pass on `dev` today.
+Precondition owned by the human: `.aiignore` and `.github/workflows/ov-aiignore.yml` are
+committed to `main` before the ci PR opens (spec Assumptions). On 2026-10-28 both are untracked
+on `dev`. The ci PR never creates or edits them.
+
+The rest (coverage summary, docs, compile-fail, OSes, permissions) passes on `main` today.
 The `control tables: schema check` step runs the tables module's scripts, which T1 adds
 (spec 005). Land ci after T1, or guard the step with `if [ -f control_tables/check_tables.py ]`
 until T1 merges (the default, R-17). Remove the guard in the first ci change after T1.
 
 If core-1 slips, an early split is possible: **ci-1** with those parts, then **ci-2** with the
-feature sets, the no_std builds and the `[lints]` table. That split needs the architect's
-approval under "one module per PR"; the default is one PR.
+feature sets and the no_std builds. That split needs the architect's approval under "one module
+per PR"; the default is one PR.
 
 Before opening the PR, run [quickstart.md § 1](quickstart.md#1-run-the-gates-locally) on the
 branch. If a Windows or macOS leg fails on its first run (R-9), the fix lands in the owning module
@@ -162,23 +176,29 @@ first. The ci PR does not skip the test or mark the job non-blocking.
 
 ## Deviations from module-interfaces.md
 
-None.
+One.
 
-- File ownership: only `.github/workflows/**` (not `ov-*.yml`) and the `[lints]` table of
-  `Cargo.toml`, both `ci`'s per § 1. No feature or dependency line.
+- § 1 "Known `Cargo.toml` touches" lists `[lints.rust] missing_docs` (ci, its own table). This
+  plan adds no `[lints]` table: PR #7 put `#![warn(missing_docs)]` in `src/lib.rs`, core's
+  plan relies on that line, and one lint needs one switch (R-5). The line in § 1 should be
+  dropped. `ci` keeps ownership of `[lints]` for later use.
+- File ownership otherwise as § 1: only `.github/workflows/**` (not `ov-*.yml`). No `Cargo.toml`
+  line, no feature or dependency line.
 - Compile-fail cases stay rustdoc examples with error codes, checked on a pinned toolchain, as
   conflict 13 says. The pin is stable 1.97.1 with `RUSTC_BOOTSTRAP=1` rather than a nightly
   (R-7); the contract does not fix which pinned toolchain.
-- Delivery after P (#7) and core-1, as § 7 says.
+- Delivery after P (#7, merged) and core-1, as § 7 says.
 
 ## Follow-ups for the architect (outside this module)
 
+- Before the ci PR: commit `.aiignore` and `.github/workflows/ov-aiignore.yml` to `main`.
 - Mark the required checks listed in [contracts/ci-checks.md](contracts/ci-checks.md) in
-  `.github/ov-ruleset-main.json`.
+  `.github/ov-ruleset-main.json` (not in the repository yet).
 - Add the new gates to the constitution's gate list (`/speckit-constitution`), the PR template
   and `CLAUDE.md`.
-- The spec's Assumptions say the no-feature build is green on day one. That probe ran without
-  `-D warnings`; with it, the build is red until core-1 (R-16).
+- Drop `[lints.rust] missing_docs` from the "Known `Cargo.toml` touches" line of
+  module-interfaces.md § 1 (see Deviations).
+- Keep `#![warn(missing_docs)]` in `src/lib.rs` (core): the missing-docs gate relies on it (R-5).
 - Optional: pin actions by commit SHA (R-11).
 - Doc examples that use std-only items need `#[cfg_attr(feature = "std", doc = …)]` so the
   std-off compile-fail pass compiles (R-7). This binds every module that writes doc examples.

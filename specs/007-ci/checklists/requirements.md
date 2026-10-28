@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -35,11 +35,13 @@
   "compile-fail example" are user-facing constraints from the SRS and constitution, not
   implementation choices. Same convention as spec 002. Tool choices (feature-matrix
   tool, coverage reporter, nightly vs stable error-code check) are left to the plan.
-- 2 markers remain, both scope questions for `/speckit-clarify`, each with a recorded default:
-  FR-003 (link a firmware binary, needs files outside the module's paths; default: no) and
-  FR-010 (declare and enforce MSRV 1.85; default: latest stable only, User Story 6 dropped).
-- Day-one blocker recorded in Edge Cases: the missing-docs gate (FR-007) fails on two
-  undocumented `UnsupportedModel` fields in `src/error.rs`, which is no-go for this module; the
-  fix lands first in its own PR.
+- The 2 markers (FR-003 firmware link, FR-010 MSRV) were resolved in the 2026-10-27
+  clarifications: no firmware link for now (TODO), no MSRV (User Story 6 deferred).
+- Day-one blocker recorded in Edge Cases: every build without a model family fails under
+  `-D warnings` (`Register::new` never used) until core-1. The earlier blocker, two undocumented
+  `UnsupportedModel` fields, was fixed by PR #7 (merged 2026-10-28).
+- 2026-10-28: FR-015 now says this feature changes no `Cargo.toml` line (the missing-docs lint is
+  PR #7's attribute in `src/lib.rs`); FR-016 added for the table check handed over by the tables
+  module.
 - Optional items (dependency audit, hardware-in-the-loop job, semver check, scheduled run,
   Miri, update bot) are recorded in Assumptions, not required.

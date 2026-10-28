@@ -106,8 +106,11 @@ appear in the run summary.
 ### User Story 4 - Docs are complete and their examples fail for the right reason (Priority: P2)
 
 The architect relies on CI, not review, to catch an undocumented public item, a broken doc link,
-or a compile-fail example that fails for the wrong reason. Today none of the three is checked:
-stable rustdoc accepts a `compile_fail,E0277` example that fails with any error at all.
+or a compile-fail example that fails for the wrong reason. Today only the first is checked
+(`#![warn(missing_docs)]` from PR #7, under `-D warnings`), and only in the three sets the
+workflow compiles: the defaults, the defaults plus `mock`, and the no_std families plus `mock`.
+The other two are not: stable rustdoc accepts a `compile_fail,E0277` example that fails with any
+error at all.
 
 **Why this priority**: Constitution VII requires every public item documented. Constitution II
 proves "absent over failing" with compile-fail examples; an example that fails for the wrong
@@ -177,10 +180,11 @@ declared minimum; the minimum-version check turns red.
 
 ### Edge Cases
 
-- A new gate lands while `main` fails it. Today two public fields of
-  `Error::UnsupportedModel` (`src/error.rs`) lack docs, so the missing-docs check of FR-007
-  would be red on day one. This module may not touch `src/**`; the fix lands first in its own
-  PR (owned by the error module), then the gate.
+- A new gate lands while `main` fails it. Today every build without a model family fails under
+  `-D warnings` (`Register::new` is never used), so the no-feature, `alloc`, `mock` and `std`
+  legs of FR-002 and FR-004 would be red on day one. This module may not touch `src/**`; the fix
+  lands first in its own PR (core-1, owned by core), then the gate. The earlier case, two
+  undocumented `Error::UnsupportedModel` fields, was fixed by PR #7.
 - The nightly or pinned toolchain used by FR-008 breaks or is withdrawn: the check fails with a
   message naming the toolchain, and is fixed by a deliberate toolchain bump, not by the PR
   author.
@@ -236,8 +240,14 @@ declared minimum; the minimum-version check turns red.
   "no_std build", "feature: ax alone"), so the architect can mark it required and a reader
   understands a failure from the PR page.
 - **FR-015**: This module MUST change only `.github/workflows/**` (never `ov-*.yml`) and
-  `Cargo.toml`. In `Cargo.toml` it MAY change package metadata only; it MUST NOT add, remove or
-  rename features or dependencies.
+  `Cargo.toml`. In `Cargo.toml` it MAY change `[package]`, package metadata and `[lints]` only
+  (module-interfaces.md § 1); it MUST NOT add, remove or rename features or dependencies. This
+  feature changes no line of `Cargo.toml`: the missing-docs lint of FR-007 is the
+  `#![warn(missing_docs)]` attribute already in `src/lib.rs`, and CI adds no second one.
+- **FR-016**: CI MUST run the table check of the tables module (tables spec 005 FR-014: the
+  check script and its unit tests in `control_tables/`) on every PR, as a blocking check. Until
+  the script is on `main` (tables T1), the check passes with a notice that nothing was checked;
+  the first ci change after T1 removes that guard (module-interfaces.md § 7).
 
 ### Key Entities
 
@@ -262,8 +272,10 @@ declared minimum; the minimum-version check turns red.
   clock.
 - **SC-004**: Zero checks need a secret or a write permission; a fork PR shows the same set of
   checks as a branch PR.
-- **SC-005**: The number of feature sets built equals the number of features declared in
-  `Cargo.toml` plus 3 (none, defaults, all), with no manual list to keep in sync.
+- **SC-005**: The feature sets follow `Cargo.toml` with no manual list to keep in sync. With
+  F features declared (not counting `default`): F + 3 host build sets (none, each alone,
+  defaults, all); one microcontroller build set per feature that does not need `std`; and one
+  host test set per feature that needs neither `std` nor `alloc`, plus `std` alone.
 - **SC-006**: Over the first 20 PRs after this lands, at most one blocking check fails for a
   reason unrelated to the PR's change (flaky test, toolchain drift).
 
@@ -275,15 +287,28 @@ declared minimum; the minimum-version check turns red.
   `thumbv7em-none-eabihf`); job `coverage` (line coverage ≥ 70 %, generated models excluded,
   gate only); job `codegen` (regenerate and fail on any diff, new files included; `xtask`
   removes stale outputs itself). Triggers: every PR, pushes to `main`.
-- `ov-aiignore.yml` (agent commits vs `.aiignore`) exists, is read-only for agents, and is not
-  changed or duplicated by this feature.
-- The constitution's gate list (Development Workflow) is already fully covered by `ci.yml`; this
-  feature adds gates on top. Adding them to the constitution's list is the architect's call
-  (`/speckit-constitution`), not part of this module.
-- Probe on 2026-10-27 (local, stable 1.97.1): the library already builds for the target with no
-  features, with `alloc` alone, with each family alone and with `mock` alone; docs build with no
-  warning; the missing-docs check fails only on the two `UnsupportedModel` fields (see Edge
-  Cases). So FR-002, FR-004 and the docs half of FR-007 are expected green on day one.
+- Precondition, owned by the human: `.aiignore` and `.github/workflows/ov-aiignore.yml` (agent
+  commits vs `.aiignore`) are committed to `main` before the ci PR. The check reads the base
+  branch's `.aiignore`, so it guards the ci PR only once both are on `main`. On 2026-10-28 both
+  exist only as untracked files on `dev`. Both are read-only for agents; this feature does not
+  create, change or duplicate them.
+- The constitution's gate list (Development Workflow, v1.3.0) is already fully covered by
+  `ci.yml`; this feature adds gates on top. Adding them to the constitution's list is the
+  architect's call (`/speckit-constitution`), not part of this module.
+- The missing-docs lint is `#![warn(missing_docs)]` in `src/lib.rs` (core's file, on `main`
+  since PR #7). The workflow's `RUSTFLAGS: -D warnings` turns it into a failure in every check
+  that compiles the crate, so FR-007 holds for every feature set CI builds.
+- Probe on 2026-10-27 (local, stable 1.97.1, without `-D warnings`): the library builds for the
+  target with no features, with `alloc` alone, with each family alone and with `mock` alone, and
+  docs build with no warning. Under `-D warnings`, which CI uses, every build without a model
+  family fails (`Register::new` is never used; module-interfaces.md conflict 14) until core-1
+  lands. Re-checked on `main` on 2026-10-28 (PR #7 merged): same result, and the missing-docs
+  check is green. So FR-002, FR-004 and FR-007 are expected green once core-1 is on `main`, not
+  before.
+- The architect decisions of 2026-10-28 (limits follow the operating mode, `raw-registers`
+  replies are observed for faults, per-slot `partial-reads` results) add no CI work. bus-5's
+  tests run with `partial-reads` and `raw-registers` through FR-005 and the per-feature test
+  sets, as planned.
 - "Every PR reports coverage" (NFR-6) means the whole-workspace figure, not coverage of the
   changed lines only.
 - The feature matrix builds each feature alone, not every combination: linear cost, and it
@@ -291,10 +316,11 @@ declared minimum; the minimum-version check turns red.
   automatically when `Cargo.toml` declares them.
 - The compile-fail check covers today's single example (`src/transport.rs`, `E0277`) and any the
   `bus` module adds. Default: a dated nightly toolchain for doc examples only, blocking; the
-  plan may choose another tool that checks error codes on stable.
+  plan may choose another tool that checks error codes on stable (it pins stable 1.97.1 with
+  `RUSTC_BOOTSTRAP=1`, research R-7).
 - The repository is public, so hosted Windows and macOS runners add no cost.
 - Marking checks as required on `main` lives in the ruleset (`.github/ov-ruleset-main.json`,
-  read-only for agents); the architect does it after merge.
+  read-only for agents, not in the repository yet); the architect does it after merge.
 - Updating `.github/pull_request_template.md` and `CLAUDE.md` with the new gates is outside this
   module's paths; it is a follow-up for the architect.
 - Optional, not required by the SRS or constitution (recorded, not built here):

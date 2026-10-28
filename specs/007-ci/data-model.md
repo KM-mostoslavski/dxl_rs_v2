@@ -58,7 +58,7 @@ Where a build runs.
 
 | Target | Builds | `std` | Notes |
 |---|---|---|---|
-| Linux host (`x86_64-unknown-linux-gnu`) | all host sets, test sets, tests, coverage, docs, compile-fail (incl. a std-off doc pass), codegen, table check | yes | `libudev-dev` installed in a named step |
+| Linux host (`x86_64-unknown-linux-gnu`) | all host sets, test sets, tests, coverage, docs, compile-fail (incl. a std-off doc pass), codegen, table check (FR-016) | yes | `libudev-dev` installed in a named step |
 | Windows host | defaults: build + crate tests | yes | pty tests skip by their own `cfg(unix)` |
 | macOS host | defaults: build + crate tests | yes | pty tests run |
 | `thumbv7em-none-eabihf` | no_std sets, target sets | no | library only; firmware link is the FR-003 TODO |
@@ -81,8 +81,8 @@ Published by the `coverage` check in its run summary, pass or fail (FR-006).
 | `threshold` | constant `70` | same number as `--fail-under-lines` |
 | `result` | `percent >= threshold` | `pass` or `fail`; the gate step decides the check |
 
-## Cargo.toml lint table
+## Missing-docs lint
 
-| Key | Value | Effect |
+| Where | Value | Effect |
 |---|---|---|
-| `[lints.rust] missing_docs` | `"warn"` | Root package only. Warns locally; fails CI through `RUSTFLAGS: -D warnings` in every leg (FR-007). |
+| `src/lib.rs` (core's line, on `main` since PR #7) | `#![warn(missing_docs)]` | Root crate only. Warns locally; fails every check that compiles the crate through `RUSTFLAGS: -D warnings` (FR-007). The only switch: no `[lints]` table in `Cargo.toml`, which this feature does not change (FR-015, R-5). |

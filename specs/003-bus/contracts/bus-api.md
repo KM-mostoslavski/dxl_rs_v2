@@ -47,6 +47,9 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     pub fn config(&self) -> Config;
 
     /// Setup from a list. Pings only the listed IDs. Replaces the held list; empty on `Err`.
+    /// Both setups read each actuator's model, firmware variant, EEPROM limits and operating
+    /// mode, and hold it with torque `Off`. An unlisted mode value is
+    /// `SetupError::UnknownOperatingMode`.
     pub fn declare<I>(&mut self, list: I) -> Result<&[ActuatorKind], Error>
     where I: IntoIterator<Item = (Id, ModelNumber)>;
     /// Setup by scanning (P2 broadcast ping, P1 sweep 0..=252). Available without `std`.
@@ -68,8 +71,8 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
 
 Targets are any `IntoIterator<Item = Id>` in the caller's order. Validation covers the whole
 call before any byte: unknown (`NotOnBus`), repeated (`DuplicateId`), count (`BufferLength`),
-torque state, limits. A refusal sends nothing to anyone. An empty target list sends nothing and
-returns `Ok`.
+torque state, and each target's limit mode (`OutOfLimits`, `NotPositionMode`, `DoesNotFit`). A
+refusal sends nothing to anyone. An empty target list sends nothing and returns `Ok`.
 
 ```rust
 impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
@@ -122,7 +125,7 @@ impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
 impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// One result per slot. Validation errors still fail the call (nothing sent).
     /// P1: each slot is independent. P2: a group whose instruction fails gives that error to
-    /// all its slots; per-ID errors stay per slot (narrows SRS FR-4.7, plan SRS deviation 1).
+    /// all its slots; per-ID errors stay per slot (SRS FR-4.7, architect 2026-10-28).
     /// Faults mark state as usual.
     pub fn read_positions_partial<I: IntoIterator<Item = Id>>(
         &mut self, ids: I, out: &mut [Result<Position, Error>],
@@ -150,8 +153,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// slot stays `Faulted` (the fault is never lost). A hardware fault gives `Faulted`.
     pub fn disable_torque(&mut self) -> Result<(), Error>;
 
-    /// Guard (`ActuatorIsOff`), then limits (`OutOfLimits`), then one write. No read-back.
-    /// Limits are applied in every operating mode (see docs).
+    /// Guard (`ActuatorIsOff`), then the limit mode read at Setup: position mode checks the
+    /// EEPROM limits (`OutOfLimits`); extended and current-based position modes check only the
+    /// register size (`DoesNotFit`); other modes refuse (`NotPositionMode`). Then one write.
+    /// No read-back.
     pub fn set_goal_position(&mut self, goal: Position) -> Result<(), Error>;
     pub fn set_goal_position_raw(&mut self, raw: i32) -> Result<(), Error>;
 
@@ -175,12 +180,14 @@ impl<P: Protocol, T: Transport, C: Clock> Actuator for ActuatorRef<'_, P, T, C> 
 ```rust
 #[cfg(feature = "raw-registers")]
 impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
-    /// Reads `out.len()` bytes at `addr`. No guard, no state change; a reported fault is
-    /// returned but not recorded (FR-8.1; exception to constitution III awaiting architect
-    /// approval, plan Complexity Tracking). May desync the bus's view (documented escape hatch).
+    /// Reads `out.len()` bytes at `addr`. No guard. A reported hardware fault is returned and
+    /// marks the actuator `Faulted`, like every other reply (FR-8.1, architect 2026-10-28).
     pub fn read_raw(&mut self, addr: u16, out: &mut [u8]) -> Result<(), Error>;
-    /// Writes `data` at `addr`. No torque guard, no limit check, no state change, even on a
-    /// reported hardware fault (same exception as `read_raw`).
+    /// Writes `data` at `addr`. No torque guard, no limit check, no mode check. A reported
+    /// hardware fault is returned and marks the actuator `Faulted`. The write never updates
+    /// the bus's view: a write to Operating Mode leaves the recorded limit mode stale until
+    /// the next Setup; a write to Torque Enable leaves `torque_state()` as it was (FR-8.2,
+    /// documented escape hatch).
     pub fn write_raw(&mut self, addr: u16, data: &[u8]) -> Result<(), Error>;
 }
 ```
@@ -244,6 +251,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
     // new, into_parts, config, declare, autoscan, actuators, ids, actuator, torque_state,
     // torque_states, enable_torque, disable_torque, write_goal_positions(_raw),
     // read_positions(_raw), sync_write, and (partial-reads) read_positions(_raw)_partial.
+    // The partial wrappers come with whichever of bus-5 and bus-6 merges second.
 }
 impl<T: Transport, C: Clock> DynBus<P2, T, C> { pub fn sync_read<F: ReadField, I: IntoIterator<Item = Id>>(&mut self, field: F, ids: I, out: &mut [F::Value]) -> Result<(), Error>; }
 ```
@@ -264,7 +272,7 @@ Each PR adds only the lines for the items it ships.
 | Feature | Default | Adds |
 |---|---|---|
 | `partial-reads` | off | `read_positions_partial`, `read_positions_raw_partial` (on `Bus` and `DynBus`) |
-| `raw-registers` | off | `ActuatorRef::read_raw`, `ActuatorRef::write_raw` |
+| `raw-registers` | off | `ActuatorRef::read_raw`, `ActuatorRef::write_raw` (replies still run the fault check) |
 | `std` (existing) | on | `SerialBus` + `open`, `DynBus` |
 
 No method changes behaviour when a feature is enabled (constitution VII).
@@ -276,9 +284,12 @@ No method changes behaviour when a feature is enabled (constitution VII).
   - a multi-write across layouts is not atomic on the wire;
   - the timing formulas of research R-4 and R-11;
   - a X-series fault needs a reboot outside this crate.
-- `set_goal_position`: limits are those read at Setup. They are applied in every operating mode.
-  X-series extended and current-based position modes and AX wheel mode refuse more than the
-  hardware would.
+- `set_goal_position` (and every goal write): limits and operating mode are those read at
+  Setup. Position mode applies the EEPROM limits. Extended and current-based position modes and
+  MX multi-turn apply none, as the firmware does; only the register size is checked. Velocity,
+  current, PWM and wheel modes refuse every goal (`NotPositionMode`). A mode changed after
+  Setup is not seen until the next Setup.
+- `write_raw`: a raw write to Operating Mode or Torque Enable does not update the bus's view.
 - `compile_fail` examples:
   - two live refs (E0499);
   - a ref outliving its bus;

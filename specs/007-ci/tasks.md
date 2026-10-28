@@ -9,7 +9,7 @@ description: "Task list for the ci module (hardened quality gates)"
 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/ci-checks.md,
 contracts/feature-sets.md, quickstart.md; shared contract `specs/ideas/module-interfaces.md`
-(§ 1 file ownership, § 7 delivery order).
+(§ 1 file ownership, § 7 delivery order; on `dev`, it reaches `main` with the dev merge).
 
 **Tests**: Requested by the spec (SC-001: a seeded fault turns the matching check red). For CI a
 "test" is a seeded fault on a throwaway branch, run locally with the job's exact command before
@@ -33,13 +33,12 @@ on its own.
 
 ## Rules for every task
 
-- Only these files may change on the `007-ci` branch: `.github/workflows/ci.yml`, the `[lints]`
-  table of `Cargo.toml`, and `specs/007-ci/**`. Never touch `src/**`, `xtask/**`,
-  `control_tables/**`, `.cargo/config.toml`, `.github/pull_request_template.md`, `CLAUDE.md`,
-  `docs/**`, or any `.aiignore` path (`.aiignore`, `.claude/settings.json`,
-  `.github/workflows/ov-*.yml`, `.github/ov-ruleset-main.json`, `.specify/extensions/ov/**`,
-  `docs/srs/SRS.md`). In `Cargo.toml`, no feature, dependency or `[package]` line changes
-  (FR-015, module-interfaces.md § 1).
+- Only these files may change on the `007-ci` branch: `.github/workflows/ci.yml` and
+  `specs/007-ci/**`. Never touch `Cargo.toml` (FR-015: the missing-docs lint stays PR #7's
+  `#![warn(missing_docs)]` in `src/lib.rs`, R-5), `src/**`, `xtask/**`, `control_tables/**`,
+  `.cargo/config.toml`, `.github/pull_request_template.md`, `CLAUDE.md`, `docs/**`, or any
+  `.aiignore` path (`.aiignore`, `.claude/settings.json`, `.github/workflows/ov-*.yml`,
+  `.github/ov-ruleset-main.json`, `.specify/extensions/ov/**`, `docs/srs/SRS.md`).
 - No gate is removed or weakened: every command of today's `check`, `no-std`, `coverage` and
   `codegen` jobs keeps running with the same flags (FR-001).
 - Every job: `runs-on` a GitHub-hosted image, `timeout-minutes: 20`, `actions/checkout@v4` with
@@ -62,8 +61,8 @@ on its own.
 
 **Purpose**: Prerequisites merged, branch cut, baseline recorded
 
-- [ ] T001 Check the delivery prerequisites of module-interfaces.md § 7 on `origin/main` after `git fetch origin`: (a) PR #7 (protocol, step P) is merged (`gh pr view 7 --json state,mergedAt`); (b) core-1 is merged: in a clean worktree of `origin/main`, `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features` and `RUSTFLAGS="-D warnings" cargo build --workspace` both pass (no `Register::new` "never used", no undocumented `UnsupportedModel`/`SetupError` field); (c) tables T1 (optional): `git cat-file -e origin/main:control_tables/check_tables.py`. If (a) or (b) fails, stop and report to the architect (see PR map, "early split"). Record the result of (c) for T036
-- [ ] T002 Create the PR branch: run `git status` and `git branch --no-merged origin/main` first and report unmerged or dirty work; then `git worktree add ../dxl_rs_v2-007-ci -b 007-ci origin/main` and, inside it, `git checkout dev -- specs/007-ci` (brings spec.md, plan.md, research.md, data-model.md, contracts/, quickstart.md, checklists/ and this tasks.md, as `specs/002-transport/` travelled with PR #6). All later tasks run in this worktree
+- [ ] T001 Check the delivery prerequisites of module-interfaces.md § 7 on `origin/main` after `git fetch origin`. PR #7 (protocol, step P) is merged (f338e2a) and needs no check. (a) core-1 is merged: in a clean worktree of `origin/main`, `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features` and `RUSTFLAGS="-D warnings" cargo build --workspace` both pass (no `Register::new` "never used", no undocumented `SetupError` field), and `git show origin/main:src/lib.rs | grep -n 'warn(missing_docs)'` finds the attribute the missing-docs gate relies on (R-5); (b) human precondition: `git cat-file -e origin/main:.aiignore` and `git cat-file -e origin/main:.github/workflows/ov-aiignore.yml` both succeed; (c) tables T1 (optional): `git cat-file -e origin/main:control_tables/check_tables.py`. If (a) fails, stop and report to the architect (see PR map, "early split"). If (b) fails, stop and ask the human to commit both files (agents never write them). Record the result of (c) for T036
+- [ ] T002 Create the PR branch: run `git status` and `git branch --no-merged origin/main` first and report unmerged or dirty work; then `git worktree add ../dxl_rs_v2-007-ci -b 007-ci origin/main` and, inside it, `git checkout dev -- specs/007-ci` (brings spec.md, plan.md, research.md, data-model.md, contracts/, quickstart.md, checklists/ and this tasks.md, as `specs/002-transport/` travelled with PR #6). `specs/ideas/module-interfaces.md` and `.specify/memory/constitution.md` stay out of this PR; they reach `main` with the dev merge, and the docs cite them by repo path. All later tasks run in this worktree
 - [ ] T003 Record the baseline in the worktree: install `rustup target add thumbv7em-none-eabihf`, `rustup toolchain install 1.97.1`, `cargo-llvm-cov`, `jq`, `libudev-dev`; run every command of today's `.github/workflows/ci.yml` (`cargo fmt --check`; `cargo clippy --workspace --all-targets` with and without `--features mock`; `cargo test --workspace`; `cargo test --features mock --doc`; the no_std clippy with `ax,mx,x-series,y-series,pro,mock`; `cargo llvm-cov --workspace --ignore-filename-regex 'src/models(\.rs|/)' --fail-under-lines 70`; `cargo xtask codegen` + `git diff --exit-code -- src/models.rs src/models`) under `RUSTFLAGS="-D warnings"`; all must pass. Save the list of these commands and the coverage percentage in `$SCRATCH/baseline.txt` (outside the repo) for the FR-001 audit in T037
 
 ---
@@ -97,8 +96,8 @@ no features, `alloc` alone, every heap-free feature and every no_std feature (FR
 
 ### Tests for User Story 1 ⚠️ (seeded faults, run before T012)
 
-- [ ] T009 [P] [US1] Seeded fault F1 (US1 AS2, AS3; quickstart § 2 F1) on `ci-fault/f1-alloc`: add to `src/lib.rs` `/// Seeded fault.\npub fn leak() -> alloc::vec::Vec<u8> { alloc::vec::Vec::new() }`. Run `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features --features ax,mock,mx,pro,x-series,y-series --target thumbv7em-none-eabihf`: must fail with `E0433` naming the `src/lib.rs` line. Run the same with `--features alloc,ax,mock,mx,pro,x-series,y-series`: must pass (AS3 contrast). Note that today's no_std clippy also catches F1; it is the regression guard, not the gap. Commit on the throwaway branch
-- [ ] T010 [P] [US1] Seeded fault F2 (US1 AS2; quickstart § 2 F2) on `ci-fault/f2-std`: add a documented `pub fn shout() { std::println!("x"); }` to `src/lib.rs` (no `cfg`). Run the T009 heap-free build: must fail naming `std` and the line. Commit on the throwaway branch
+- [ ] T009 [P] [US1] Seeded fault F1 (US1 AS2, AS3; quickstart § 2 F1) on `ci-fault/f1-alloc`: add to `src/lib.rs` `/// Seeded fault.\npub fn leak() -> alloc::vec::Vec<u8> { alloc::vec::Vec::new() }`. Run `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features --features ax,mock,mx,pro,x-series,y-series --target thumbv7em-none-eabihf`: must fail with `E0433` naming the `src/lib.rs` line; the same without `--target` fails too (`src/lib.rs` is `#![no_std]`, so host sets without `alloc` fail), and so does `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --no-default-features`. Run the target build with `--features alloc,ax,mock,mx,pro,x-series,y-series`: must pass (AS3 contrast). Note that today's no_std clippy also catches F1; it is the regression guard, not the gap. Commit on the throwaway branch
+- [ ] T010 [P] [US1] Seeded fault F2 (US1 AS2; quickstart § 2 F2) on `ci-fault/f2-std`: add a documented `pub fn shout() { std::println!("x"); }` to `src/lib.rs` (no `cfg`). Run the T009 heap-free build: must fail naming `std` and the line; with `--features alloc` (host and target) it fails too, and so does the std-off compile-fail pass `RUSTC_BOOTSTRAP=1 cargo +1.97.1 test --doc --no-default-features --features alloc,ax,mock,mx,pro,x-series,y-series`. Commit on the throwaway branch
 - [ ] T011 [P] [US1] Seeded fault F1b (US1 AS1, the gap today's lint leaves) on `ci-fault/f1b-nofeature`: add to `src/lib.rs` a documented `#[cfg(not(any(feature = "ax", feature = "mx", feature = "x-series", feature = "y-series", feature = "pro", feature = "mock")))] pub fn leak() -> alloc::vec::Vec<u8> { alloc::vec::Vec::new() }`. Show today's no_std clippy (`--features ax,mx,x-series,y-series,pro,mock`) passes, and `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features --target thumbv7em-none-eabihf` fails with `E0433`. Commit on the throwaway branch
 
 ### Implementation for User Story 1
@@ -121,9 +120,9 @@ one stable aggregate check `feature sets` (FR-004, FR-005, FR-014; R-1, R-4, R-1
 
 ### Tests for User Story 2 ⚠️ (seeded faults, run before T018)
 
-- [ ] T014 [P] [US2] Seeded fault F3 (US2 AS1, AS2; quickstart § 2 F3) on `ci-fault/f3-cross-family`: add to `src/lib.rs` a documented `#[cfg(feature = "ax")] pub const SEEDED: usize = core::mem::size_of::<crate::models::Mx28>();` (`Mx28` is `mx`-gated in `src/models.rs`). Show `cargo build --lib`, `cargo build --lib --all-features` and today's whole workflow pass (gap), and `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features --features ax` fails, as does the same with `--target thumbv7em-none-eabihf`. Commit on the throwaway branch
+- [ ] T014 [P] [US2] Seeded fault F3 (US2 AS1, AS2; quickstart § 2 F3) on `ci-fault/f3-cross-family`: add to `src/lib.rs` a documented `#[cfg(feature = "ax")] pub const SEEDED: usize = core::mem::size_of::<crate::models::Mx28>();` (`Mx28` is `mx`-gated in `src/models.rs`). Show `cargo build --lib`, `cargo build --lib --all-features` and today's whole workflow pass (gap), and `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features --features ax` fails, as do the same with `--target thumbv7em-none-eabihf` and `RUSTFLAGS="-D warnings" cargo test --lib --no-default-features --features std,ax`. Commit on the throwaway branch
 - [ ] T015 [P] [US2] Seeded change F4 (US2 AS3; SC-005; quickstart § 2 F4) on `ci-fault/f4-new-feature`: add `partial-reads = []` to `[features]` in `Cargo.toml` (throwaway only, no code). Run the T006 program: 12 host legs including `partial-reads alone`, 8 target legs including `partial-reads alone`, 8 test legs including `partial-reads`, and `heap_free`/`no_std` gain `partial-reads`; every new leg's command passes. No workflow edit. Commit on the throwaway branch
-- [ ] T016 [P] [US2] Seeded fault F10 (US2 AS4; FR-005) on `ci-fault/f10-all-features-test`: add to `src/transport/mock.rs` `#[cfg(all(test, feature = "mock"))] #[test] fn seeded_all_features() { panic!("seeded"); }`. Show `cargo test --workspace` passes (gap: today's unit tests never enable `mock`), and `RUSTFLAGS="-D warnings" cargo test --workspace --all-features` fails naming the test. Commit on the throwaway branch
+- [ ] T016 [P] [US2] Seeded fault F10 (US2 AS4; FR-005) on `ci-fault/f10-all-features-test`: add to `src/transport/mock.rs` `#[cfg(all(test, feature = "mock"))] #[test] fn seeded_all_features() { panic!("seeded"); }`. Show `cargo test --workspace` passes (gap: today's unit tests never enable `mock`), and `RUSTFLAGS="-D warnings" cargo test --workspace --all-features` and `RUSTFLAGS="-D warnings" cargo test --lib --no-default-features --features std,mock` fail naming the test. Commit on the throwaway branch
 - [ ] T017 [P] [US2] Seeded fault F11 (US2 AS4 via R-4: tests that compile only with a family off) on `ci-fault/f11-family-off-test`: add to `src/lib.rs` `#[cfg(all(test, not(feature = "ax")))] mod seeded { #[test] fn family_off() { panic!("seeded"); } }`. Show `cargo test --workspace` and `cargo test --workspace --all-features` pass (never compiled), and `RUSTFLAGS="-D warnings" cargo test --lib --no-default-features --features std,mx` fails naming the test. Commit on the throwaway branch
 
 ### Implementation for User Story 2
@@ -132,7 +131,7 @@ one stable aggregate check `feature sets` (FR-004, FR-005, FR-014; R-1, R-4, R-1
 - [ ] T019 [US2] Add matrix job `feature-test` in `.github/workflows/ci.yml` (contract ci-checks.md § Checks row `feature-test`; feature-sets.md § Rule 8; R-4): `name: "feature tests (host): ${{ matrix.name }}"`, `needs: feature-sets`, `runs-on: ubuntu-latest`, `timeout-minutes: 20`, `strategy: { fail-fast: false, matrix: { include: ${{ fromJSON(needs.feature-sets.outputs.tests) }} } }`; steps: checkout (`persist-credentials: false`), stable toolchain, `Swatinem/rust-cache@v2` with `shared-key: feature-test-host` and `save-if: ${{ github.ref == 'refs/heads/main' }}`, `Install libudev (serialport)` (always: every test leg enables `std`), then `cargo test --lib $ARGS` with `env: ARGS: ${{ matrix.args }}`
 - [ ] T020 [US2] Add aggregate job `features` in `.github/workflows/ci.yml` (contract ci-checks.md § Checks row `features`; data-model.md § Check states): `name: feature sets`, `if: always()`, `needs: [feature-sets, feature-set, feature-test]`, `runs-on: ubuntu-latest`, `timeout-minutes: 20`, no checkout; one step with `env: RESULTS: ${{ join(needs.*.result, ' ') }}` and a bash script that prints each result and exits 1 unless every word is `success` (so `failure`, `cancelled` and `skipped` all fail the aggregate)
 - [ ] T021 [US2] Extend job `check` in `.github/workflows/ci.yml` (contract ci-checks.md § Checks row `check`; FR-005; R-10): after the existing steps, which stay unchanged, add `cargo clippy --workspace --all-targets --all-features` and `cargo test --workspace --all-features`
-- [ ] T022 [US2] Verify US2: with a scratch shell loop (in `$SCRATCH`, not the repo) over the T006 output, run every `feature-set` leg (`cargo build --lib $ARGS`) and every `feature-test` leg (`cargo test --lib $ARGS`) plus the two T021 commands under `RUSTFLAGS="-D warnings"` in the `007-ci` worktree: all pass. Rebase T014–T017 onto `007-ci`: F3 red only on the two `ax alone` legs, F4 green with the new legs, F10 red on `cargo test --workspace --all-features`, F11 red on every test leg that has `ax` off (`std`, `mx`, `x-series`, `y-series`, `pro`, `mock`)
+- [ ] T022 [US2] Verify US2: with a scratch shell loop (in `$SCRATCH`, not the repo) over the T006 output, run every `feature-set` leg (`cargo build --lib $ARGS`) and every `feature-test` leg (`cargo test --lib $ARGS`) plus the two T021 commands under `RUSTFLAGS="-D warnings"` in the `007-ci` worktree: all pass. Rebase T014–T017 onto `007-ci`: F3 red only on the two `ax alone` legs and the `ax` test leg, F4 green with the three new legs, F10 red on `cargo test --workspace --all-features` and the `mock` test leg, F11 red on every test leg that has `ax` off (`std`, `mx`, `x-series`, `y-series`, `pro`, `mock`). Rebase T009–T011 too: F1, F1b and F2 red on exactly the host legs quickstart § 2 names
 
 **Checkpoint**: US1 and US2 done: both P1 promises are machine-checked.
 
@@ -161,25 +160,25 @@ then "Summary" shows the "Line coverage" table.
 
 ## Phase 6: User Story 4 - Docs are complete and their examples fail for the right reason (Priority: P2)
 
-**Goal**: `missing_docs` fails every leg under `-D warnings`, the docs build fails on any rustdoc
-warning, and compile-fail examples are checked by error code on a pinned toolchain (FR-007,
-FR-008; R-5, R-6, R-7).
+**Goal**: PR #7's `#![warn(missing_docs)]` fails every leg under `-D warnings`, the docs build
+fails on any rustdoc warning, and compile-fail examples are checked by error code on a pinned
+toolchain (FR-007, FR-008; R-5, R-6, R-7).
 
 **Independent Test**: In throwaway worktrees, remove a doc comment from a public item, break an
 intra-doc link, and change `compile_fail,E0277` to `E0308`; each turns its check red.
 
-### Tests for User Story 4 ⚠️ (seeded faults, run before T029)
+### Tests for User Story 4 ⚠️ (seeded faults, run before T030)
 
-- [ ] T026 [P] [US4] Seeded fault F5 (US4 AS1; quickstart § 2 F5) on `ci-fault/f5-missing-docs`: remove the doc comment of one public item (e.g. the `pub fn` doc of `Id::new` or another `pub` item re-exported from `src/lib.rs`), and also remove `#![warn(missing_docs)]` from `src/lib.rs` (added by PR #7) so only the `Cargo.toml` lint can catch it. Show `RUSTFLAGS="-D warnings" cargo build --lib` passes before T029 (gap: the gate depends on a file `ci` does not own). Commit on the throwaway branch; T032 reruns it after T029
-- [ ] T027 [P] [US4] Seeded fault F6 (US4 AS2; quickstart § 2 F6) on `ci-fault/f6-doc-link`: add `` [`NoSuchItem`] `` to a doc comment in `src/transport.rs`. Show today's commands pass (gap: no doc build in CI) and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` fails with `rustdoc::broken_intra_doc_links`. Commit on the throwaway branch
-- [ ] T028 [P] [US4] Seeded fault F7 (US4 AS3; quickstart § 2 F7) on `ci-fault/f7-error-code`: in `src/transport.rs` change ` ```compile_fail,E0277 ` (the `Transport` example without `ReadReady`) to ` ```compile_fail,E0308 `. Show `cargo test --doc` on stable passes (gap) and `RUSTC_BOOTSTRAP=1 cargo +1.97.1 test --doc --all-features` fails with "Some expected error codes were not found". On the unmodified `007-ci` worktree, show all three passes of quickstart § 1 (`--all-features`, defaults, `--no-default-features --features alloc,ax,mock,mx,pro,x-series,y-series`) pass. Commit on the throwaway branch
+- [ ] T026 [P] [US4] Seeded fault F5 (US4 AS1; quickstart § 2 F5) on `ci-fault/f5-missing-docs`: remove the doc comment of `Id::new` in `src/id.rs`. Show today's `RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets` already fails naming the item (PR #7's `#![warn(missing_docs)]`: F5 is the regression guard, not the gap), and that the new commands fail too: `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features --features ax --target thumbv7em-none-eabihf`, `RUSTFLAGS="-D warnings" cargo test --lib --no-default-features --features std`, `RUSTFLAGS="-D warnings" cargo llvm-cov --workspace --no-report` and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`. Commit on the throwaway branch
+- [ ] T027 [P] [US4] Seeded fault F5b (US4 AS1 "with any feature set"; quickstart § 2 F5b) on `ci-fault/f5b-set-only-docs`: add to `src/lib.rs` an undocumented `#[cfg(all(feature = "alloc", not(feature = "std")))] pub fn alloc_only() {}`. Show every command of today's workflow passes (gap: no set with `alloc` and without `std` is built), and that `RUSTFLAGS="-D warnings" cargo build --lib --no-default-features --features alloc` (host, and with `--target thumbv7em-none-eabihf`) and `RUSTC_BOOTSTRAP=1 cargo +1.97.1 test --doc --no-default-features --features alloc,ax,mock,mx,pro,x-series,y-series` fail with "missing documentation". Commit on the throwaway branch
+- [ ] T028 [P] [US4] Seeded fault F6 (US4 AS2; quickstart § 2 F6) on `ci-fault/f6-doc-link`: add `` [`NoSuchItem`] `` to a doc comment in `src/transport.rs`. Show today's commands pass (gap: no doc build in CI) and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` fails with `rustdoc::broken_intra_doc_links`. Commit on the throwaway branch
+- [ ] T029 [P] [US4] Seeded fault F7 (US4 AS3; quickstart § 2 F7) on `ci-fault/f7-error-code`: in `src/transport.rs` change ` ```compile_fail,E0277 ` (the `Transport` example without `ReadReady`) to ` ```compile_fail,E0308 `. Show `cargo test --doc` on stable passes (gap) and `RUSTC_BOOTSTRAP=1 cargo +1.97.1 test --doc --all-features` fails with "Some expected error codes were not found". On the unmodified `007-ci` worktree, show all three passes of quickstart § 1 (`--all-features`, defaults, `--no-default-features --features alloc,ax,mock,mx,pro,x-series,y-series`) pass. Commit on the throwaway branch
 
 ### Implementation for User Story 4
 
-- [ ] T029 [P] [US4] In `Cargo.toml` add, between the `[dependencies]`/`[dev-dependencies]` tables and `[workspace]`, exactly `[lints.rust]\nmissing_docs = "warn"` and nothing else (contract ci-checks.md § `Cargo.toml`; FR-007; R-5; FR-015 interpretation in plan.md). Check `RUSTFLAGS="-D warnings" cargo build --workspace` passes and that `xtask` is not affected
 - [ ] T030 [US4] Add job `docs` in `.github/workflows/ci.yml` (contract ci-checks.md § Checks row `docs`; FR-007; R-6): `name: "docs: complete, no warnings"`, `runs-on: ubuntu-latest`, `timeout-minutes: 20`, job `env: RUSTDOCFLAGS: -D warnings`; steps: checkout (`persist-credentials: false`), stable toolchain, `Swatinem/rust-cache@v2`, `Install libudev (serialport)`, `cargo doc --no-deps --all-features`, `cargo doc --no-deps --no-default-features`
 - [ ] T031 [US4] Add job `compile-fail` in `.github/workflows/ci.yml` (contract ci-checks.md § Checks row `compile-fail`; data-model.md § Toolchain pin; FR-008; R-7): `name: "doc examples: compile-fail error codes"`, `needs: feature-sets`, `runs-on: ubuntu-latest`, `timeout-minutes: 20`, job `env: NO_STD: ${{ needs.feature-sets.outputs.no_std }}`; steps: checkout (`persist-credentials: false`); a step named `Install pinned toolchain (COMPILE_FAIL_TOOLCHAIN)` using `dtolnay/rust-toolchain@master` with `toolchain: ${{ env.COMPILE_FAIL_TOOLCHAIN }}`; `Swatinem/rust-cache@v2`; `Install libudev (serialport)`; three steps, each with step-level `env: RUSTC_BOOTSTRAP: 1` only: `doc tests: all features` → `cargo +"$COMPILE_FAIL_TOOLCHAIN" test --doc --all-features`; `doc tests: defaults` → `cargo +"$COMPILE_FAIL_TOOLCHAIN" test --doc`; `doc tests: std off` → `cargo +"$COMPILE_FAIL_TOOLCHAIN" test --doc --no-default-features --features "$NO_STD"`. `RUSTC_BOOTSTRAP` appears nowhere else in the file
-- [ ] T032 [US4] Verify US4: `grep -n RUSTC_BOOTSTRAP .github/workflows/ci.yml` shows exactly the three step envs; `grep -n COMPILE_FAIL_TOOLCHAIN` shows one definition (US4 AS4). In the `007-ci` worktree run both `cargo doc` commands and the three compile-fail passes: all pass. If the std-off pass fails on a doc example that uses a std-only item, stop: the fix (`#[cfg_attr(feature = "std", doc = …)]`) belongs to the module that owns that file, not to `ci`. Rebase T026–T028 onto `007-ci`: F5 now red on `RUSTFLAGS="-D warnings" cargo build --lib` naming the item, F6 red on `docs`, F7 red only on the compile-fail passes
+- [ ] T032 [US4] Verify US4: `grep -n RUSTC_BOOTSTRAP .github/workflows/ci.yml` shows exactly the three step envs; `grep -n COMPILE_FAIL_TOOLCHAIN` shows one definition (US4 AS4). In the `007-ci` worktree run both `cargo doc` commands and the three compile-fail passes: all pass. If the std-off pass fails on a doc example that uses a std-only item, stop: the fix (`#[cfg_attr(feature = "std", doc = …)]`) belongs to the module that owns that file, not to `ci`. Rebase T026–T029 onto `007-ci`: F5 red on every command T026 names, F5b red on the `alloc alone` builds, the no_std `alloc` and `no_std, all` builds and the std-off compile-fail pass only, F6 red on `docs` only, F7 red only on the compile-fail passes. With T009–T011 rebased: F1, F1b and F2 red on `cargo doc --no-deps --no-default-features`, F2 also on the std-off compile-fail pass
 
 **Checkpoint**: US4 done: missing docs, doc warnings and wrong error codes all turn CI red.
 
@@ -211,14 +210,14 @@ only `std build and tests (Windows)` turns red.
 **Purpose**: The table check handed over by the tables module, audit, PR, seeded-fault runs on
 GitHub, and the architect's follow-ups
 
-- [ ] T036 Add job `control-tables` in `.github/workflows/ci.yml` (contract ci-checks.md § Checks row `control-tables`; R-17; tables spec 005 FR-014): `name: "control tables: schema check"`, `runs-on: ubuntu-latest`, `timeout-minutes: 20`, checkout (`persist-credentials: false`), no Rust toolchain; one bash step: `if [ -f control_tables/check_tables.py ]; then python3 control_tables/check_tables.py && python3 -m unittest discover -s control_tables -p 'test_*.py'; else echo "::notice title=control tables::control_tables/check_tables.py not present yet (tables T1); nothing to check"; fi`. If T001 found T1 already merged, write the two commands without the guard
-- [ ] T037 Audit `.github/workflows/ci.yml` against the Rules and the contract: `grep -nE 'paths|continue-on-error|pull_request_target|self-hosted|secrets\.' ` finds nothing; the number of `persist-credentials: false` equals the number of `actions/checkout`; every job has `timeout-minutes: 20`; no `${{ matrix.` or `${{ needs.` inside any `run:` block; every check name matches contract ci-checks.md § Checks exactly; every command saved in `$SCRATCH/baseline.txt` (T003) is still present with the same flags (FR-001). Run `actionlint .github/workflows/ci.yml` if `actionlint` is installed; otherwise parse with `python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" .github/workflows/ci.yml` if PyYAML is available, else rely on the first GitHub run
+- [ ] T036 Add job `control-tables` in `.github/workflows/ci.yml` (contract ci-checks.md § Checks row `control-tables`; spec FR-016; R-17; tables spec 005 FR-014): `name: "control tables: schema check"`, `runs-on: ubuntu-latest`, `timeout-minutes: 20`, checkout (`persist-credentials: false`), no Rust toolchain; one bash step: `if [ -f control_tables/check_tables.py ]; then python3 control_tables/check_tables.py && python3 -m unittest discover -s control_tables -p 'test_*.py'; else echo "::notice title=control tables::control_tables/check_tables.py not present yet (tables T1); nothing to check"; fi`. If T001 found T1 already merged, write the two commands without the guard
+- [ ] T037 Audit `.github/workflows/ci.yml` against the Rules and the contract: `grep -nE 'paths|continue-on-error|pull_request_target|self-hosted|secrets\.' ` finds nothing; the number of `persist-credentials: false` equals the number of `actions/checkout`; every job has `timeout-minutes: 20`; no `${{ matrix.` or `${{ needs.` inside any `run:` block; every check name matches contract ci-checks.md § Checks exactly; every command saved in `$SCRATCH/baseline.txt` (T003) is still present with the same flags (FR-001); `git diff --exit-code origin/main -- Cargo.toml` shows no change (FR-015). Run `actionlint .github/workflows/ci.yml` if `actionlint` is installed; otherwise parse with `python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" .github/workflows/ci.yml` if PyYAML is available, else rely on the first GitHub run
 - [ ] T038 Run quickstart.md § 1 in full in the `007-ci` worktree under `RUSTFLAGS="-D warnings"` (feature sets from the T006 program, feature tests, no_std builds, all-features clippy and tests, both docs runs, three compile-fail passes, coverage three steps, table check or its guard): every command passes
-- [ ] T039 Commit on `007-ci` (Conventional Commits, e.g. `ci: build no_std and every feature set, publish coverage, check docs and error codes` and `build(lints): deny undocumented public items in CI`; plus `docs(ci): add spec, plan and tasks` for `specs/007-ci/`), no AI attribution. Fill `specs/007-ci/pr-description.md` from `.github/pull_request_template.md`: What/Why (SRS module `ci`: NFR-1, NFR-6, FR-7.3; spec FR-001…FR-015), How (dynamic matrix from `cargo metadata` + `jq`; pinned 1.97.1 with `RUSTC_BOOTSTRAP=1`; summary before gate), Architecture (FR-015 `[lints]` interpretation and the computed FR-002 set, both from plan.md; the `control tables: schema check` job comes from tables spec 005 and is guarded until T1; FR-003 firmware link and US6 MSRV deferred), the local results of T013, T022, T025, T032, the required-check list of contract ci-checks.md § Required-check guidance, and the architect's follow-ups (T043–T045). Push `007-ci` and open the PR into `main` from the `Ovsiankina` account with that description
-- [ ] T040 Seeded-fault runs on GitHub (SC-001; quickstart § 2): rebase every `ci-fault/*` branch (F1, F1b, F2, F3, F4, F5, F6, F7, F8, F10, F11) onto the pushed `007-ci`, add F9 on `ci-fault/f9-coverage` (a large documented `pub fn` no test calls, enough to drop line coverage below 70 %), push each and open a draft PR into `main` titled `DO NOT MERGE: ci seeded fault <id>`. Check that exactly the expected checks turn red with the item named in the log (F1/F2: `no_std build (thumbv7em-none-eabihf)` plus legs without `alloc`; F1b: `no_std build (…)`, `feature set (…): no features`; F3: both `ax alone` legs and `feature sets`; F4: nothing red, new `partial-reads` legs and test leg present; F5: legs that compile the item, `fmt, clippy, test (Linux)`; F6: `docs: complete, no warnings`; F7: `doc examples: compile-fail error codes` only; F8: `std build and tests (Windows)` only; F9: `coverage (>= 70 % lines)` red with the summary table present; F10: `fmt, clippy, test (Linux)`; F11: test legs with `ax` off and `feature sets`). Record any extra red check as a finding in the PR description. Then close every draft PR, delete the remote and local `ci-fault/*` branches and remove their worktrees
+- [ ] T039 Commit on `007-ci` (Conventional Commits, e.g. `ci: build no_std and every feature set, publish coverage, check docs and error codes`; plus `docs(ci): add spec, plan and tasks` for `specs/007-ci/`), no AI attribution. Fill `specs/007-ci/pr-description.md` from `.github/pull_request_template.md`: What/Why (SRS module `ci`: NFR-1, NFR-6, FR-7.3; spec FR-001…FR-016), How (dynamic matrix from `cargo metadata` + `jq`; pinned 1.97.1 with `RUSTC_BOOTSTRAP=1`; summary before gate), Architecture (one missing-docs switch, PR #7's `#![warn(missing_docs)]`, and no `Cargo.toml` change: the deviation from module-interfaces.md § 1 in plan.md; the computed FR-002 set from plan.md; the `control tables: schema check` job (FR-016, from tables spec 005 FR-014) is guarded until T1; FR-003 firmware link and US6 MSRV deferred), the local results of T013, T022, T025, T032, the required-check list of contract ci-checks.md § Required-check guidance, and the architect's follow-ups (T043–T045). Push `007-ci` and open the PR into `main` from the `Ovsiankina` account with that description
+- [ ] T040 Seeded-fault runs on GitHub (SC-001; quickstart § 2): rebase every `ci-fault/*` branch (F1, F1b, F2, F3, F4, F5, F5b, F6, F7, F8, F10, F11) onto the pushed `007-ci`, add F9 on `ci-fault/f9-coverage` (a large documented `pub fn` no test calls, enough to drop line coverage below 70 %), push each and open a draft PR into `main` titled `DO NOT MERGE: ci seeded fault <id>`. Check that exactly the checks in the "Expected red check" column of quickstart § 2 turn red, with the item named in the log (F4: nothing red, the three new `partial-reads` legs present; F9: the summary table present). Record any extra red check as a finding in the PR description. Then close every draft PR, delete the remote and local `ci-fault/*` branches and remove their worktrees
 - [ ] T041 Validate quickstart.md § 3–6 on GitHub and record the result in the PR description: coverage table reached in 2 clicks (SC-002); a PR from a fork (`gh repo fork`) with a one-line docs change shows the same checks, all run, `Contents: read` in "Set up job" (FR-011, SC-004); two pushes within a minute cancel the first run (FR-012); a PR that changes only `specs/` runs every check (FR-013); the compile-fail job installs 1.97.1 (US4 AS4). Close the probe PRs afterwards
 - [ ] T042 Note the wall-clock time of the `007-ci` PR run with a warm cache (re-run once after the first run fills the cache) in the PR description (SC-003, ≤ 15 min). If it is over, report it; do not drop or weaken a gate to fit
-- [ ] T043 [human] After the ci PR merges: mark the required checks of contract ci-checks.md § Required-check guidance in `.github/ov-ruleset-main.json` (`.aiignore` path): `fmt, clippy, test (Linux)`, `no_std build (thumbv7em-none-eabihf)`, `coverage (>= 70 % lines)`, `generated models up to date`, `feature sets`, `docs: complete, no warnings`, `doc examples: compile-fail error codes`, `control tables: schema check`, `std build and tests (Windows)`, `std build and tests (macOS)`. Not the individual `feature set (…)` / `feature tests (…)` legs
+- [ ] T043 [human] After the ci PR merges: mark the required checks of contract ci-checks.md § Required-check guidance in `.github/ov-ruleset-main.json` (`.aiignore` path; not in the repository yet, create it first, e.g. with `/speckit-ov-pr`): `fmt, clippy, test (Linux)`, `no_std build (thumbv7em-none-eabihf)`, `coverage (>= 70 % lines)`, `generated models up to date`, `feature sets`, `docs: complete, no warnings`, `doc examples: compile-fail error codes`, `control tables: schema check`, `std build and tests (Windows)`, `std build and tests (macOS)`. Not the individual `feature set (…)` / `feature tests (…)` legs
 - [ ] T044 [human] Architect: add the new gates to the constitution's "Development Workflow and Quality Gates" list (`/speckit-constitution`), and update the checklist of `.github/pull_request_template.md` and the Commands section of `CLAUDE.md` (both outside `ci`'s paths, plan.md § Follow-ups)
 - [ ] T045 [human] Architect, after merge: track SC-003 over the first 5 PR runs (≤ 15 min warm) and SC-006 over the first 20 PRs (≤ 1 unrelated blocking failure); decide on pinning actions by commit SHA (R-11, optional)
 
@@ -241,15 +240,15 @@ One PR (plan.md § PR split).
 
 | PR | Tasks | Branch | Must be merged first | Gate commands before opening |
 |---|---|---|---|---|
-| ci | T001–T042 (T043–T045 are [human], after merge) | `007-ci` off `main` | PR #7 (protocol, step P) and core-1 (module-interfaces.md § 7); tables T1 optional (the table check is guarded until T1) | quickstart.md § 1 in full under `RUSTFLAGS="-D warnings"`, including: `cargo fmt --check`; `cargo clippy --workspace --all-targets` (plain, `--features mock`, `--all-features`); `cargo test --workspace` and `--all-features`; `cargo test --features mock --doc`; every `feature-set` and `feature-test` leg; the no_std clippy and four `cargo build --lib … --target thumbv7em-none-eabihf`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (`--all-features`, `--no-default-features`); `RUSTC_BOOTSTRAP=1 cargo +1.97.1 test --doc` (three passes); `cargo llvm-cov --workspace --ignore-filename-regex 'src/models(\.rs\|/)' --fail-under-lines 70`; `cargo xtask codegen` + `git diff --exit-code -- src/models.rs src/models` |
+| ci | T001–T042 (T043–T045 are [human], after merge) | `007-ci` off `main` | core-1 (module-interfaces.md § 7; PR #7 is merged); human precondition: `.aiignore` and `.github/workflows/ov-aiignore.yml` on `main`; tables T1 optional (the table check is guarded until T1) | quickstart.md § 1 in full under `RUSTFLAGS="-D warnings"`, including: `cargo fmt --check`; `cargo clippy --workspace --all-targets` (plain, `--features mock`, `--all-features`); `cargo test --workspace` and `--all-features`; `cargo test --features mock --doc`; every `feature-set` and `feature-test` leg; the no_std clippy and four `cargo build --lib … --target thumbv7em-none-eabihf`; `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (`--all-features`, `--no-default-features`); `RUSTC_BOOTSTRAP=1 cargo +1.97.1 test --doc` (three passes); `cargo llvm-cov --workspace --ignore-filename-regex 'src/models(\.rs\|/)' --fail-under-lines 70`; `cargo xtask codegen` + `git diff --exit-code -- src/models.rs src/models` |
 
 Early split, only with the architect's approval ("one module per PR") and only if core-1 slips
 (plan.md § PR split):
 
 | PR | Tasks | Branch | Must be merged first |
 |---|---|---|---|
-| ci-1 | T001–T008, T023–T025 (US3), T027–T028, T030–T031 (docs, compile-fail), T033–T035 (US5), T036–T042 | `007-ci-1` off `main` | PR #7 |
-| ci-2 | T009–T022 (US1, US2), T026, T029 (`[lints]`), T032, then re-run T037–T042 | `007-ci-2` off `main` | ci-1, core-1 |
+| ci-1 | T001–T008, T023–T025 (US3), T026, T028–T031 (F5, F6, F7, docs, compile-fail), T033–T035 (US5), T036–T042 | `007-ci-1` off `main` | nothing (PR #7 is merged; the human precondition of T001 still applies) |
+| ci-2 | T009–T022 (US1, US2), T027 (F5b), T032, then re-run T037–T042 | `007-ci-2` off `main` | ci-1, core-1 |
 
 ---
 
@@ -258,8 +257,9 @@ Early split, only with the architect's approval ("one module per PR") and only i
 ### Phase dependencies
 
 - Setup (T001–T003) → Foundational (T004–T008) → stories → Polish (T036–T045).
-- T001 blocks everything: without PR #7 and core-1 on `main`, the no-feature legs and the
-  missing-docs gate are red for reasons outside this module (R-16).
+- T001 blocks everything: without core-1 on `main`, the no-feature legs are red for a reason
+  outside this module (R-16), and without `.aiignore` and `ov-aiignore.yml` on `main` the human
+  precondition is not met. PR #7 is merged.
 - Inside Foundational: T004 → T005 (same file); T006 → T007 → T008.
 
 ### User story dependencies
@@ -267,7 +267,7 @@ Early split, only with the architect's approval ("one module per PR") and only i
 - US1 (T009–T013): needs T008 (`heap_free`, `no_std` outputs).
 - US2 (T014–T022): needs T008 (`matrix`, `tests` outputs). Independent of US1.
 - US3 (T023–T025): needs only T004–T005.
-- US4 (T026–T032): T029 and T030 need only T004–T005; T031 needs T008 (`no_std` output).
+- US4 (T026–T032): T030 needs only T004–T005; T031 needs T008 (`no_std` output).
 - US5 (T033–T035): needs only T004–T005.
 - Polish: T036 after T005; T037–T042 after every story; T040 after T039 (pushed branch);
   T043–T045 after merge.
@@ -276,14 +276,13 @@ Early split, only with the architect's approval ("one module per PR") and only i
 
 - Seeded-fault tasks first (they show the gap with today's commands), then the job, then the
   verify task, which reruns the faults against the new job.
-- All story implementation tasks except T029 edit `.github/workflows/ci.yml`, so they run one
-  after another even across stories.
+- All story implementation tasks edit `.github/workflows/ci.yml`, so they run one after another
+  even across stories.
 
 ### Parallel opportunities
 
 - Seeded-fault tasks each use their own worktree: T009, T010, T011, T014, T015, T016, T017, T026,
-  T027, T028 can all run at once (after T002), and T033 with them.
-- T029 (`Cargo.toml`) in parallel with any `ci.yml` task.
+  T027, T028, T029 can all run at once (after T002), and T033 with them.
 - T006/T007 (scratch `jq` work) in parallel with T004/T005.
 - Story job edits are sequential in one file, but US3, US5 and the docs half of US4 do not wait
   for T008.
@@ -307,7 +306,7 @@ T014 F3 cross-family  |  T015 F4 new feature  |  T016 F10 all-features test  |  
 ## Parallel Example: User Story 4
 
 ```text
-T026 F5 missing docs  |  T027 F6 doc link  |  T028 F7 error code  |  T029 Cargo.toml [lints]
+T026 F5 missing docs  |  T027 F5b set-only docs  |  T028 F6 doc link  |  T029 F7 error code
 → T030 docs job → T031 compile-fail job → T032 verify
 ```
 
@@ -317,7 +316,8 @@ T026 F5 missing docs  |  T027 F6 doc link  |  T028 F7 error code  |  T029 Cargo.
 
 ### MVP first (User Story 1)
 
-1. Setup (T001–T003); stop if PR #7 or core-1 is missing.
+1. Setup (T001–T003); stop if core-1 or the human precondition (`.aiignore`, `ov-aiignore.yml`
+   on `main`) is missing.
 2. Foundational (T004–T008).
 3. US1 (T009–T013): the no_std, heap-free build is proved for every set FR-002 names.
 4. Stop and validate with T013. This alone closes the NON-NEGOTIABLE gap (constitution I).

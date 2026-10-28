@@ -3,9 +3,9 @@
 **Feature**: [spec.md](spec.md) | **Research**: [research.md](research.md) | **API**: [contracts/bus-api.md](contracts/bus-api.md)
 
 Types owned by other modules (`Id`, `ModelNumber`, `Position`, `PositionScale`, `TorqueState`,
-`Cache`, `Limits`, `Register`, `ModelData`, `ActuatorKind`, the errors, `Link`, `Pong`) are
-defined in `specs/ideas/module-interfaces.md` §2 to §5. This file only says how the bus uses
-them.
+`Cache`, `Limits`, `LimitMode`, `ModeSource`, `Register`, `ModelData`, `ActuatorKind`, the
+errors, `Link`, `Pong`) are defined in `specs/ideas/module-interfaces.md` §2 to §5. This file
+only says how the bus uses them.
 
 ## Bus<P, T, C = DefaultClock, N = 32>
 
@@ -22,7 +22,8 @@ them.
 - `actuators` is strictly ascending by `Id`.
 - `N <= 253`, checked at compile time in `new`.
 - After a failed Setup, `actuators` is empty.
-- After a successful Setup, every slot is `Off` and every `Cache` has limits.
+- After a successful Setup, every slot is `Off` and every `Cache` has limits and the limit mode
+  read at Setup.
 - No field holds a borrow, `Rc` or `RefCell`.
 
 **Lifecycle**:
@@ -111,12 +112,34 @@ The transitions are core's (module-interfaces §2.5). The bus fires them on thes
 | Torque write `Err`, anything else | `disable()`: `On`/`Off` → `Off`, `Faulted` stays `Faulted` (never `On`; plan deviation 5, now in §2.5) | |
 | Any reply with `is_hardware_fault()` (ref calls, multi-read slots, Easy-tier torque, clear check) | `fault()` | |
 | `sync_write` | none (no reply) | |
-| `raw-registers` call | none, even on a hardware fault (FR-8.1; exception to constitution III, plan Complexity Tracking) | |
+| `raw-registers` reply with `is_hardware_fault()` | `fault()`, like every other reply (architect, 2026-10-28; research R-21) | the raw exchange |
+| `raw-registers` write to Torque Enable | none: the state is not updated (documented on `write_raw`, FR-8.2) | sent, no guard |
 | `clear_fault` check passes | `clear()` (`Faulted` → `Off`) | |
 | `clear_fault` check fails | stays `Faulted`, error returned | |
 
 **Goal guard**: `state.check_goal(id)`. Only `On` passes. `Off` and `Faulted` give
 `ActuatorIsOff { id }`.
+
+## LimitMode as the bus applies it
+
+`LimitMode` lives in each actuator's `Cache` (core, module-interfaces §2.4b). The bus sets it once
+at Setup and never stores a copy (research R-9).
+
+| `data().mode` (`ModeSource`) | Setup read | Example → `LimitMode` |
+|---|---|---|
+| `OperatingMode` (X, MX(2.0), PRO, PRO+, Y) | 1 byte at `register()` | X: 3 → `Bounded`; 4, 5 → `Unbounded`; 0, 1, 16 → `NoPosition` |
+| `ControlMode` (XL-320) | 1 byte at `register()` | 2 (joint) → `Bounded`; 1 (wheel) → `NoPosition` |
+| `AngleLimits` (AX, MX on P1) | none (`register()` is `None`); CW/CCW from the limit reads | CW = CCW = 0 → `NoPosition`; MX P1 CW = CCW = 4095 → `Unbounded`; else `Bounded` |
+
+The mapping is core's: `ModeSource::limit_mode(value)` for a register value,
+`LimitMode::from_angle_limits(limits)` for `AngleLimits`. When `limit_mode` returns `None`, the
+bus fails Setup with `SetupError::UnknownOperatingMode { id, value }`.
+
+| `LimitMode` | `cache.check_goal(raw)` | Then |
+|---|---|---|
+| `Bounded` | `LimitsUnknown` or `OutOfLimits` outside the EEPROM limits | `Register::encode`, send |
+| `Unbounded` | `Ok(raw)` | `Register::encode` (`DoesNotFit` beyond the register), send |
+| `NoPosition` | `NotPositionMode { id }` | nothing sent |
 
 ## Setup records
 
@@ -129,7 +152,9 @@ The transitions are core's (module-interfaces §2.5). The bus fires them on thes
 1. Firmware (`Pong` on P2, or a register read).
 2. `ActuatorKind::new`.
 3. Limit min/max reads → `record_limits`.
-4. `push` and slot `Off`.
+4. Mode: `register()` read (1 byte) → `limit_mode(value)`, or `from_angle_limits` on the limits
+   of step 3 → `record_mode`.
+5. `push` and slot `Off`.
 
 ## IdSet
 
@@ -191,11 +216,15 @@ The Vecs grow only during Setup. No Cycle call allocates.
 | Declared actuator silent | `SetupError::Missing { id }` | ping(s) |
 | Declared actuator with another model | `SetupError::WrongModel { id, declared, found }` | ping (+ P1 model read) |
 | Target `Id` not held | `SetupError::NotOnBus { id }` | none |
+| Mode value not listed for the family | `SetupError::UnknownOperatingMode { id, value }` | Setup reads up to the mode read |
 | Goal while `Off` or `Faulted` | `ValidationError::ActuatorIsOff { id }` | none |
 | Enable while `Faulted` | `ValidationError::ActuatorFaulted { id }` | none |
-| Goal outside limits | `ValidationError::OutOfLimits { id, raw, min, max }` | none |
+| Goal outside limits (`Bounded`) | `ValidationError::OutOfLimits { id, raw, min, max }` | none |
+| Goal while `NoPosition` | `ValidationError::NotPositionMode { id }` | none |
+| Goal beyond the register (`Unbounded`, or a typed angle past `i32`) | `ValidationError::DoesNotFit { raw, size }` | none |
 | NaN or infinite angle | `ValidationError::NotFinite` | none |
 | Value count / buffer length | `ValidationError::BufferLength { targets, got }` | none |
-| Hardware fault in any reply | `Error::Status(StatusError)` and the slot becomes `Faulted` | the exchange |
+| Hardware fault in any reply after Setup, raw included | `Error::Status(StatusError)` and the slot becomes `Faulted` | the exchange |
+| Hardware fault in a reply during Setup | `Error::Status(StatusError)`, list empty | Setup reads so far |
 | Silent actuator after retries | `TransportError::Timeout { id }` | the exchange(s) |
 | Corrupted reply after retries | `Error::Protocol(_)` | the exchange(s) |

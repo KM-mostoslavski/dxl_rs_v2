@@ -20,6 +20,16 @@ FR-6.2, FR-6.3, FR-6.5, FR-8, NFR-1, NFR-2; delivery steps 4, 5, 6, 9, 10. Desig
 - Q: Q4: one combined torque/fault state or two flags? → A: One combined state (off / on / faulted) in one byte; flags cost padding and a low memory footprint is preferred.
 - Q: Where is the one-byte torque/fault state stored? → A: Not in the actuator structs (that adds padding): in a bus-owned array of one byte per slot, beside the actuator list.
 
+### Architect decisions 2026-10-28
+
+- Limits follow the operating mode. Setup reads the mode once; position mode checks the EEPROM
+  limits, extended position modes check only the register size, non-position modes refuse goal
+  writes (conflict 8).
+- A hardware fault in a raw reply marks the actuator faulted, like every other reply. What raw
+  access sends still bypasses the torque guard, the limit check and the bus's state (conflict 7).
+- A partial read keeps one result per actuator inside a Protocol 2 sync group; only a failed
+  instruction fails every slot of its group (conflict 13).
+
 ## User Scenarios & Testing *(mandatory)*
 
 The "users" of this module are robot application developers on a PC or SBC, and embedded
@@ -34,25 +44,27 @@ depends on one.
 
 A developer lists the actuators they expect (ID and model number), creates a bus on one wire,
 and runs setup. Setup checks each listed actuator answers with the declared model and reads
-its real limits from the actuator. Torque starts off. The developer enables torque on one
-actuator, writes a goal position, and reads the present position back. Any goal write while
-torque is off, or outside the actuator's limits, is refused before anything is sent.
+its real limits and operating mode from the actuator. Torque starts off. The developer enables
+torque on one actuator, writes a goal position, and reads the present position back. Any goal
+write while torque is off, outside the limits the actuator applies in its mode, or in a mode
+that ignores goal positions, is refused before anything is sent.
 
 **Why this priority**: This is delivery step 4 and the smallest slice that moves a motor. It
 carries the three safety rules the whole crate is built on: torque off at start, limits from
 the actuator, nothing hidden.
 
-**Independent Test**: Script the mock with ping replies and limit-read replies for two declared
-actuators. Run setup, then: a goal write before enabling torque (refused, zero bytes sent);
-enable torque (one acknowledged write); a goal inside limits (sent byte-exact); a goal outside
-limits (refused, zero bytes sent); a present-position read (decoded). Optional manual check:
-the same on one XM430-W350 through a U2D2.
+**Independent Test**: Script the mock with ping, limit-read and mode-read replies for two
+declared actuators. Run setup, then: a goal write before enabling torque (refused, zero bytes
+sent); enable torque (one acknowledged write); a goal inside limits (sent byte-exact); a goal
+outside limits (refused, zero bytes sent); a present-position read (decoded). Repeat the goal
+checks in extended position mode, velocity mode and AX wheel mode. Optional manual check: the
+same on one XM430-W350 through a U2D2.
 
 **Acceptance Scenarios**:
 
 1. **Given** a declared list whose actuators all answer with the declared model, **When**
-   setup runs, **Then** each one is held by the bus with its limits read from the actuator,
-   torque off and no fault, and no torque write was sent.
+   setup runs, **Then** each one is held by the bus with its limits and operating mode read
+   from the actuator, torque off and no fault, and no torque write was sent.
 2. **Given** a declared actuator that does not answer, or answers with another model number,
    **When** setup runs, **Then** setup fails with a typed error naming that ID and the bus
    holds no actuators.
@@ -62,8 +74,8 @@ the same on one XM430-W350 through a U2D2.
    fails with a capacity error, not a panic.
 5. **Given** an actuator with torque off, **When** the developer writes a goal position,
    **Then** they get "actuator is off" and nothing is sent.
-6. **Given** an actuator with torque on, **When** the developer writes a goal outside its
-   limits, **Then** they get a validation error and nothing is sent.
+6. **Given** an actuator with torque on in position mode, **When** the developer writes a goal
+   outside its limits, **Then** they get a validation error and nothing is sent.
 7. **Given** an actuator with torque on, **When** the developer writes a goal inside its limits,
    **Then** exactly one write goes on the wire and no read-back follows.
 8. **Given** an ID the bus does not hold, **When** the developer asks for that actuator,
@@ -72,6 +84,15 @@ the same on one XM430-W350 through a U2D2.
    second one at the same time, **Then** the code does not compile.
 10. **Given** a newly created bus, **When** nothing else is called, **Then** no byte has been
     sent, and the developer can take the transport back out of the bus.
+11. **Given** an actuator with torque on in extended or current-based position mode, **When**
+    the developer writes a goal outside its EEPROM limits, **Then** it is sent, since the
+    firmware does not apply those limits in that mode; only the register size is checked.
+12. **Given** an actuator in velocity, current or PWM mode, or an AX in wheel mode (both angle
+    limits 0), **When** the developer writes a goal, **Then** they get "not in position mode"
+    and nothing is sent.
+13. **Given** an actuator reporting an operating mode its model's e-Manual does not list,
+    **When** setup runs, **Then** setup fails naming that ID and the value, and the bus holds
+    no actuators.
 
 ---
 
@@ -79,14 +100,14 @@ the same on one XM430-W350 through a U2D2.
 
 A developer creates a bus and runs autoscan. The bus finds every actuator that answers at the
 bus's baud rate, picks the right model (and the right table for its firmware version), reads
-each one's limits, and holds it with torque off. A model this build was compiled without is
+each one's limits and operating mode, and holds it with torque off. A model this build was compiled without is
 reported with the feature that would add it.
 
 **Why this priority**: Autoscan is the default setup path (FR-2.1) and the fastest way from a
 fresh install to a moving robot. It is delivery step 4, but it builds on Story 1's setup rules.
 
 **Independent Test**: On a Protocol 2 bus, script one broadcast-ping round with three replies
-plus their limit reads; on a Protocol 1 bus, script a sweep where only some IDs answer. Check
+plus their limit and mode reads; on a Protocol 1 bus, script a sweep where only some IDs answer. Check
 the held actuators, their models and limits, and the time the sweep takes on the test clock.
 Optional manual check: autoscan a real chain of mixed X-series actuators.
 
@@ -177,8 +198,8 @@ radians, and that the limit check gives the same answer in both forms.
 
 A developer writes goal positions to a set of actuators in one call, given as a range or a
 sparse list of IDs plus one value per ID. The bus sends one broadcast instruction per register
-layout among the targets. If any target has torque off, is unknown, or gets a value outside
-its limits, the whole call is refused and nothing is sent to anyone. A developer who wants to
+layout among the targets. If any target has torque off, is unknown, is not in a position mode,
+or gets a value outside its limits, the whole call is refused and nothing is sent to anyone. A developer who wants to
 name the instruction uses the explicit sync write instead.
 
 **Why this priority**: Delivery step 6. Control loops need it, but single-actuator access
@@ -200,6 +221,8 @@ state and check that zero bytes are sent.
    writes goals, **Then** the call returns a validation error and nothing is sent.
 5. **Given** a Protocol 1 or Protocol 2 bus, **When** the developer uses the explicit sync
    write, **Then** it is available on both.
+6. **Given** a target in a non-position mode, **When** the developer writes goals, **Then** the
+   call returns "not in position mode" naming that ID and nothing is sent to any target.
 
 ---
 
@@ -245,8 +268,9 @@ result per slot, so one silent actuator does not hide the others' values.
 **Why this priority**: Delivery step 9, a "Could". Strict reads (Story 6) cover the normal case.
 
 **Independent Test**: With the feature on, script a P2 sync read where one actuator times out;
-check the per-slot results (on P2 the whole failed group fails). On P1, check that only the
-silent slot fails. Without the feature, the method does not compile.
+check that only that slot holds the error and the others hold values. Then make the sync read
+instruction itself fail and check that every slot of its group holds that error. On P1, check
+that only the silent slot fails. Without the feature, the method does not compile.
 
 **Acceptance Scenarios**:
 
@@ -254,31 +278,35 @@ silent slot fails. Without the feature, the method does not compile.
    code does not compile.
 2. **Given** a Protocol 1 bus and one silent target, **When** the developer reads partially,
    **Then** that slot holds a timeout and the other slots hold values.
-3. **Given** a Protocol 2 bus and a failed sync group, **When** the developer reads partially,
-   **Then** every slot of that group holds the error.
+3. **Given** a Protocol 2 bus whose sync read instruction fails (e.g. a transport error),
+   **When** the developer reads partially, **Then** every slot of that group holds the error.
+4. **Given** a Protocol 2 bus and one silent target inside a sync read, **When** the developer
+   reads partially, **Then** that slot holds a timeout and the other slots hold values.
 
 ---
 
 ### User Story 8 - Reach any register when the typed API does not cover it (Priority: P4)
 
 With the opt-in `raw-registers` feature, a developer reads or writes any address and size on
-one actuator, bypassing the torque guard, the limit check and the bus's per-actuator state.
+one actuator. What it sends bypasses the torque guard, the limit check and the bus's
+per-actuator state. Its replies are still checked for hardware faults.
 
 **Why this priority**: Delivery step 9, a "Could". An escape hatch for debugging and registers
 the typed API does not wrap yet.
 
 **Independent Test**: With the feature on, write raw bytes while torque is off and check they
-are sent byte-exact; read raw bytes back; check the per-actuator state did not change. Without
-the feature, the methods do not compile.
+are sent byte-exact; read raw bytes back; check a clean raw exchange leaves the per-actuator
+state as it was, and a raw reply with a hardware fault marks the actuator faulted. Without the
+feature, the methods do not compile.
 
 **Acceptance Scenarios**:
 
 1. **Given** the feature is off, **When** the developer calls a raw access method, **Then** the
    code does not compile.
 2. **Given** an actuator with torque off, **When** the developer writes raw bytes, **Then** they
-   are sent as given, with no guard and no limit check.
+   are sent as given, with no guard and no limit check, and the torque state stays off.
 3. **Given** a raw reply that reports a hardware fault, **When** the call returns, **Then** it
-   returns the typed hardware error.
+   returns the typed hardware error and the actuator is marked faulted.
 
 ---
 
@@ -320,8 +348,11 @@ uncapped variant through the mock; without `std`, the variant does not compile.
   until the user resolves it outside this feature (reboot is out of scope).
 - Retries: a timeout or a corrupted reply on a unicast instruction is retried up to the
   configured count; a reported hardware fault and any broadcast instruction are never retried.
-- Limits read at setup may hold only for the operating mode the actuator was in at setup
+- The operating mode is read once, at setup. A mode changed later (by a raw write or another
+  tool) is not seen until the next setup; goal checks follow the mode found at setup
   (see Assumptions, SRS conflict 8).
+- A raw write to Torque Enable does not change the bus's torque state; the next typed torque
+  call does (see Assumptions, SRS conflict 7).
 
 ## Requirements *(mandatory)*
 
@@ -339,7 +370,8 @@ uncapped variant through the mock; without `std`, the variant does not compile.
   with a default (the system clock under `std`), so the std user never names it and a no_std
   user writes `Bus<P2, Uart, Mono>` (moved before capacity 2026-10-28). This takes
   no space for a clock with no state, needs no indirect call, and accepts a clock that owns a
-  hardware timer. SRS FR-1.1, 4.1 and §7 need the extra parameter (deviation).
+  hardware timer. SRS FR-1.1 has the parameter; SRS 3.3, 4.1 and §7 still show
+  `Bus<P, T, N>` (stale).
 - **FR-004**: The bus MUST take a reply timeout, a scan wait and a retry count at construction,
   with defaults of 10 ms, 10 ms and 0 retries (FR-1.4). Retries apply to unicast instructions
   that time out or get a corrupted reply only.
@@ -357,8 +389,7 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 - **FR-009**: Autoscan MUST find every actuator answering at the bus's baud: one broadcast ping
   on Protocol 2, a per-ID ping sweep of 0..=252 on Protocol 1 (FR-2.1, FR-2.2). Autoscan is
   available in `no_std` builds too: broadcast ping, the P1 sweep, the model lookup and the
-  fixed-capacity actuator list allocate nothing. SRS 2.1's "only when std is present" is
-  dropped (deviation).
+  fixed-capacity actuator list allocate nothing (SRS 2.1).
 - **FR-010**: Setup MUST pick each actuator's model from its model number, and, where the
   model's table depends on firmware, the table for its firmware version (FR-2.3).
 - **FR-011**: A model number with no compiled-in model MUST fail setup with "unsupported model"
@@ -366,7 +397,11 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 - **FR-012**: A model that cannot be driven on the bus's protocol MUST fail setup, not a later
   call (constitution II).
 - **FR-013**: Setup MUST read each actuator's limits from the actuator itself; a failed limit
-  read fails setup, and control-table defaults are never used (FR-2.6).
+  read fails setup, and control-table defaults are never used (FR-2.6). After the limits, setup
+  MUST record the actuator's operating mode: one 1-byte read of its Operating Mode or Control
+  Mode register, or, on models without one (AX, MX on Protocol 1), derived from the angle
+  limits just read. A failed mode read, or a value the model's e-Manual does not list, fails
+  setup (architect, 2026-10-28).
 - **FR-014**: After setup, every actuator MUST start with torque off and no fault in the bus's
   state, and setup MUST send no torque write (FR-2.7).
 - **FR-015**: A failed setup MUST leave the bus holding no actuators; a successful one replaces
@@ -384,8 +419,12 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 - **FR-019**: Torque MUST only be enabled by an explicit call (FR-3.3).
 - **FR-020**: A goal write while torque is off MUST return "actuator is off" and send nothing,
   with no model-specific side effect (FR-3.4).
-- **FR-021**: A goal write outside the actuator's limits MUST return a validation error and send
-  nothing (FR-3.7).
+- **FR-021**: A goal write MUST follow the operating mode recorded at setup (FR-3.7, architect
+  2026-10-28): in position mode, a goal outside the actuator's limits returns a validation
+  error; in extended or current-based position mode (and MX multi-turn), the EEPROM limits are
+  not applied, as on the firmware, and only the register size is checked; in a non-position
+  mode (velocity, current, PWM, wheel), any goal returns "not in position mode". Every refusal
+  sends nothing.
 - **FR-022**: Writes MUST NOT be confirmed implicitly; reading a value back is a separate call
   (FR-3.8).
 - **FR-023**: Values MUST cross the API in typed form (position in radians) and in raw register
@@ -397,9 +436,10 @@ uncapped variant through the mock; without `std`, the variant does not compile.
   faulted (faulted always means off). It is stored in one byte per actuator, in a bus-owned
   array beside the actuator list, never inside the actuator structs (no padding); no fault report
   is kept: the call that saw the fault returns it, and Hardware Error Status can be read
-  again. This replaces SRS 3.3's two flags (deviation), for the smallest actuator footprint.
-- **FR-025**: Any reply that reports a hardware fault MUST mark that actuator faulted with
-  torque off, and the call that received it MUST return a typed hardware error (FR-6.2).
+  again (SRS 3.3).
+- **FR-025**: Any reply that reports a hardware fault, raw access included, MUST mark that
+  actuator faulted with torque off, and the call that received it MUST return a typed hardware
+  error (FR-6.2).
 - **FR-026**: Enabling torque on a faulted actuator MUST be refused with a typed error and send
   nothing; disabling torque is always allowed.
 - **FR-027**: A torque write that fails for any reason MUST leave the bus's state as torque off.
@@ -420,8 +460,9 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 - **FR-033**: Multi-actuator operations MUST group targets by register layout (address, size)
   and send one instruction per group (FR-4.4).
 - **FR-034**: A multi-actuator write MUST be validated as a whole before anything is sent:
-  torque on for every target, every value inside limits, one value per target, no unknown or
-  repeated ID. Any failure refuses the call and sends nothing to anyone (FR-4.8).
+  torque on for every target, every value accepted by that target's operating mode (FR-021),
+  one value per target, no unknown or repeated ID. Any failure refuses the call and sends
+  nothing to anyone (FR-4.8).
 - **FR-035**: Multi-actuator reads MUST fill a caller-owned buffer, one slot per target in
   target order, and MUST NOT allocate. A buffer shorter than the target list is a validation
   error (FR-4.5).
@@ -434,10 +475,14 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 **Opt-in features**
 
 - **FR-038**: Behind `partial-reads` (off by default), a partial read MUST return one result per
-  slot; on Protocol 2 a failed sync group fails all its slots (FR-4.7).
+  slot, inside a Protocol 2 sync group too; only a failed instruction fails every slot of its
+  group (FR-4.7, architect 2026-10-28).
 - **FR-039**: Behind `raw-registers` (off by default), a developer MUST be able to read or write
-  any address and size on one actuator, bypassing the torque guard, the limit check and the
-  bus's per-actuator state; the docs MUST say this can desync that state (FR-8.1, FR-8.2).
+  any address and size on one actuator. What it sends bypasses the torque guard, the limit
+  check and the bus's per-actuator state; its replies pass the same fault check as every
+  other reply (FR-025). The docs MUST say a raw write can desync the bus's view: a raw write to
+  Operating Mode or Torque Enable does not update the recorded mode or torque state (FR-8.1,
+  FR-8.2, architect 2026-10-28).
 - **FR-040**: Under `std`, an uncapped storage variant of the bus MUST be available, added as
   new API without changing the capped bus (FR-1.3, FR-4.9).
 - **FR-041**: Enabling any feature MUST only add API, never change an existing method's
@@ -457,7 +502,7 @@ uncapped variant through the mock; without `std`, the variant does not compile.
   actuators, sorted by ID.
 - **Configuration**: reply timeout, scan wait, retry count. Fixed at construction.
 - **Held actuator**: one actuator the bus owns, of one model, with its ID, torque and fault
-  state, and the limits read at setup.
+  state, and the limits and operating mode read at setup.
 - **Actuator handle**: short-lived access to one held actuator; at most one at a time.
 - **Declared list**: (ID, model number) pairs the user expects on the wire.
 - **Target list**: the IDs a multi-actuator call addresses, in the user's order.
@@ -471,11 +516,12 @@ uncapped variant through the mock; without `std`, the variant does not compile.
 
 - **SC-001**: A desktop developer goes from a connected bus to one moving actuator in at most 5
   lines of code (create, set up, enable torque, write goal, read position).
-- **SC-002**: Every refusal case (torque off, faulted, out of limits, unknown or repeated ID,
-  short buffer, value count mismatch) sends zero bytes, in 100 % of the tests that inject it.
-- **SC-003**: Every hardware fault injected into any reply (setup, single read or write,
-  multi-actuator read, clear fault) marks the actuator faulted on that same call, in 100 % of
-  the tests.
+- **SC-002**: Every refusal case (torque off, faulted, out of limits, not in position mode,
+  unknown or repeated ID, short buffer, value count mismatch) sends zero bytes, in 100 % of the
+  tests that inject it.
+- **SC-003**: Every hardware fault injected into any reply (single read or write, multi-actuator
+  read, clear fault, raw access) marks the actuator faulted on that same call, and one injected
+  at setup fails setup, in 100 % of the tests.
 - **SC-004**: A multi-actuator write to K targets across G register layouts sends exactly G
   instructions; a Protocol 2 multi-read of K targets sends one request, a Protocol 1 one sends K.
 - **SC-005**: Every Cycle operation records zero memory allocations, and the `no_std` build on
@@ -500,40 +546,50 @@ uncapped variant through the mock; without `std`, the variant does not compile.
   - Strict reads write plain values and leave the buffer unchanged on failure (proposal Q3).
   - An actuator that reports a fault during setup fails setup (proposal Q6), consistent with
     FR-2.6 (a failed limit read fails Init) and FR-6.2.
-  - Raw access returns a reported fault as a typed error but does not change the bus's
-    per-actuator state, as SRS FR-8.1 says (proposal Q5).
+  - Raw access returns a reported fault as a typed error and marks the actuator faulted, like
+    every other reply; what it sends bypasses the guard, the limits and the bus's state
+    (architect, 2026-10-28; conflict 7).
   - Reboot is out of scope for this feature (proposal Q7).
   - Torque enable/disable on many actuators is sent as acknowledged unicast writes, not a
     broadcast, so the bus's torque state matches what the actuators confirmed.
 - Dependencies, each in another module and merged before the bus PRs that need them:
-  - protocol (spec 001, PR #7): exchanges reachable from the bus, a sync-read and a scan hook;
-  - core: position type, model-number type, new error variants (capacity, not found, wrong
-    model, unreachable, faulted, actuator is off, out of limits, bad buffer);
+  - protocol (spec 001, PR #7, merged into `main` 2026-10-28): exchanges reachable from the
+    bus, a sync-read and a scan hook;
+  - core: position type, model-number type, the limit mode and its goal check, new error
+    variants (capacity, not found, wrong model, unreachable, faulted, actuator is off, out of
+    limits, not in position mode, unknown operating mode, bad buffer);
   - tables and xtask: per-model register layout (torque, goal, present, limits, hardware error,
-    position scale, supported protocols), a per-actuator state slot, and the firmware-version
-    register, each verified against the e-Manual (constitution IV). Position scale and the
-    Protocol 1 model-number and firmware addresses are not in the tables yet.
-- Delivery: the proposal splits this module into PRs 1 to 7 (steps 4, 5, 6, 9, 10), each with
-  ≥ 70 % coverage. That needs the architect's approval under "one module per PR".
+    operating-mode source, position scale, supported protocols) and the model-number and
+    firmware-version registers, each verified against the e-Manual (constitution IV).
+- Delivery: the plan splits this module into six PRs, bus-1 to bus-6 (steps 4, 5, 6, 9, 10),
+  each with ≥ 70 % coverage. That needs the architect's approval under "one module per PR".
 - Latency and jitter targets are deferred to the NFR-5 reference bench; no story needs hardware
   to pass.
-- **Deviations / SRS conflicts** (to raise with the architect):
-  1. FR-1.1, 4.1, §7: a time-source parameter may change the bus's shape and constructor (Q1).
-  2. SRS 2.1 vs FR-2.1: autoscan is the default setup but limited to `std` (Q2).
-  3. SRS 3.3 "torque state is a bool" vs a combined torque/fault state (Q4).
+- **Deviations / SRS conflicts** (numbers are stable; status as of 2026-10-28):
+  1. FR-1.1, 4.1, §7: the time-source parameter. Decided (Q1); SRS FR-1.1 has it, clock before
+     `N`. Still open: FR-1.1 puts a `Clock` bound on the struct, which rustc rejects with the
+     no_std default (plan deviation 1); SRS 3.3, 4.1 and §7 still show `Bus<P, T, N>`.
+  2. SRS 2.1 vs FR-2.1: autoscan without `std`. Decided (Q2); SRS 2.1 says so. Resolved.
+  3. SRS 3.3: one combined torque/fault state. Decided (Q4); SRS 3.3 says so. Resolved.
   4. FR-4.5 [decision] proposes a buffer of optional values; this spec uses plain values and a
-     buffer left unchanged on failure.
+     buffer left unchanged on failure. Open.
   5. FR-6.5: refusing torque enable while faulted, and clearing on Protocol 1 (no hardware
-     error register) by checking the error flags of a ping reply, are additions.
+     error register) by checking the error flags of a ping reply, are additions. Open.
   6. FR-2.7 says caches start clear "whatever the hardware reports"; this spec fails setup on a
-     reported fault.
-  7. FR-8.1 (raw bypasses state) vs FR-6.2 (every fault sets fault state): raw replies return
-     the error but do not set the state.
-  8. FR-3.7 treats limits as unconditional; on the e-Manual they may apply in position mode
-     only. To verify before the limit check ships.
-  9. FR-4.4/FR-4.8: all-or-nothing holds for validation, not on the wire across groups.
-  10. FR-1.3: the uncapped variant cannot be a plain alias of the capped bus; it needs a storage
-      parameter or its own type.
+     reported fault. Open.
+  7. FR-8.1 (raw bypasses the cache) vs FR-6.2 (every fault sets fault state). Decided
+     2026-10-28: raw replies pass the fault check and a fault marks the actuator faulted; what
+     raw sends still bypasses the guard, the limits and the state. SRS FR-8.1 to be patched.
+  8. FR-3.7 treats limits as unconditional; the e-Manual applies them in position mode only.
+     Decided 2026-10-28: limits follow the operating mode read at setup (FR-013, FR-021). SRS
+     FR-3.7 to be patched.
+  9. FR-4.4/FR-4.8: all-or-nothing holds for validation, not on the wire across groups. Open.
+  10. FR-1.3: the uncapped variant cannot be a plain alias of the capped bus; it is its own
+      type. Open.
   11. FR-012 (protocol reachability) and the separate scan wait (FR-004) are not in the SRS.
-  12. §9 / constitution workflow: four prerequisite PRs in other modules and a seven-PR split
-      of this module.
+      Open.
+  12. §9 / constitution workflow: prerequisite PRs in other modules (core-1, core-2, xtask X1;
+      protocol PR #7 is merged) and a six-PR split of this module. Awaiting approval.
+  13. FR-4.7 "on P2 a failed sync group fails all slots in that group". Decided 2026-10-28:
+      one result per actuator inside the group; only a failed instruction fails every slot of
+      the group (FR-038). SRS FR-4.7 to be patched.

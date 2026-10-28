@@ -8,10 +8,11 @@
 - Latest stable Rust (dev: 1.97.1) with `rustfmt` and `clippy`, plus the
   `thumbv7em-none-eabihf` target.
 - `cargo-llvm-cov` for the coverage gate.
-- Merged first: protocol PR #7 with `ProtocolVersion` (contract §5), core-1 and tables T1
-  (contract §7). Before T1, only the xtask fixture tests (§2) can pass; codegen on the real tables
-  fails on the missing `protocols`/`source`/`access`/`area`. That is the intended FR-012
-  behaviour.
+- Merged first: core-1 (with the contract §2.4b items `ModeSource`, `LimitMode`,
+  `ModelData::mode`, `Cache::record_mode`) and tables T1 (contract §7). Protocol PR #7
+  (`ProtocolVersion`, contract §5) is already merged into `main`. Before T1, only the xtask
+  fixture tests (§2) can pass; codegen on the real tables fails on the missing
+  `protocols`/`source`/`access`/`area`. That is the intended FR-012 behaviour.
 
 ## 1. Gates every PR runs
 
@@ -36,8 +37,9 @@ Expected: all pass, and the last line shows no diff (SC-001).
 | US4 AS4, FR-004 | unmapped fixture tables give one warning each, and the run succeeds |
 | US4 AS5, FR-016 | a rendered model file starts with the `@generated` header and `Source:` line, and its docs carry name, number, firmware range per protocol, source table and the Unverified/Verified line |
 | US3 AS3, FR-005 | family `x_series` fails, naming the model number and the bad family |
-| SC-002 | the real-tables test: every role of all 69 mapped tables matches an independent name lookup and the rendered `reg(...)` line |
-| US1 AS1–AS4 | real-tables spot checks: XM430-W350 Goal Position `reg(116, 4, RW, Ram)`; AX-12A `CwCcw` at 6/8; AX-12A `hardware_error: None`; scale from `type_info` |
+| SC-002 | the real-tables test: every role of all 69 mapped tables, mode source included, matches an independent name lookup and the rendered `reg(...)` line |
+| US1 AS1–AS4 | real-tables spot checks: XM430-W350 Goal Position `reg(116, 4, RW, Ram)`; AX-12A `CwCcw` at 6/8; AX-12A `hardware_error: None`; scale from `type_info`, radians as `{:?}` of the table value |
+| US1 AS6, FR-019 | real-tables spot checks: XM430-W350 `mode: ModeSource::OperatingMode(Self::OPERATING_MODE)` with `OPERATING_MODE` at `reg(11, 1, RW, Eeprom)`; XL-320 `ControlMode(Self::CONTROL_MODE)` at 11; AX-12A `AngleLimits`; YM070-210-M001 `OperatingMode` at 33. Check 17 fixtures (no mode source; `Operating Mode` beside CW/CCW; two mode rows) fail and name the table |
 | SC-008 | `cargo llvm-cov -p xtask` reports at least 70 % lines |
 
 ## 3. Generated crate tests (`src/models/tests.rs`)
@@ -56,7 +58,7 @@ cargo test --lib --no-default-features --features std models::tests     # no fam
 | US2 AS4 | an unknown number gives `UnsupportedModel { feature: None, .. }` |
 | US2 AS5, FR-012 | `ActuatorKind::new(P1, 350, ..)` (XL-320, P2 only) gives `feature: None` |
 | US2 AS6 | `new` takes `ModelNumber` directly |
-| US1 AS5, FR-009 | limits recorded through `kind.cache_mut()` read back through `kind.cache()`; `kind.data()` equals `Type::DATA` |
+| US1 AS5, FR-009 | a limit mode and limits recorded through `kind.cache_mut()` read back through `kind.cache()` (equal to a `Cache` built directly with the same calls); `kind.data()` equals `Type::DATA` |
 
 ## 4. Every family combination builds clean (SC-003)
 
@@ -70,9 +72,10 @@ cargo clippy --lib --no-default-features --target thumbv7em-none-eabihf -- -D wa
 cargo clippy --lib -- -D warnings
 ```
 
-Expected: no warnings from any of the 12 lines (US3 AS1, AS2), nor from the all-families
-no_std line in §1. The no-family lines also depend on core-1's `Register::new` fix (contract
-conflict 14).
+Expected: no warnings from any of these 13 commands, nor from the all-families no_std line in
+§1. Together they are the 14 builds of SC-003: 7 family combinations, each std and no_std (US3
+AS1, AS2). The no-family lines also depend on core-1's `Register::new` fix (contract conflict
+14).
 
 ## 5. Compile-time checks (US5)
 
@@ -86,7 +89,8 @@ conflict 14).
 ## 6. Add a model (SC-005, manual)
 
 1. Add `control_tables/<new>.ron` with `source`, `protocols`, `type_info`, and rows with
-   `access`/`area` (tables module work, e-Manual cited).
+   `access`/`area`, including the common roles and an `Operating Mode` or `Control Mode` row (or
+   CW/CCW Angle Limits with no mode row) (tables module work, e-Manual cited).
 2. Add its entry to `dynamixel.ron` under `p1` and/or `p2`.
 3. Run `cargo xtask codegen`.
 

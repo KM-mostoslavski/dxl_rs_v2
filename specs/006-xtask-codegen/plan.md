@@ -1,11 +1,12 @@
 # Implementation Plan: xtask codegen (generated models, dispatch and family features)
 
-**Branch**: `dev` (PR branch `006-xtask-codegen`, step X1 of the contract) | **Date**: 2026-10-27 |
-**Spec**: [spec.md](spec.md)
+**Branch**: `dev` (PR branch `006-xtask-x1`, step X1 of the contract) | **Date**: 2026-10-27,
+updated 2026-10-28 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/006-xtask-codegen/spec.md`, the cross-module contract
 `specs/ideas/module-interfaces.md` (cited as "contract §n"), constitution v1.3.0, and the
-2026-10-27 architect decisions (SRS patch pending).
+2026-10-27 and 2026-10-28 architect decisions (SRS patch pending). 2026-10-28: limits follow the
+operating mode (contract §2.4b), so every model also says where Setup finds its mode.
 
 ## Summary
 
@@ -15,19 +16,27 @@ with no hand-written model code. Today it only gives `id`, `model_number` and `n
 - **Input**: read the new table and map schema of contract §3. Tables gain `source`, `protocols`,
   and `access` + `area` on every row. The map gains per-protocol `p1`/`p2` lists, `default`,
   `also` and `not_mapped`.
-- **Checks**: run every check of contract §4.3 before writing anything, and report all problems
-  in one run, each naming the file.
-- **Model types**: each holds a core `Cache` (Id + limits) and a crate-internal `DATA: ModelData`
-  with name, number, protocols, the common-role registers (by e-Manual name), limit form,
-  hardware-fault register or `None`, and the position scale. It implements `Describe` and
-  `Actuator`. Every register constant carries access and area.
+- **Checks**: run every check of contract §4.3, plus the mode-source check (C5), before writing
+  anything, and report all problems in one run, each naming the file. 17 checks in all
+  (data-model §3).
+- **Model types**: each holds a core `Cache` (Id, limit mode, limits) and a crate-internal
+  `DATA: ModelData` with name, number, protocols, the common-role registers (by e-Manual name),
+  limit form, hardware-fault register or `None`, mode source, and the position scale. It
+  implements `Describe` and `Actuator`. Every register constant carries access and area.
+- **Mode source** (contract §2.4b, decided 2026-10-28): `ModeSource::OperatingMode(reg)` from the
+  "Operating Mode" row (X, MX(2.0), PRO, PRO+, Y), `ModeSource::ControlMode(reg)` from XL-320's
+  "Control Mode" row, `ModeSource::AngleLimits` for tables with CW/CCW Angle Limits and no mode
+  register (AX, MX on P1). A table with neither, or with an Operating Mode row beside CW/CCW
+  Angle Limits, fails codegen (check 17, research R-17, C5). `ModeSource` and `LimitMode` are
+  core's (`src/actuator.rs`); X1 only emits values.
 - **`ActuatorKind`**: a per-protocol lookup `new(ProtocolVersion, ModelNumber, fw, Id)` returning
   `SetupError`, plus `firmware_register`, `MODEL_NUMBER` and `Describe` by `match`.
 - **Output**: formatted in memory and written only when changed. Generated crate tests check the
   lookup for every model number.
 
 Torque and fault state are not generated. The bus holds them as one byte per slot (contract
-§2.5).
+§2.5). The limit mode is not generated either: core decides it at Setup from the mode source X1
+emits and the value the bus reads.
 
 ## Technical Context
 
@@ -47,8 +56,8 @@ only.
 - `cargo test -p xtask`: unit tests, one fixture per check, end-to-end `run` on a temp root, and a
   real-tables test with an independent oracle.
 - `cargo test --lib models::tests`: generated crate tests (lookup at every boundary, family off,
-  cache round trip).
-- Clippy with `-D warnings` for 7 family combinations, std and no_std.
+  cache round trip of limit mode and limits).
+- Clippy with `-D warnings` for 7 family combinations, std and no_std: 14 builds (SC-003).
 - The CI codegen diff check, and `cargo llvm-cov` at ≥ 70 % (xtask counted, `src/models*`
   excluded).
 
@@ -64,6 +73,15 @@ allocation, no runtime search (NFR-4).
 **Constraints**:
 - Validate before writing (FR-003).
 - Deterministic, formatted output (FR-002).
+- One-row table change, one changed file (SC-007). Model data refers to role registers by
+  constant name, and the generated `src/models/tests.rs` uses named constants only
+  (`<Type>::FIRMWARE_VERSION`, `<Type>::DATA`, `MODEL_NUMBER`), never a literal address or
+  size.
+- Each generated file has its own imports: only what it uses in every family combination in
+  which it compiles (no shared block, so no unused `PositionScale` in `models.rs`). Core and
+  protocol items are named by their owning module (`crate::actuator::…`, `crate::units::…`,
+  `crate::error::…`, `crate::id::…`, `crate::protocol::…`, `crate::register::…`), never by a root
+  re-export (research R-12).
 - Write nothing outside `src/models*` (FR-018).
 - Generated code: no `dyn`, no allocation, no panic path, warning-free in every family
   combination (FR-014).
@@ -73,7 +91,9 @@ allocation, no runtime search (NFR-4).
 **Scale/Scope**:
 - 72 table files: 69 mapped, 63 model numbers, about 100 rows each, about 8 000 generated lines
   today.
-- T2 adds MX(1.0) P1 tables, AX-18F and XW430-T200.
+- T2 adds the MX(1.0) P1 tables (`mx_28_p1`, `mx_64_p1`, `mx_106_p1`) and `also` names on 12,
+  18 and 1270. AX-12+, AX-18F and XW430-T200 stay in `not_mapped` (`SameNumberAs`; XW430-T200 =
+  1270 confirmed 2026-10-28).
 - Two lookup protocols. Five family features.
 
 ## Constitution Check
@@ -84,13 +104,13 @@ allocation, no runtime search (NFR-4).
 |---|---|---|
 | I. no_std and Heap-Free | Generated code holds only `const` data and a `Cache` by value. `&'static ModelData` comes from constant promotion (R-7). No `alloc` path. The no_std clippy line in every family combination proves it (SC-003). | PASS |
 | II. Absent Over Failing | A family that is off removes its types and variants (compile error to name them). Its model numbers fail Setup with `UnsupportedModel { feature: Some(family) }`. A model on the wrong protocol fails at Init, not in the first Cycle (lookup is per protocol, R-8). | PASS |
-| III. Nothing Hidden | Roles are matched by exact e-Manual name and never guessed. A missing hardware-fault register is `None`, not a default. No table default is generated as a limit; limits stay `None` until the bus reads EEPROM. | PASS |
+| III. Nothing Hidden | Roles are matched by exact e-Manual name and never guessed. A missing hardware-fault register is `None`, not a default. No table default is generated as a limit; limits stay `None` until the bus reads EEPROM. The mode source comes from the `Operating Mode` or `Control Mode` row, or from the CW/CCW form; a table with none of them fails codegen instead of getting a default mode (check 17). | PASS |
 | IV. e-Manual Is the Only Source | Codegen adds no facts. It carries the table's `source` into docs (Unverified/Verified line, R-15) and enforces `default: P2` for dual-protocol models. Y-series `Error Code` is not mapped until verified. | PASS |
 | V. Committed, Data-Driven Codegen | `cargo xtask` emits committed, formatted files. No `build.rs`, no proc macro. Byte-identical reruns, CI diff check, validate-before-write, nothing touched on failure (R-2). A new model needs only data (SC-005). | PASS |
 | VI. Typed, Static, Panic-Free API | Dispatch by `match`, no `dyn`. `ActuatorKind` is `#[non_exhaustive]`. Typed `SetupError`. No `unwrap`/`expect`/indexing in generated code. | PASS |
 | VII. DX First | Every public generated item documented: name, number, firmware range per protocol, source table, verification state. Model types are public `match` targets; register constants stay internal (users get get/set methods on `ActuatorRef`). | PASS |
 | Tech: `foo.rs` + `foo/`, edition 2024 | xtask split into `codegen.rs` + `codegen/` (R-13). Generated `models.rs` + `models/`. | PASS |
-| Workflow: one module per PR | X1 touches `xtask/**` and generated `src/models*` only. No `lib.rs`, `Cargo.toml` or core file edits (if C2 holds). | PASS |
+| Workflow: one module per PR | X1 touches `xtask/**` and generated `src/models*`. No `lib.rs` or `Cargo.toml` edit. One conditional cross-module touch: if core-1 kept its `ActuatorKind::new(u16, u8, Id)` tests in `src/actuator.rs` (C2 not met), X1 deletes exactly those tests and flags the touch in the PR. Otherwise no core file is edited. | PASS |
 | Workflow: gates (fmt, clippy, test, no_std, codegen diff, ≥ 70 % coverage) | All in quickstart §1. xtask coverage target ≥ 70 % with `main.rs` the only untested file. | PASS |
 
 Post-design re-check (after Phase 1): unchanged, all PASS. Two items are recorded below rather
@@ -102,19 +122,21 @@ than as gate failures:
 The xtask binary itself may `expect` in `workspace_root`. Principle VI covers the crate's API, not
 the dev tool.
 
-## Spec items superseded by module-interfaces.md
+## Spec items aligned with module-interfaces.md
 
-The contract resolves these spec conflicts (contract §8). The plan follows the contract; these are
-not deviations from it.
+The contract resolved these spec conflicts (contract §8). On 2026-10-28 the spec was rewritten to
+match the contract and the 2026-10-28 decision. The table records where each item came from. None
+is a deviation.
 
-| Spec | Contract | Plan |
+| Spec item now | Contract | Spec said before |
 |---|---|---|
-| FR-009, US1 AS5: cache holds torque and fault state | conflict 1 | `Cache` = Id + limits. Torque state is the bus's `[TorqueState; N]`. US1 AS5 is tested on limits only. |
-| FR-006/FR-007: `new(model_number, firmware)`, `Error::UnsupportedModel` | conflicts 4, 6 | `new(ProtocolVersion, ModelNumber, u8, Id) -> Result<_, SetupError>`, where `UnsupportedModel` gains `id` and `protocol` |
-| Assumptions: access and range not generated | conflict 2 | access and area generated on every register; range/default/unit later |
-| Edge case / Assumptions: MX on P1 is roadmap | conflict 3 | per-protocol lookup now; T2 adds the tables |
-| FR-003 error classes | §4.3 | the 16 checks in [data-model.md §3](data-model.md#3-checks-all-before-any-write) |
-| FR-008 "fault register, Firmware Version, Model Number exposed" | conflict 17 | crate-internal only (`ModelData`, `firmware_register`, `MODEL_NUMBER`) |
+| FR-009, US1 AS5: `Cache` = Id, limit mode, limits; torque state is the bus's `[TorqueState; N]` | conflict 1, §2.4b | cache holds torque and fault state |
+| FR-006, FR-007: `new(ProtocolVersion, ModelNumber, u8, Id) -> Result<_, SetupError>`, `UnsupportedModel { id, model_number, protocol, feature }` | conflicts 4, 6, 19 | `new(model_number, firmware)`, `Error::UnsupportedModel { model_number, feature }` |
+| FR-011, Assumptions: access and area generated on every register; range/default/unit later | conflict 2 | access and range not generated |
+| Edge cases, Assumptions: MX on P1 in scope, per-protocol lookup now; T2 adds the tables | conflict 3 | MX on P1 is roadmap |
+| FR-003 error classes: the 17 checks in [data-model.md §3](data-model.md#3-checks-all-before-any-write) | §4.3, §2.4b | the pre-contract classes (no schema, map-shape, attribute or mode checks) |
+| FR-008: fault register, Firmware Version, Model Number crate-internal (`ModelData`, `firmware_register`, `MODEL_NUMBER`) | conflict 17 | "exposed" |
+| FR-019 (new): mode source per model | §2.4b (2026-10-28) | — |
 
 ## Deviations from module-interfaces.md
 
@@ -129,22 +151,39 @@ core-1 naming and needs no regeneration at core-2 (research R-5). The core plan
 4-argument constructor under another name, X1 may call it instead; the generated data does not
 change. module-interfaces §2.2, §4.1 and §7 now use `reg()`.
 
-**Clarifications the contract leaves open** (consistent with it; raised so core-1 plans for them):
+**Clarifications the contract leaves open** (consistent with it; raised so core-1 and tables plan
+for them):
 
 - **C1.** Generated code implements `Describe` through the path `crate::actuator::Describe`. A
   trait in a private `mod sealed` inside `actuator.rs` is not nameable from `crate::models`, so
   core-1 needs a `pub(crate) use sealed::Describe;` (or equivalent). The core plan provides
   this.
 - **C2.** Core-1 must drop or move the `ActuatorKind::new(u16, u8, Id)` tests in
-  `src/actuator.rs`. X1 changes that signature and may not edit core files; the generated
-  `src/models/tests.rs` replaces them. Fallback, if core-1 has kept them: the X1 PR changes only
-  that `#[cfg(test)]` block, flagged as a cross-module touch. The core plan (D2) drops them in
-  core-1.
+  `src/actuator.rs`. X1 changes that signature, and the generated `src/models/tests.rs` replaces
+  them. The core plan (D2) drops them in core-1. Fallback, only if core-1 has kept them: the X1
+  PR deletes exactly those tests in that `#[cfg(test)]` block and nothing else, and lists it in
+  the PR as a cross-module touch. That is the only file outside `xtask/**` and `src/models*` X1
+  may change, and only in this case.
 - **C3.** With a family off, `firmware_register` returns `None` for that family's numbers. The
   lookup then still gives `UnsupportedModel { feature: Some(..) }`, without a wasted read
   (R-9). Contract §4.2 does not say.
 - **C4.** `MODEL_NUMBER` takes its access and area from the tables, and codegen checks that all
   tables agree on them. The contract shows them as `R`/`EEPROM`.
+- **C5.** Contract §4.3 lists no mode-source check yet. X1 adds check 17: a table with neither a
+  mode register (`Operating Mode`, `Control Mode`) nor CW/CCW Angle Limit rows, a table with an
+  `Operating Mode` row beside CW/CCW Angle Limits (XL-320's `Control Mode` is the allowed case),
+  and a table with both an `Operating Mode` and a `Control Mode` row. Check 11 also requires a
+  mode register to be 1 byte in `EEPROM` (contract §2.4b: "1 byte read at Setup", "It is
+  EEPROM"); its access is not checked, since the bus only reads it. The third case and the
+  attribute rule go beyond the architect's wording. They follow constitution III: codegen never
+  guesses which register holds the mode. All 67 mode rows in today's tables are 1 byte (research
+  R-17). The tables check script mirrors data-model §3 (tables plan, deviation 4) and already has
+  these rules, plus one stricter rule of its own (`Control Mode` only in `xl320`).
+- **C6.** Contract §2.4b maps Operating Mode values per family, but
+  `ModeSource::OperatingMode(Register)` holds no family. X1 emits the §2.4b shape. If core needs a
+  family discriminator, the contract changes first. X1 can emit one per family from the map's
+  `family`, but cannot split a family (RH-P12-RN is a `pro` table) without table data (research
+  R-17).
 
 **Note to ci (spec 007), not a deviation. Resolved.** The family-off half of SC-004 compiles only
 with that family off. ci's `feature-test` job runs `cargo test --lib` with `--features
@@ -179,7 +218,7 @@ xtask/
     └── codegen/
         ├── schema.rs        # serde input types (contract §3), brace rewrite, ron options
         ├── names.rs         # type_ident, module_ident, const_ident, keyword/reserved checks
-        ├── resolve.rs       # GenModel, Roles, LookupList; the 16 checks; warnings
+        ├── resolve.rs       # GenModel, Roles (incl. mode source), LookupList; the 17 checks; warnings
         ├── render.rs        # src/models.rs and src/models/<module>.rs text
         ├── render_tests.rs  # src/models/tests.rs text
         ├── output.rs        # rustfmt via stdin; sync (write changed, delete stale)
@@ -193,9 +232,10 @@ src/                         # generated only, regenerated and committed in the 
 ```
 
 **Structure Decision**: Rust 2018+ layout (`codegen.rs` + `codegen/`, no `mod.rs`). Every path is
-inside the SRS module paths `xtask/**`, `src/models.rs` and `src/models/**`. `src/lib.rs` already
-has `pub mod models;` and `pub use models::ActuatorKind;`, and X1 leaves it unchanged. The stale
-`xtask/Cargo.lock` (the workspace root lock is the real one) is left alone.
+inside the SRS module paths `xtask/**`, `src/models.rs` and `src/models/**`, except the
+conditional C2 fallback in `src/actuator.rs`. `src/lib.rs` already has `pub mod models;` and
+`pub use models::ActuatorKind;`, and X1 leaves it unchanged. The stale `xtask/Cargo.lock` (the
+workspace root lock is the real one) is left alone.
 
 ### Delivery and PR split
 
@@ -203,7 +243,7 @@ The feature fits one PR: **X1**, as in contract §7.
 
 | Step | Content | Needs |
 |---|---|---|
-| **X1** (this plan) | All of the above, plus the regenerated `src/models*` from T1's tables | PR #7 with `ProtocolVersion` (contract §5), core-1 (incl. C1, C2), T1 |
+| **X1** (this plan) | All of the above, plus the regenerated `src/models*` from T1's tables | PR #7 (merged into `main`: `ProtocolVersion`, contract §5), core-1 (incl. C1, C2 and the §2.4b items `ModeSource`, `LimitMode`, `ModelData::mode`, `Cache::record_mode`), T1 |
 | X2 (optional, after core-2) | Drop the `id`/`model_number`/`name` overrides from generated `impl Actuator` blocks, now that core-2 provides them; regenerate | core-2 |
 
 X1 is one module, and the diff is large but mechanical: the xtask code plus regenerated output.

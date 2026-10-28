@@ -56,14 +56,19 @@ data-model §3), so a table the check passes is not rejected by codegen for its 
 | 6, 7 | a file under one number only; mapped or `not_mapped`, never both; files exist |
 | 8, 9 | `source` and non-empty `protocols`; a `pX` list names only tables with `PX` |
 | 10 | every role present, `Firmware Version` included; exactly one complete limit form |
-| 11 | role access and area |
+| 11 | role access and area; the mode register 1 byte, `RW`, `EEPROM` |
 | 12 | `Model Number` at (0, 2), `R`, `EEPROM`, in every mapped table |
 | 13 | `Firmware Version` at one (address, size) within each `p1` list and within each `p2` list |
-| 14 | no role above 255 in a table under `p1` |
+| 14 | no role above 255 in a table under `p1`, the mode register included |
 | 15 | scale sanity |
 | 16 | no duplicate register constant in a table; no duplicate type identifier among mapped files; no module identifier `tests` or a keyword |
+| 17 | exactly one mode source: none, an `Operating Mode` row beside CW/CCW Angle Limit rows, or both mode rows fail |
+| — (tables only) | `Control Mode` only in `xl320`; the mode-source rules on unmapped tables too |
+| — (tables only) | T1: legacy `tables` equals the default (or only) list. T2 on: no `tables` key |
 
-Codegen stays the authority. If xtask adds a data check, this table and the check follow.
+Codegen stays the authority. If xtask adds a data check, this table and the check follow. Rows
+marked "tables only" are the check's own rules (plan deviation 5); they add to codegen's checks
+and never relax one.
 
 ## 2. `emanual.py` (page reader, maintainer only)
 

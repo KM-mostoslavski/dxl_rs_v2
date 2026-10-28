@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,10 +31,9 @@
 
 ## Notes
 
-- Open: 3 markers, all from the proposal's architect questions. FR-003 (Q1, where the time
-  source lives and whether it changes the bus's compile-time shape), FR-009 (Q2, autoscan
-  without `std`), FR-024 (Q4, one combined torque/fault state or two values). Resolve with
-  `/speckit-clarify` before `/speckit-plan`.
+- Resolved: the 3 markers from the proposal's architect questions, FR-003 (Q1, time source as
+  a type parameter), FR-009 (Q2, autoscan without `std`) and FR-024 (Q4, one combined
+  torque/fault byte), were answered in the 2026-10-27 clarify session.
 - Same convention as specs 001 and 002: the product is a library, so `std` / `no_std`, the
   microcontroller target, compile errors for absent operations, Cargo features and the byte-level
   mock are user-facing constraints from the SRS and constitution, not implementation choices.
@@ -47,8 +46,9 @@
   SC-006.
 - SC-001 (5 lines) depends on FR-006 and on Q1: a mandatory time-source argument adds to the
   no_std path, not the `std` one-step path.
-- 12 SRS deviations or conflicts are listed in the spec's Assumptions for the architect; none
+- 13 SRS deviations or conflicts are listed in the spec's Assumptions for the architect; none
   is resolved by guess where the constitution forbids it (SRS vs ARCHITECTURE conflicts are
-  flagged, not decided).
+  flagged, not decided). As of 2026-10-28: 2 and 3 are resolved in the SRS; 7, 8 and 13 are
+  decided by the architect and wait for the SRS patch.
 - Validated in 1 iteration; two cross-references fixed and three scenarios added (FR-005,
   FR-006, FR-012) during validation.

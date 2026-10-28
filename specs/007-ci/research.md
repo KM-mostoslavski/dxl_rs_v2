@@ -3,12 +3,15 @@
 **Feature**: [spec.md](spec.md) | **Date**: 2026-10-27
 
 Sources: `.github/workflows/ci.yml` and `Cargo.toml` on `dev`; `src/lib.rs`, `src/error.rs` and
-`Cargo.toml` on `001-protocol-packets` (PR #7); `specs/ideas/module-interfaces.md`; GitHub
-Actions docs; `cargo-llvm-cov` 0.9.1 and rustdoc behaviour checked locally.
+`Cargo.toml` on `001-protocol-packets` (PR #7, merged into `main` on 2026-10-28);
+`specs/ideas/module-interfaces.md`; GitHub Actions docs; `cargo-llvm-cov` 0.9.1 and rustdoc
+behaviour checked locally.
 
 Prototype: scratch copies of `dev` and `001-protocol-packets` (made with `git archive`) under
 `/tmp/claude-1000/ci-proto/`, built with stable 1.97.1, a pinned 1.97.1 and nightly 1.99.0
-(2026-08-03). Nothing was built in the repository.
+(2026-08-03). Re-run on 2026-10-28 on a scratch copy of `origin/main` (f338e2a, PR #7 merged),
+plain and with core-1's fix simulated (`#[allow(dead_code)]` on `Register::new`), including the
+seeded faults of quickstart § 2. Nothing was built in the repository.
 
 ## R-1 How the feature sets are listed
 
@@ -121,27 +124,38 @@ it too.
 
 ## R-5 Missing documentation under every feature set
 
-**Decision**: Add `[lints.rust] missing_docs = "warn"` to `Cargo.toml`. With `-D warnings` in CI
-it fails every leg where a public item lacks docs. Locally it warns.
+**Decision**: One mechanism: the crate attribute `#![warn(missing_docs)]` in `src/lib.rs`, on
+`main` since PR #7. The workflow's `RUSTFLAGS: -D warnings` turns it into a failure in every
+check that compiles the crate. Locally it warns. `ci` adds no second lint: no `[lints]` table in
+`Cargo.toml`, no `-D missing_docs` in any flags. `Cargo.toml` is not changed (FR-015).
 
 **Rationale**:
-- PR #7 adds `#![warn(missing_docs)]` to `src/lib.rs`. That works, but the gate then depends on
-  a line in a file `ci` does not own. The `[lints]` table is `ci`'s
-  (module-interfaces.md § 1), so the promise is held where `ci` can keep it.
-- The root `[lints]` table applies only to the root package, not to `xtask`. Prototype: on a
-  scratch copy of `dev` with the table added, `cargo build --workspace` with `-D warnings` fails
-  only on the two undocumented `UnsupportedModel` fields, and nothing in `xtask`.
-- The feature-set legs build each set, so "under any checked feature set" (FR-007) holds.
+- The attribute applies to the root crate only, not to `xtask`, exactly as a root
+  `[lints.rust] missing_docs = "warn"` table would. Two switches for one lint add nothing, and a
+  reader would have to check both.
+- Core's plan relies on the attribute (core tasks check it on `main`), so it stays.
+- The feature-set and test legs compile each set, so "under any checked feature set" (FR-007)
+  holds. Prototype on `main` (2026-10-28): with the doc comment of `Id::new` removed, every
+  feature-set and test leg, the no_std job, `check`, `coverage`, both `docs` runs and all three
+  compile-fail passes fail; only `codegen` (`xtask` does not depend on the crate) and the table
+  check stay green. With an undocumented item gated
+  `#[cfg(all(feature = "alloc", not(feature = "std")))]`, today's workflow stays green and only
+  the `alloc alone` legs, the no_std `alloc` builds and the std-off compile-fail pass fail: that
+  is the gap this module closes.
+- The attribute lives in core's file (module-interfaces.md § 1). Constitution VII binds core to
+  document every public item; removing the attribute is a visible line in a core PR.
 
-**Interpretation of FR-015**: FR-015 allows "package metadata only" in `Cargo.toml`. The shared
-contract (module-interfaces.md § 1) gives `ci` the `[package]`, metadata and `[lints]` tables.
-A lint level is neither a feature nor a dependency, so the plan follows the contract.
+**Day-one state**: green on `main`. PR #7 documented the two `UnsupportedModel` fields that
+failed it on `dev`. core-1 moves `UnsupportedModel` into `SetupError`; core keeps every new field
+documented.
 
-**Day-one blocker**: `dev` fails this gate on the two `UnsupportedModel` fields. PR #7 documents
-them. core-1 moves `UnsupportedModel` into `SetupError`; core keeps every new field documented.
-
-**Alternatives considered**: `RUSTFLAGS="-D warnings -D missing_docs"`. Rejected: it also hits
-the `xtask` binary and every path dependency, and it is invisible to local builds.
+**Alternatives considered**:
+- `[lints.rust] missing_docs = "warn"` in `Cargo.toml` (the first plan, written before PR #7
+  merged; `ci` owns `[lints]`, module-interfaces.md § 1). Not chosen: with PR #7's attribute it
+  is a second switch for the same lint. If the architect wants `ci` to hold the lint, core
+  removes the attribute in the same step and `ci` adds the table.
+- `RUSTFLAGS="-D warnings -D missing_docs"`. Rejected: it also hits the `xtask` binary and every
+  path dependency, and it is invisible to local builds.
 
 ## R-6 Doc warnings
 
@@ -265,6 +279,10 @@ tests twice.
 - Code and tests behind opt-in features (e.g. bus-5's `src/bus/partial.rs` and `src/bus/raw.rs`)
   are otherwise never linted with `--all-targets`: build legs run `cargo build --lib`, and the
   no_std clippy run skips tests. Prototype on PR #7: clean.
+- The architect decisions of 2026-10-28 (limits follow the operating mode, `raw-registers`
+  replies run `observe`, per-slot `partial-reads` results) change bus code and tests, not CI.
+  bus-5's tests run here with `partial-reads,raw-registers` on, and in their own
+  `feature tests (host)` legs once bus-5 declares the features (R-4).
 
 ## R-11 Fork safety and permissions
 
@@ -336,29 +354,33 @@ compile-fail, which uses `COMPILE_FAIL_TOOLCHAIN` (R-7). No `rust-version` in `C
 
 ## R-16 State of each gate on day one
 
-Checked on scratch copies with `-D warnings`:
+Checked on scratch copies with `-D warnings`. `main` was re-checked on 2026-10-28 (f338e2a);
+the "after core-1" column simulates core-1's fix with `#[allow(dead_code)]` on `Register::new`.
 
-| Gate | `dev` today | After PR #7 | After core-1 |
-|---|---|---|---|
-| no_std: no features, alloc alone | red (`Register::new` never used) | red | green (core-1 fixes the warning) |
-| no_std: heap-free all, no_std all | green | green | green |
-| feature sets: families alone, defaults, all | green | green | green |
-| feature sets: none, `alloc`, `mock`, `std` alone (host); `alloc`, `mock` alone (target) | red (same warning) | red | green |
-| missing docs (`[lints]`) | red (2 `UnsupportedModel` fields) | green | green, if core keeps `SetupError` documented |
-| docs `-D warnings` | not run | green | expected green |
-| compile-fail codes (all three passes) | green | green | expected green |
-| tests, all features; clippy `--all-targets --all-features` | not run | green | expected green |
-| feature tests (host): `std` and each heap-free feature | green (`std`, `std,ax` checked) | green (all 7) | expected green |
-| control tables: schema check | green, no-op (guard: no script yet) | green, no-op | real check after tables T1 |
-| Windows, macOS | never run | unknown (R-9) | unknown |
+| Gate | `main` (PR #7 merged) | After core-1 (simulated) |
+|---|---|---|
+| no_std: no features, alloc alone | red (`Register::new` never used) | green (core-1 fixes the warning) |
+| no_std: heap-free all, no_std all | green | green |
+| feature sets: families alone, defaults, all | green | green |
+| feature sets: none, `alloc`, `mock`, `std` alone (host); `alloc`, `mock` alone (target) | red (same warning) | green |
+| missing docs (`#![warn(missing_docs)]` + `-D warnings`) | green | green, if core keeps `SetupError` documented |
+| docs `-D warnings` (both runs) | green | green |
+| compile-fail codes (all three passes) | green | green |
+| tests, all features; clippy `--all-targets --all-features` | green | green |
+| feature tests (host): `std` and each heap-free feature | green (all 7) | green |
+| control tables: schema check | green, no-op (guard: no script yet) | real check after tables T1 |
+| Windows, macOS | unknown (R-9) | unknown |
 
-The spec's Assumptions say the no-feature build is green on day one. That probe ran without
-`-D warnings`. With it, the build fails, as module-interfaces.md conflict 14 records. So the
-`ci` PR lands after PR #7 and core-1.
+On `dev` before PR #7 (2026-10-27) the missing-docs gate was also red, on the two
+`UnsupportedModel` fields.
+
+The first probe (spec Assumptions, 2026-10-27) ran without `-D warnings` and found the
+no-feature build green. With `-D warnings` it fails, as module-interfaces.md conflict 14
+records; the spec now says so. So the `ci` PR lands after core-1 (PR #7 is merged).
 
 ## R-17 Table check
 
-**Decision**: A `control tables: schema check` job on `ubuntu-latest` runs, with the
+**Decision** (spec FR-016): A `control tables: schema check` job on `ubuntu-latest` runs, with the
 preinstalled `python3`, `python3 control_tables/check_tables.py` and
 `python3 -m unittest discover -s control_tables -p 'test_*.py'`. Until tables T1 merges, both
 are guarded by `if [ -f control_tables/check_tables.py ]`.

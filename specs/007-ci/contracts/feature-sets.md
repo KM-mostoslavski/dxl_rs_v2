@@ -53,7 +53,7 @@ Leg check name: `feature set (<where>): <name>`, e.g. `feature set (host): std a
 `feature set (thumbv7em): mock alone`. Test leg check name: `feature tests (host): <name>`, e.g.
 `feature tests (host): ax`. Test legs always enable `std`, so they always install libudev-dev.
 
-## Expected output for `Cargo.toml` on PR #7
+## Expected output for `Cargo.toml` on `main` (PR #7 merged)
 
 | where | sets |
 |---|---|
@@ -63,7 +63,12 @@ Leg check name: `feature set (<where>): <name>`, e.g. `feature set (host): std a
 
 `needs_std` is true for `std alone`, `defaults` and `all features`.
 
-Prototype (scratch copy of PR #7, `-D warnings`): all 7 test sets pass `cargo test --lib`.
+Prototype (scratch copies of PR #7 and `main`, `-D warnings`): all 7 test sets pass
+`cargo test --lib`.
+
+After bus-5 declares `partial-reads = []` and `raw-registers = []`: 13 host, 9 target and 9 test
+sets; both features join `heap_free` and `no_std`, so the no_std job and the std-off
+compile-fail pass build them too. No workflow edit.
 
 ## Reference program (prototyped, not normative)
 

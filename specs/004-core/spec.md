@@ -4,7 +4,8 @@
 
 **Created**: 2026-10-27
 
-**Status**: Draft
+**Status**: Draft, updated 2026-10-28 with the architect's decisions (Clarifications, session
+2026-10-28)
 
 **Input**: User description: "core module of @docs/srs/modules/core.md"
 → SRS module `core` (SRS §9): FR-3.2 (the `Actuator` trait and the `Register` type), FR-3.6,
@@ -18,7 +19,14 @@ FR-3.7, FR-6.4, NFR-3, NFR-4; delivery steps 1 and 5. Paths: `src/lib.rs`, `src/
 
 - Q: Does the `Actuator` trait carry the I/O operations or only describe the model? → A: It only describes the model (registers, scale, cache); I/O lives on `ActuatorRef` in the bus (single responsibility).
 - Q: Where do torque state and fault state live? → A: In one combined 1-byte state enum (torque off, torque on, faulted; faulted always means off), not in the actuator structs, to keep memory low (no padding). Core defines the enum and its rules; the bus stores one byte per actuator slot in its own array beside the actuator list. No fault report is kept per actuator. This replaces the two flags of SRS 3.3.
-- Q: Where do Init failures that are not transport, protocol or status errors go? → A: Option B: a new `Setup` category beside `Transport`, `Protocol`, `Status` and `Validation`. It holds more than `N` actuators found, a declared actuator missing, a declared actuator answering with another model, a target `Id` not on the bus, and `UnsupportedModel { model_number, feature }`, which moves from a top-level `Error` variant into `Setup` (breaking change, fine during alpha).
+- Q: Where do Init failures that are not transport, protocol or status errors go? → A: Option B: a new `Setup` category beside `Transport`, `Protocol`, `Status` and `Validation`. It holds more than `N` actuators found, a declared actuator missing, a declared actuator answering with another model, a target `Id` not on the bus, and `UnsupportedModel { model_number, feature }`, which moves from a top-level `Error` variant into `Setup` (breaking change, fine during alpha). (Its fields grew on 2026-10-28, below.)
+
+### Session 2026-10-28 (architect decisions)
+
+- Q: Do the EEPROM position limits apply in every operating mode? → A: No. Limits follow the operating mode, as the firmware does. Each actuator's cache holds a one-byte limit mode, decided at Setup: position mode checks the goal against the limits (as before); extended position, current-based position and MX multi-turn check the register size only; velocity, current, PWM and wheel mode refuse every goal position with a validation error, since the firmware ignores it. The mode comes from the Operating Mode register (X, MX(2.0), PRO, PRO+, Y), the XL-320 Control Mode register, or the CW/CCW Angle Limits (AX, MX on Protocol 1). A value not listed in the family's e-Manual fails Setup with a typed error naming the actuator and the value. The cache stays 16 bytes.
+- Q: Does a hardware fault reported on a `raw-registers` reply set the faulted state? → A: Yes. Raw replies get the same fault check as every other reply; constitution III has no exception. Core is unchanged: recording a fault already gives faulted from any state.
+- Q: Does a `partial-reads` result fail every slot of a Protocol 2 sync group when one actuator fails? → A: No. Each actuator keeps its own result; only a failed instruction fails every slot of the group. Core is unchanged (bus types).
+- Q: `UnsupportedModel` gains the actuator's `Id` and the protocol beyond `{ model_number, feature }` (cross-module conflict 19). Accepted? → A: Yes ("fine by me"). The setup error is `UnsupportedModel { id, model_number, protocol, feature }`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -58,6 +66,18 @@ recorded limits. No bus involved.
    **Then** a validation error is returned, never a panic.
 6. **Given** an actuator whose limits were never recorded, **When** a goal is checked, **Then**
    a validation error is returned; no default from the control table is used.
+7. **Given** limits 1000..=3000 recorded for actuator 3 and its mode recorded as extended
+   position, **When** a goal converts to tick 5000, **Then** it is accepted (the firmware does
+   not use the limits in that mode).
+8. **Given** actuator 4 whose mode is recorded as velocity (no position), **When** any goal is
+   checked, inside the limits or not, **Then** a validation error names actuator 4 and says it
+   is not in a position mode.
+9. **Given** an X-series Operating Mode value, **When** core maps it, **Then** 3 gives position
+   mode, 4 and 5 give extended (no limit check), 0, 1 and 16 give no position, and any other
+   value gives no mode, which Setup reports as an error naming the actuator and the value.
+10. **Given** an AX actuator whose CW and CCW Angle Limits are both 0, **When** its mode is
+    derived, **Then** it is no position (wheel mode); both 4095 on an MX on Protocol 1 gives
+    extended (multi-turn); any other pair gives position mode.
 
 ---
 
@@ -86,7 +106,8 @@ checks its rules.
 1. **Given** an XM430-W350 and an AX-12A, **When** the same generic function asks each for its
    goal position register, **Then** it gets address 116 (4 bytes) and address 30 (2 bytes).
 2. **Given** a freshly created actuator of any model, **When** its cache is read, **Then** it
-   holds its `Id`, limits are not yet known, and it holds no torque or fault state.
+   holds its `Id`, its limit mode is position mode until Setup records the real one, limits are
+   not yet known, and it holds no torque or fault state.
 3. **Given** a new state value, **When** it is read, **Then** it is torque off.
 4. **Given** a state value of torque on, **When** a fault is recorded, **Then** it becomes
    faulted in one step, and faulted counts as off.
@@ -128,7 +149,12 @@ its message text. No bus involved.
 5. **Given** a declared actuator 5 that does not answer at Init, **When** the error is shown,
    **Then** it is in the setup category and the message names actuator 5.
 6. **Given** a model number the build does not support, **When** the error is matched,
-   **Then** it is found under the setup category, not at the top level.
+   **Then** it is found under the setup category, not at the top level, and its message names
+   the actuator, the model number and the protocol.
+7. **Given** actuator 5 reporting an operating mode value its family does not list, **When**
+   the error is shown, **Then** it is in the setup category and names actuator 5 and the value.
+8. **Given** a goal refused because actuator 4 is not in a position mode, **When** the error is
+   shown, **Then** it is in the validation category and names actuator 4.
 
 ---
 
@@ -163,8 +189,14 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - An angle below zero on a model whose ticks are unsigned with a centered zero (AX: tick 512):
   it gives a tick below the center, and ticks below 0 are refused as not representable.
 - An angle beyond one turn on a model in extended position (multi-turn) mode: the conversion
-  stays linear. Whether the limit check applies in that mode is the `bus` module's decision
-  (see Assumptions).
+  stays linear, and the EEPROM limits are not applied in that mode (decided 2026-10-28). Only the
+  register size check stops a value the register cannot hold.
+- A goal for an actuator in velocity, current, PWM or wheel mode: refused with a validation
+  error naming the actuator, even when its limits are unknown; nothing is sent.
+- An Operating Mode or Control Mode value the family's e-Manual does not list: no mode is
+  guessed; Setup fails with a setup error naming the actuator and the value.
+- The operating mode changes after Setup (a `raw-registers` write to it): the recorded mode
+  stays stale until the next Setup. The `bus` module documents this on its raw write.
 - Limits read from EEPROM with the minimum above the maximum: recording them fails with a
   validation error, so Init fails (FR-2.6).
 - A fault is recorded while the state is already torque off: it becomes faulted, which is
@@ -204,17 +236,17 @@ check they come out unchanged and that out-of-limit ticks are refused.
   raw ticks, as read from the actuator's EEPROM. It MUST expose them both raw and as
   `Position`. Recording a minimum above the maximum MUST fail with a validation error.
 - **FR-006**: The module MUST provide one limit check, used by both the typed and the raw path,
-  that accepts a tick inside the limits (bounds included) and otherwise returns a validation
-  error naming the `Id`, the requested tick and both limits. The check needs no bus and sends
-  nothing.
-- **FR-007**: Until limits are recorded, the limit check MUST return a validation error. Core
-  MUST NOT offer any way to fill limits from control-table defaults.
+  that, in position mode (FR-021), accepts a tick inside the limits (bounds included) and
+  otherwise returns a validation error naming the `Id`, the requested tick and both limits. The
+  check needs no bus and sends nothing.
+- **FR-007**: In position mode, until limits are recorded, the limit check MUST return a
+  validation error. Core MUST NOT offer any way to fill limits from control-table defaults.
 
 **Actuator cache**
 
 - **FR-008**: The module MUST provide the per-actuator cache record, held in each actuator:
-  `Id` and limits. A new cache has no limits. The cache MUST NOT hold torque state or fault
-  state (deviation from SRS 3.3, see Assumptions).
+  `Id`, limit mode (FR-021) and limits. A new cache is in position mode and has no limits. The
+  cache MUST NOT hold torque state or fault state (deviation from SRS 3.3, see Assumptions).
 - **FR-009**: The module MUST provide one actuator state type, one byte in size, with three
   states: torque off, torque on, faulted. Faulted always means off. A new state is torque off.
   Recording a fault MUST give faulted in one step, from any state. Requesting torque on while
@@ -238,9 +270,9 @@ check they come out unchanged and that out-of-limit ticks are refused.
 
 **Register (FR-3.2)**
 
-- **FR-013**: The `Register` type MUST keep each register's address and size, and MUST turn a
-  raw value into the little-endian bytes the register occupies and back. A value that does not
-  fit the register MUST give a validation error, never a truncation.
+- **FR-013**: The `Register` type MUST keep each register's address, size, access and memory
+  area, and MUST turn a raw value into the little-endian bytes the register occupies and back.
+  A value that does not fit the register MUST give a validation error, never a truncation.
 
 **Errors (FR-6.4)**
 
@@ -249,14 +281,17 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - **FR-015**: `Validation` MUST cover, besides the existing invalid `Id`: an actuator whose
   state is torque off or faulted (`ActuatorIsOff`, naming the `Id`); a tick outside the limits (FR-006);
   limits not yet known (FR-007); limits recorded with minimum above maximum (FR-005); a value
-  that is not finite or does not fit its register (FR-003, FR-013); and a buffer whose length
-  does not match the target count (both numbers given).
+  that is not finite or does not fit its register (FR-003, FR-013); a buffer whose length
+  does not match the target count (both numbers given); and a goal for an actuator that is not
+  in a position mode (`NotPositionMode`, naming the `Id`, FR-021).
 - **FR-016**: A new `Setup` category MUST hold every Init failure that is neither a transport,
   protocol nor status error, each as a typed error: more than `N` actuators found (FR-1.2), a
   declared actuator missing, a declared actuator answering with another model (FR-2.5), a
-  target `Id` not on the bus, and an unsupported model (`UnsupportedModel { model_number,
-  feature }`). `UnsupportedModel` moves from a top-level `Error` variant into `Setup`; this is
-  a breaking change, accepted during alpha.
+  target `Id` not on the bus, an unsupported model (`UnsupportedModel { id, model_number,
+  protocol, feature }`), and an operating mode value the family does not list
+  (`UnknownOperatingMode { id, value }`, FR-023). `UnsupportedModel` moves from a top-level
+  `Error` variant into `Setup` and gains `id` and `protocol` (cross-module conflict 19, accepted
+  by the architect on 2026-10-28); this is a breaking change, accepted during alpha.
 - **FR-017**: Every error MUST be copyable and comparable, need no allocation, display a
   message that names the actuator when one is involved, and be open to new variants without
   breaking a user's match.
@@ -270,6 +305,23 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - **FR-020**: Enabling a Cargo feature MUST only add core API, never change an existing item's
   behaviour.
 
+**Limit mode (FR-3.7, architect decision 2026-10-28: limits follow the operating mode)**
+
+- **FR-021**: The cache MUST hold one limit mode per actuator, in the cache's existing padding
+  (the cache does not grow): position mode (goals checked against the limits, FR-006,
+  FR-007), unbounded (extended position, current-based position, MX multi-turn: the limits are
+  not applied; only the register size check of FR-013 stops a value), or no position (velocity,
+  current, PWM, wheel mode: every goal is refused with `NotPositionMode`, whatever the limits).
+  A new cache is in position mode; Setup records the real mode.
+- **FR-022**: Every model MUST name where its mode comes from: the Operating Mode register with
+  its family's value list, the XL-320 Control Mode register, or (AX, MX on Protocol 1) the CW
+  and CCW Angle Limits already read (both 0: no position; both 4095: unbounded; else position).
+  Core MUST map every listed value to a limit mode, each value cited from its family's e-Manual
+  page. The source per model is generated data; the mapping is core code. Both stay
+  crate-internal (not on the public trait, FR-012).
+- **FR-023**: A mode value not listed for the model's family MUST map to no mode. Setup then
+  fails with `UnknownOperatingMode { id, value }`; no mode is guessed (constitution III).
+
 ### Key Entities
 
 - **Position**: an angle in radians; the SI form of every position goal, reading and limit.
@@ -278,14 +330,20 @@ check they come out unchanged and that out-of-limit ticks are refused.
   control table.
 - **Limits**: minimum and maximum position in raw ticks, read from EEPROM at Init. Unknown
   until recorded.
-- **Actuator cache**: per actuator, held in its model type: `Id` and limits. No torque or
-  fault state.
+- **Actuator cache**: per actuator, held in its model type: `Id`, limit mode and limits. No
+  torque or fault state.
+- **Limit mode**: one byte per actuator, in the cache: position (limits checked), unbounded
+  (register size only), or no position (goals refused). Decided at Setup from the operating
+  mode; position until then.
+- **Mode source**: per model, where Setup gets the limit mode: the Operating Mode register and
+  its family's value list, the XL-320 Control Mode register, or the CW/CCW Angle Limits.
 - **Actuator state**: one byte per actuator: torque off, torque on, or faulted (faulted means
   off). Starts torque off; a fault gives faulted in one step; torque on from faulted is refused.
   Defined in core, stored by the `bus` module in an array beside the actuator list.
 - **`Actuator` trait**: what every model shares (identity, the four OQ-2 registers, position
   scale, cache).
-- **Register**: one control-table location: address and size, with byte encoding of a raw value.
+- **Register**: one control-table location: address, size, access and memory area, with byte
+  encoding of a raw value.
 - **Error**: one enum by category (`Transport`, `Protocol`, `Status`, `Validation`, `Setup`);
   `Validation` holds every "rejected before sending" case; `Setup` holds every Init failure
   that is not transport, protocol or status, including unsupported model.
@@ -296,8 +354,9 @@ check they come out unchanged and that out-of-limit ticks are refused.
 
 - **SC-001**: For every compiled-in model, every tick in the model's documented position range
   survives tick → `Position` → tick unchanged (100 % of ticks tested).
-- **SC-002**: For every model, a goal one tick inside each limit is accepted and one tick
-  outside is rejected, and non-finite angles are rejected, with zero panics across the test.
+- **SC-002**: For every model in position mode, a goal one tick inside each limit is accepted
+  and one tick outside is rejected, and non-finite angles are rejected, with zero panics across
+  the test.
 - **SC-003**: One generic test function, written once, passes for 100 % of compiled-in models
   and for the closed enum holding each of them.
 - **SC-004**: Every error named in FR-015 and FR-016 exists, and each has a test that checks
@@ -308,7 +367,10 @@ check they come out unchanged and that out-of-limit ticks are refused.
   dispatch and zero allocation.
 - **SC-007**: Core reaches at least 70 % line coverage without hardware.
 - **SC-008**: The actuator state type is exactly one byte, and the actuator cache record holds
-  no torque or fault field.
+  no torque or fault field and stays 16 bytes with the limit mode in it.
+- **SC-009**: For each family's mode list, all 256 one-byte values are mapped in a test: every
+  value the e-Manual lists gives its documented limit mode, every other value gives no mode
+  (100 %).
 
 ## Assumptions
 
@@ -319,12 +381,11 @@ check they come out unchanged and that out-of-limit ticks are refused.
   and `name`, implemented by every generated model type and by `ActuatorKind`; and a
   crate-private `Register` with address and size, emitted by codegen as associated consts.
   The plan covers only the gaps against FR-001 to FR-020.
-- **Protocol PR #7** (branch `001-protocol-packets`, not on `dev`) adds `Transport`,
-  `Protocol` and `Status` categories to `src/error.rs` (`TransportError`, `ProtocolError`,
-  `StatusError` with `StatusReport`, `P1Flags`, `P2Code`, `is_hardware_fault`) and three
-  validation variants (address out of range, packet too large, data length). This feature
-  reuses that shape. If PR #7 is not merged when core is planned, the plan takes those
-  definitions as they are rather than redefining them.
+- **Protocol PR #7** (merged into `main`) adds `Transport`, `Protocol` and `Status` categories
+  to `src/error.rs` (`TransportError`, `ProtocolError`, `StatusError` with `StatusReport`,
+  `P1Flags`, `P2Code`, `is_hardware_fault`), three validation variants (address out of range,
+  packet too large, data length), and `ProtocolVersion`, already re-exported from the crate
+  root. This feature reuses that shape and does not redefine it.
 - **OQ-2 default**: the trait covers Torque Enable, Goal Position, Present Position and the
   position limits only; anything else is `unimplemented!("SRS OQ-2")` where needed (SRS 5.0).
 - **OQ-3 default**: `Position` is radians in `f32`; raw ticks stay available.
@@ -344,17 +405,19 @@ check they come out unchanged and that out-of-limit ticks are refused.
 - **No fault report is kept.** The status report that caused a fault is returned in the error
   of the call that saw it (FR-6.2); Hardware Error Status can be read again. Neither the state
   nor the cache stores it.
-- **Register** carries address and size only. SRS 3.3 also lists access, range and unit, but
-  the RON tables hold no access field yet, and range and unit are carried by typed values and
-  the position scale. This is a known gap against SRS 3.3, flagged for the architect.
+- **Register** carries address, size, access (R or RW) and memory area (EEPROM or RAM), as
+  every table records them now (architect, 2026-10-27; cross-module conflict 2). Range, default
+  and unit come per model when the model is verified against the e-Manual; until then range and
+  unit are carried by typed values and the position scale.
 - **I/O stays in the `bus` module**: the per-slot state array, torque writes, goal writes, reads, fault detection
   (FR-6.2), `clear_fault` and the "goal while off" guard (FR-3.4) use core types but are not
-  built here. Whether the limit check applies in extended position or wheel mode (bus proposal
-  R3) is decided there.
-- **`ModelNumber`** (FR-2.5) is a `bus` module item; it may land in core if the bus plan asks.
+  built here. Reading the mode register at Setup and recording the mode is the bus's; the limit
+  mode, its check and the value mapping are core's (FR-021 to FR-023, decided 2026-10-28).
+- **`ModelNumber`** (FR-2.5) is a core item in `src/actuator.rs` (cross-module conflict 9): the
+  input type of declared setup and of the generated lookup.
 - **Generated side**: extending the trait needs every generated model type to implement the new
-  items, and `cargo xtask` to emit the scale, the limit register mapping and the cache field.
-  That is `xtask` module work (SRS §9). The core plan must keep the crate building: either a
-  task names `src/models.rs`/`src/models/**` for one regeneration, or the xtask change lands
-  with or before core. This sequencing is a plan decision for the architect.
+  items, and `cargo xtask` to emit the scale, the limit register mapping, the mode source and the
+  cache field. That is `xtask` module work (SRS §9). Sequencing is decided: core-1 (additive, with
+  shims) → xtask X1 → core-2 (trait cutover); core never regenerates (plan, module-interfaces
+  §7).
 - `src/units.rs` and `src/units/**` are new paths in this feature.

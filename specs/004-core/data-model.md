@@ -48,6 +48,10 @@ Operations: `ZERO`, `from_radians`, `radians`, `+`, `-`, `+=`, `-=`, `PartialEq`
 No range clamp: ticks outside `min_raw..=max_raw` convert linearly (multi-turn). Codegen checks
 `max_raw > min_raw`, `max_rad > min_rad`, `zero_raw` in range (module-interfaces §4.3).
 
+Test-only helper (core-2, T044): `#[cfg(test)] pub(crate) const fn raw_range(&self) ->
+core::ops::RangeInclusive<i32>`, giving `min_raw..=max_raw`. The per-model round-trip test
+(SC-001) loops over it. It is not part of the contract and does not exist outside `cargo test`.
+
 ## Limits (crate, core-1, `src/units/position.rs`)
 
 | Field | Type | Rule |
@@ -63,15 +67,69 @@ No constructor from table defaults (FR-007).
 | Field | Type | Rule |
 |---|---|---|
 | `id` | `Id` | Set at construction. Never changes. |
+| `mode` | `LimitMode` | `Bounded` at construction. Setup records the actuator's mode (2026-10-28). |
 | `limits` | `Option<Limits>` | `None` until Setup records the EEPROM values. |
 
-No torque state, no fault state, no fault report (SC-008). 16 bytes.
+No torque state, no fault state, no fault report (SC-008). 16 bytes: `mode` sits in the padding
+after `id` (tested with `size_of`).
 
 | Operation | Result |
 |---|---|
-| `new(id)` | limits `None` |
+| `new(id)` | mode `Bounded`, limits `None` |
 | `record_limits(min, max)` | `Ok(Limits)` and stored, or `InvertedLimits` and unchanged |
-| `check_goal(raw)` | `Ok(raw)` inside `min..=max`; `LimitsUnknown { id }`; `OutOfLimits { id, raw, min, max }` |
+| `record_mode(mode)` | stored; limits unchanged |
+| `check_goal(raw)` | by mode, below |
+
+| `mode` | `check_goal(raw)` |
+|---|---|
+| `Bounded` | `Ok(raw)` inside `min..=max`; `LimitsUnknown { id }`; `OutOfLimits { id, raw, min, max }` |
+| `Unbounded` | `Ok(raw)` for any `raw`, limits known or not. `Register::encode` still refuses a value that does not fit. |
+| `NoPosition` | `NotPositionMode { id }` for any `raw`, limits known or not |
+
+## LimitMode (crate, core-1, `src/actuator.rs`)
+
+`#[repr(u8)]`, `Debug, Clone, Copy, PartialEq, Eq, Default`. Exactly 1 byte. Decided by the
+architect on 2026-10-28: limits follow the operating mode (module-interfaces §2.4b).
+
+| Variant | Value | Meaning |
+|---|---|---|
+| `Bounded` (default) | 0 | Position (joint) mode: the goal must lie in the EEPROM limits read at Setup. |
+| `Unbounded` | 1 | Extended or current-based position, MX multi-turn: the firmware does not use the EEPROM limits; only the register size check applies. |
+| `NoPosition` | 2 | Velocity, current, PWM, AX / XL-320 wheel mode: the firmware ignores Goal Position; a goal is refused. |
+
+`LimitMode::from_angle_limits(limits: Limits) -> LimitMode` (`const fn`, for `AngleLimits`):
+CW = CCW = 0 gives `NoPosition`; CW = CCW = 4095 gives `Unbounded`; any other pair gives
+`Bounded`.
+
+## ModeSource, ModeValues (crate, core-1, `src/actuator.rs`)
+
+Where Setup gets an actuator's `LimitMode`. One value per generated model, in `ModelData::mode`.
+
+| `ModeSource` variant | Models | Setup reads |
+|---|---|---|
+| `OperatingMode { register: Register, values: ModeValues }` | X-series, MX(2.0), PRO, PRO+, Y, RH-P12-RN | the 1-byte Operating Mode register |
+| `ControlMode(Register)` | XL-320 | the 1-byte Control Mode register |
+| `AngleLimits` | AX; MX on Protocol 1 | nothing more: the CW/CCW limits it reads anyway |
+
+| Operation | Result |
+|---|---|
+| `ModeSource::register(self) -> Option<Register>` | the register for `OperatingMode` and `ControlMode`; `None` for `AngleLimits` |
+| `ModeSource::limit_mode(self, value: u8) -> Option<LimitMode>` | `OperatingMode`: `values.limit_mode(value)`; `ControlMode`: 1 → `NoPosition`, 2 → `Bounded`, else `None`; `AngleLimits`: `None` |
+| `ModeValues::limit_mode(self, value: u8) -> Option<LimitMode>` | the table below; any value not listed gives `None` |
+
+`None` means the value is not in the family's e-Manual list. The bus returns
+`SetupError::UnknownOperatingMode { id, value }` for it; core never picks a fallback mode.
+
+| `ModeValues` | 0 | 1 | 3 | 4 | 5 | 16 |
+|---|---|---|---|---|---|---|
+| `X` (X-series, MX(2.0)) | `NoPosition` | `NoPosition` | `Bounded` | `Unbounded` | `Unbounded` | `NoPosition` |
+| `Pro` (PRO (A), PRO+) | `NoPosition` | `NoPosition` | `Bounded` | `Unbounded` | `None` | `NoPosition` |
+| `Y` | `NoPosition` | `NoPosition` | `Bounded` | `None` | `None` | `None` |
+| `RhP12Rn` | `NoPosition` | `None` | `None` | `None` | `Bounded` | `None` |
+
+Every value not in a column is `None` for every variant. e-Manual citations: research R-17.
+`ModeValues` is not in module-interfaces §2.4b: plan deviation D3 (value 5 differs between X
+and RH-P12-RN).
 
 ## TorqueState (public, core-1, `src/actuator.rs`)
 
@@ -90,7 +148,9 @@ Stored by the bus, one per slot, beside the actuator list.
 | `is_faulted()` | false | false | true |
 | `check_goal(id)` | Err `ActuatorIsOff { id }` | `Ok(())` | Err `ActuatorIsOff { id }` |
 
-How the bus applies these rules is in module-interfaces §2.5. Core defines them only.
+How the bus applies these rules is in module-interfaces §2.5. Core defines them only. Decided
+2026-10-28: a hardware fault on a `raw-registers` reply also gives `fault()`; no path is an
+exception (research R-18).
 
 ## Register, Access, Area (crate, `src/register.rs`)
 
@@ -126,10 +186,12 @@ only by X1's generated `reg()` helper (D1).
 | `present_position` | `Register` | Present Position |
 | `limits` | `LimitRegisters` | `MinMax { min, max }` or `CwCcw { cw, ccw }`; `min()` = Min or CW, `max()` = Max or CCW |
 | `hardware_error` | `Option<Register>` | Hardware Error Status, or `None` (AX, Y-series tables have none) |
+| `mode` | `ModeSource` | Where Setup gets the limit mode (2026-10-28, research R-17) |
 | `scale` | `PositionScale` | from `type_info` |
 
-Examples (e-Manual, research R-9): XM430-W350 goal 116/4, present 132/4, limits MinMax 52/48;
-AX-12A goal 30/2, present 36/2, limits CwCcw 6/8.
+Examples (e-Manual, research R-9, R-17): XM430-W350 goal 116/4, present 132/4, limits MinMax
+52/48, mode `OperatingMode { 11/1, X }`; AX-12A goal 30/2, present 36/2, limits CwCcw 6/8, mode
+`AngleLimits`.
 
 ## Describe and Actuator (traits, `src/actuator.rs`)
 
@@ -149,8 +211,8 @@ Error (non_exhaustive, Copy)
 ├── Transport(TransportError)        PR #7
 ├── Protocol(ProtocolError)          PR #7
 ├── Status(StatusError)              PR #7
-├── Validation(ValidationError)      existing + 9 new variants (core-1)
-├── Setup(SetupError)                new (core-1)
+├── Validation(ValidationError)      existing + 10 new variants (core-1)
+├── Setup(SetupError)                new, 6 variants (core-1)
 └── UnsupportedModel {..}            #[doc(hidden)] in core-1, removed in core-2
 ```
 

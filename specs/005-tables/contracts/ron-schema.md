@@ -1,7 +1,7 @@
 # Contract: Control-table and model-map RON format
 
 **Feature**: [../spec.md](../spec.md) | **Model**: [../data-model.md](../data-model.md) |
-**Shared contract**: `specs/ideas/module-interfaces.md` section 3
+**Shared contract**: `specs/ideas/module-interfaces.md` section 3 (and 2.4b for the mode source)
 
 This is the format `xtask` (X1) reads. It makes module-interfaces section 3 exact. Where that
 section leaves a choice to this module (`instructions`), the choice is stated here. The table
@@ -60,8 +60,22 @@ Extra rules for a table that the map lists (contract 4.3, data part; xtask check
 - No two rows map to the same register constant. The constant is the `data_name` split on
   non-alphanumeric characters, upper-cased and joined with `_` (`Secondary(Shadow) ID` →
   `SECONDARY_SHADOW_ID`). Two rows on one address with different constants are fine. [16]
-- Listed under `p1`: no role row above address 255; `P1` in `protocols`. Listed under `p2`: `P2`
-  in `protocols`.
+- Listed under `p1`: no role row and no mode row above address 255 (the mode register counts as
+  a role, contract 4.3) [14]; `P1` in `protocols`. Listed under `p2`: `P2` in `protocols`.
+
+Mode source, for every table, mapped or not (module-interfaces 2.4b; research R-15). X1 derives
+`ModelData::mode` from these rows; there is no field for it:
+- `OperatingMode`: one `Operating Mode` row. `ControlMode`: one `Control Mode` row. `AngleLimits`:
+  neither row, and the `CW Angle Limit` + `CCW Angle Limit` pair.
+- Exactly one source. Two rows of one mode name, both names in one table, an `Operating Mode` row
+  in a table with CW/CCW Angle Limit rows, or neither name without the CW/CCW pair is an error.
+  [17]
+- `Control Mode` is accepted only in `xl320.ron`: X1 decodes its values as XL-320's. (Tables
+  check only, contract 4.3.)
+- The mode row has `size: 1`, `access: RW` and `area: EEPROM`. [11]
+- A table whose page lists `Operating Mode` or `Control Mode` carries that row; a table whose page
+  lists neither carries neither (the MX Protocol 1 tables, AX). The check cannot see the page;
+  `emanual.py diff` and the reviewer do.
 
 Compatibility: today's xtask (`ron` 0.12.2, no `deny_unknown_fields`) reads this format and
 produces identical output (research R-1). X1 may add `deny_unknown_fields` only for the keys
@@ -109,7 +123,7 @@ T2 shape: no `tables`; `also` where the page names more products; MX Protocol 1 
 | `also` | `[STRING, …]` | optional; other products under this number |
 | `p1`, `p2` | `[(from_fw: INT, file: STRING), …]` | at least one present; non-empty; first `from_fw` 0; strictly increasing; `file` exists |
 | `default` | `P2` | present exactly when `p1` and `p2` both exist |
-| `tables` | as `p1` | T1 only: equal to `p2` when both exist, else to the only list. Absent after T2 |
+| `tables` | as `p1` | T1 only: equal to `p2` when both exist, else to the only list. Absent after T2: from T2 on, the check rejects a `tables` key in any model entry |
 | `not_mapped` | `[(file: STRING, reason: NoModelNumber \| SameNumberAs(INT)), …]` | file exists; not mapped; `SameNumberAs(n)` names a key of `models` |
 
 Whole-map rules:

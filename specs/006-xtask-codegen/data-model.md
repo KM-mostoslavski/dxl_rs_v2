@@ -7,7 +7,8 @@ There are three groups:
 - **Input**: what xtask parses. The schema is owned by the tables module (contract §3).
 - **Resolved**: what xtask checks and renders, in memory only.
 - **Generated**: what lands in `src/models*`. The Rust types it uses (`Register`, `ModelData`,
-  `Cache`, …) are owned by core (contract §2). Generated code uses them; it does not define them.
+  `ModeSource`, `Cache`, …) are owned by core (contract §2). Generated code uses them; it does not
+  define them.
 
 ## 1. Input (xtask `codegen/schema.rs`)
 
@@ -106,6 +107,7 @@ Five values. Each maps to its feature name string, used both in `cfg(feature = "
 | `present_position` | row | `Present Position` |
 | `limits` | `MinMax { min, max }` or `CwCcw { cw, ccw }` | `Min/Max Position Limit` or `CW/CCW Angle Limit` |
 | `hardware_error` | `Option<row>` | `Hardware Error Status` |
+| `mode` | `OperatingMode(row)`, `ControlMode(row)` or `AngleLimits` | `Operating Mode`; else `Control Mode`; else none, with the CW/CCW form (research R-17) |
 
 ### LookupList: one per (model number, protocol) with tables
 
@@ -140,12 +142,13 @@ Each failing check adds one `Diagnostic`. The run fails if there is at least one
 | 8 | a mapped table without `source` or `protocols` (parse error), or with empty `protocols` | table | FR-012 |
 | 9 | a list `pX` names a table whose `protocols` lacks `PX` | table, protocol | contract §4.3 |
 | 10 | a missing role, half a limit form, or both limit forms | table, role | FR-011 |
-| 11 | wrong role attributes (Torque Enable and Goal Position not `RW`/`RAM`; Present Position not `R`/`RAM`; a limit not `RW`/`EEPROM`) | table, role, found | contract §4.3 |
+| 11 | wrong role attributes (Torque Enable and Goal Position not `RW`/`RAM`; Present Position not `R`/`RAM`; a limit not `RW`/`EEPROM`; a mode register not 1 byte or not `EEPROM`) | table, role, found | contract §4.3, §2.4b, plan C5 |
 | 12 | Model Number not at (0, 2), or its access/area differ between tables | table | FR-008 |
 | 13 | Firmware Version location differs between variants of one (number, protocol) | map, model number, both tables | FR-008 |
 | 14 | a role above address 255 in a table listed under `p1` | table, role, address | FR-003 |
 | 15 | bad scale: `max_raw ≤ min_raw`, `max_rad ≤ min_rad`, or zero outside `min..=max` | table | contract §4.3 |
 | 16 | duplicate type identifier or register constant; module identifier `tests` or a keyword | table(s), identifier | FR-003, R-16 |
+| 17 | no mode source (neither an `Operating Mode` nor a `Control Mode` row, and no CW/CCW Angle Limit rows); an `Operating Mode` row beside CW/CCW Angle Limits; both an `Operating Mode` and a `Control Mode` row | table, the rows found | FR-019, contract §2.4b, plan C5 |
 
 Warnings, which do not fail the run: a `.ron` file other than `dynamixel.ron` that is neither
 mapped nor in `not_mapped`. One warning per file (FR-004, FR-7.4).
@@ -167,7 +170,7 @@ anything outside `src/models.rs` and `src/models/` (FR-018).
 |---|---|---|---|
 | model type `<Type>` | `src/models/<module>.rs` | `pub`, documented, `cfg(family)` | one field `cache: Cache` |
 | `<Type>::new(id)` | same | crate | `Cache::new(id)` |
-| `<Type>::DATA` | same | crate | `ModelData`: name, number, protocols, roles by constant name, scale |
+| `<Type>::DATA` | same | crate | `ModelData`: name, number, protocols, roles by constant name, mode source, scale |
 | `<Type>::<REGISTER>` | same | crate | one `Register` per row, via `reg(...)` |
 | `impl Describe`, `impl Actuator` | same | (trait) | `&Self::DATA`, `&self.cache`, `&mut self.cache`; `id`/`model_number`/`name` until core-2 |
 | `reg` | `src/models.rs` | private to `models` | `const fn` building `Register` |
@@ -177,6 +180,7 @@ anything outside `src/models.rs` and `src/models/` (FR-018).
 | `impl Describe`, `impl Actuator` for `ActuatorKind` | `src/models.rs` | (trait) | `match *self` |
 | tests | `src/models/tests.rs` | `cfg(test)` | R-11 layer 3 |
 
-Per-actuator runtime state (generated side): only `Cache` (an `Id` and the limits from EEPROM).
-Torque and fault state are not in model types; the bus keeps them in `[TorqueState; N]`
-(contract §2.5, §6).
+Per-actuator runtime state (generated side): only `Cache` (an `Id`, the limit mode and the limits,
+set at Setup). Torque and fault state are not in model types; the bus keeps them in
+`[TorqueState; N]` (contract §2.5, §6). The limit mode is decided by core from the mode source
+and the value the bus reads (contract §2.4b); codegen emits only the source.

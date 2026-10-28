@@ -1,8 +1,11 @@
 # Feature Specification: xtask codegen (generated models, dispatch and family features)
 
-**Feature Branch**: `dev` (spec directory `specs/006-xtask-codegen/`)
+**Feature Branch**: `dev` (spec directory `specs/006-xtask-codegen/`; PR branch `006-xtask-x1`,
+step X1 of `specs/ideas/module-interfaces.md`)
 
 **Created**: 2026-10-27
+
+**Updated**: 2026-10-28 (aligned with module-interfaces.md §8; limits follow the operating mode)
 
 **Status**: Draft
 
@@ -10,6 +13,8 @@
 → SRS module `xtask` (SRS §9): paths `xtask/**`, `src/models.rs`, `src/models/**`. Covers
 FR-7.3, FR-7.5, NFR-7, NFR-8, and the generated side of FR-2.3 and FR-3.2. Delivery step 3.
 No-go: any hand-written file under `src/` other than the `pub mod models;` line in `src/lib.rs`.
+This spec also covers the generated side of FR-2.4 (lookup errors) and, since 2026-10-28, of
+FR-3.7 (mode source, FR-019). The SRS module text does not list them yet.
 
 ## Clarifications
 
@@ -18,6 +23,12 @@ No-go: any hand-written file under `src/` other than the `pub mod models;` line 
 - Q: Do the generated `Actuator` impls perform wire operations or only supply per-model data? → A: Only per-model data; I/O is the bus's job (single responsibility).
 - Q: A mapped table lacks protocol-support data: fail or generate as "protocols unknown"? → A: Codegen fails and names the table; it is a priority issue for the table maintainers.
 - Q: Are the register constants on each model type public API? → A: No, internal; users have get/set methods for that, which makes their lives easier.
+
+### Session 2026-10-28
+
+- Q: Do position limits apply in every operating mode? → A: No. Limits follow the operating mode (architect, 2026-10-28; module-interfaces §2.4b). Codegen emits, per model, where Setup finds the mode: the "Operating Mode" register, XL-320's "Control Mode" register, or the CW/CCW Angle Limits for tables with no mode register (AX, MX on P1). Core owns the types and the mapping of mode values; codegen only emits the per-model source (FR-019).
+- Q: Does the per-actuator cache hold torque and fault state? → A: No. It holds the Id, the limit mode and the limits. The bus keeps torque and fault state as one byte per slot (module-interfaces §2.5, conflict 1).
+- Q: Are register access and MX on Protocol 1 in scope? → A: Yes (module-interfaces §8 conflicts 2, 3). Access and area are generated on every register, and the lookup is per protocol, so the MX P1 tables of tables T2 need no xtask change.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -32,63 +43,73 @@ is in place.
 
 The bus needs the same facts about every actuator, whatever its model: where Torque Enable,
 Goal Position and Present Position live, which registers hold the position limits, whether a
-hardware-fault register exists, how raw position ticks map to radians, and where the
-per-actuator cache is. Codegen produces these facts for every model type, and `ActuatorKind`
-hands them out by `match`. No model needs hand-written code.
+hardware-fault register exists, how raw position ticks map to radians, where the operating mode
+is found (the goal check follows it), and where the per-actuator cache is. Codegen produces these
+facts for every model type, and `ActuatorKind` hands them out by `match`. No model needs
+hand-written code.
 
 **Why this priority**: Delivery step 4 (bus, torque guard, limits at Init) cannot start
 without it. Today the generated `Actuator` impls only give `id`, `model_number` and `name`.
 
 **Independent Test**: For one model per layout tier (e.g. XM430-W350, AX-12A, XL-320,
 PH54-200-S500, YM070-210-M001), build the `ActuatorKind`, ask it for each common register, the
-limit form, the fault register and the position scale, and compare with the model's `.ron`
-table. Write the cache through `ActuatorKind` and read it back.
+limit form, the fault register, the mode source and the position scale, and compare with the
+model's `.ron` table. Write the cache through `ActuatorKind` and read it back.
 
 **Acceptance Scenarios**:
 
 1. **Given** an XM430-W350, **When** the bus asks for its Goal Position register, **Then** it
-   gets address 116, size 4, exactly as the table lists it.
+   gets address 116, size 4, access RW, area RAM, exactly as the table lists it.
 2. **Given** an AX-12A, **When** the bus asks for its position limits, **Then** it gets the CW
    and CCW Angle Limit registers, marked as the CW/CCW form, not the min/max form.
 3. **Given** a model whose table has no hardware-fault register, **When** the bus asks for it,
    **Then** the answer is "none", not a guessed address.
 4. **Given** any model, **When** the bus asks for its position scale, **Then** it gets the
    zero, minimum and maximum raw values and radians from that table's `type_info`.
-5. **Given** an `ActuatorKind` holding any model, **When** the bus updates its cache (torque
-   state, fault state, limits), **Then** the change is visible through the same value, with no
-   copy and no allocation.
+5. **Given** an `ActuatorKind` holding any model, **When** the bus updates its cache (limit
+   mode, limits), **Then** the change is visible through the same value, with no copy and no
+   allocation. The cache holds no torque or fault state.
+6. **Given** an XM430-W350, an XL-320 and an AX-12A, **When** the bus asks where to find the
+   operating mode, **Then** it gets the Operating Mode register (address 11, 1 byte), the
+   Control Mode register (address 11, 1 byte), and "from the CW/CCW Angle Limits" with no
+   register, as the tables list them.
 
 ---
 
 ### User Story 2 - Setup turns any reply into the right model (Priority: P1)
 
-During Setup the bus has a model number and, sometimes, a firmware version. It asks the
-generated code for the matching model type. When a model has firmware-dependent tables, the bus
-also needs to know that it must read Firmware Version, and where that register is, because a
-P1 ping carries neither model number nor firmware. It also needs to know which protocols the
-model speaks, so a model on the wrong bus fails at Init, not in the first Cycle.
+During Setup the bus has a protocol, a model number and, sometimes, a firmware version. It asks
+the generated code for the matching model type. The lookup is per protocol: a model number can
+have its own table list on P1 and on P2, or tables on one protocol only. When a model has
+firmware-dependent tables, the bus also needs to know that it must read Firmware Version, and
+where that register is, because a P1 ping carries neither model number nor firmware. It also
+needs to know which protocols the model speaks, so a model on the wrong bus fails at Init, not
+in the first Cycle.
 
 **Why this priority**: Autoscan and declared setup (FR-2.3, FR-2.5) both depend on it. Errors
 must surface at Init (constitution II).
 
-**Independent Test**: For every model number in `dynamixel.ron`, call the lookup with the
-firmware values around each `from_fw` boundary and check the variant; query the firmware flag,
-the Firmware Version and Model Number locations and the protocol set, and compare with the
-tables. Repeat with each family switched off.
+**Independent Test**: For every (protocol, model number) in `dynamixel.ron`, call the lookup
+with the firmware values around each `from_fw` boundary and check the variant; query the
+firmware flag, the Firmware Version and Model Number locations and the protocol set, and compare
+with the tables. Repeat with each family switched off.
 
 **Acceptance Scenarios**:
 
-1. **Given** model number 1190 (XL330-M077) and firmware 52, **When** the lookup runs,
-   **Then** it returns the `Xl330M077Fw52` variant; with firmware 53 it returns `Xl330M077`.
-2. **Given** model number 1190, **When** the bus asks whether it needs the firmware version,
-   **Then** the answer is yes, with the Firmware Version register's address and size; for
-   model 1020 (one table) the answer is no.
-3. **Given** a build without the `x-series` feature, **When** the lookup runs for 1020,
-   **Then** it returns `UnsupportedModel` naming `x-series`.
-4. **Given** a model number not in `dynamixel.ron`, **When** the lookup runs, **Then** it
-   returns `UnsupportedModel` with no feature.
+1. **Given** model number 1190 (XL330-M077) on Protocol 2 and firmware 52, **When** the lookup
+   runs, **Then** it returns the `Xl330M077Fw52` variant; with firmware 53 it returns
+   `Xl330M077`.
+2. **Given** model number 1190 on Protocol 2, **When** the bus asks whether it needs the
+   firmware version, **Then** the answer is yes, with the Firmware Version register's address
+   and size; for model 1020 (one table) the answer is no.
+3. **Given** a build without the `x-series` feature, **When** the lookup runs for 1020 on
+   Protocol 2, **Then** it returns `UnsupportedModel` naming `x-series`, the actuator's Id and
+   the protocol.
+4. **Given** a model number not in `dynamixel.ron`, **When** the lookup runs on either protocol,
+   **Then** it returns `UnsupportedModel` with no feature.
 5. **Given** a model, **When** the bus asks which protocols it speaks, **Then** it gets the set
-   recorded for it in the control-table data (e.g. AX-12A: P1 only).
+   recorded for it in the control-table data (e.g. AX-12A: P1 only); a lookup on a protocol
+   where the model has no table (XL-320 on P1) returns `UnsupportedModel` with no feature.
 6. **Given** the declared-setup list type (`ModelNumber`), **When** it is passed to the
    lookup, **Then** it is accepted directly, with no conversion by the user.
 
@@ -132,9 +153,10 @@ the file and the problem, and leaves the committed output untouched.
 the new generated data needs.
 
 **Independent Test**: Run codegen on fixture tables: a valid set, then one fixture per
-failure class (missing file, bad `from_fw` order, duplicate names, unknown family, missing
-common register, missing scale or protocol data, Model Number at an unexpected address).
-Check exit status, message and that existing output files are unchanged.
+failure class of FR-003 (e.g. missing file, bad `from_fw` order, duplicate names, unknown
+family, missing `source`/`protocols`/`access`/`area`, missing common register, no mode source,
+bad scale, Model Number at an unexpected address). Check exit status, message and that
+existing output files are unchanged.
 
 **Acceptance Scenarios**:
 
@@ -144,11 +166,13 @@ Check exit status, message and that existing output files are unchanged.
    the diff is confined to that model's file.
 3. **Given** a mapped table that lacks Goal Position, **When** codegen runs, **Then** it fails,
    naming the table and the missing role, and writes nothing.
-4. **Given** tables on disk that no model number points to (today `ax_12_plus`, `ax_18f`,
-   `xw430_t200`), **When** codegen runs, **Then** it succeeds and prints one warning per file.
+4. **Given** a table on disk that no model number points to and that `not_mapped` does not
+   list, **When** codegen runs, **Then** it succeeds and prints one warning per file. A table
+   listed in `not_mapped` (after tables T1: `ax_12_plus`, `ax_18f`, `xw430_t200`) is skipped
+   without a warning.
 5. **Given** generated files, **When** a reviewer opens one, **Then** it is formatted, says it
-   is generated and from which table, and documents the model name, model number and firmware
-   range.
+   is generated and from which table, and documents the model name, model number, firmware
+   range per protocol and whether the table is verified against the e-Manual.
 
 ---
 
@@ -179,7 +203,7 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
 ### Edge Cases
 
 - A table exists but no model number points to it: skipped with a warning naming the file;
-  codegen still succeeds (FR-7.4).
+  codegen still succeeds (FR-7.4). Listed in `not_mapped`: skipped without a warning.
 - A model number points to a missing file, or tables are listed out of `from_fw` order or not
   starting at 0: codegen fails before writing anything.
 - Firmware exactly at a `from_fw` boundary, and firmware 255: the table with the highest
@@ -190,10 +214,15 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   name: codegen fails, naming both.
 - Two names on one address (e.g. Indirect Address 1 and Indirect Address Write, both at 168):
   allowed; they are aliases in the e-Manual table.
-- Position limits in CW/CCW form (AX, XL-320) next to min/max form (X, MX, PRO, Y): both are
-  carried as data, with the form named.
+- Position limits in CW/CCW form (AX, XL-320, MX on P1) next to min/max form (X, MX(2.0), PRO,
+  Y): both are carried as data, with the form named.
 - A model with no hardware-fault register (AX): reported as "none"; fault detection then
   relies on the status packet error byte alone.
+- A table with no mode register (AX, MX on P1): its mode source is "from the CW/CCW Angle
+  Limits". A table with neither a mode register nor CW/CCW Angle Limits, with an Operating Mode
+  register beside CW/CCW Angle Limits, or with both an Operating Mode and a Control Mode
+  register: codegen fails, naming the table. XL-320 (Control Mode and CW/CCW Angle Limits) is
+  the one table with both a mode register and CW/CCW limits.
 - A model claiming P1 support whose common registers sit above address 255 (P1 addresses are
   8-bit): codegen fails, naming the model and register.
 - A table whose Model Number is not at the address and size every other table uses: codegen
@@ -202,8 +231,9 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   `UnsupportedModel`, and the build has no warnings.
 - `rustfmt` is missing or fails: codegen fails with a clear message; the CI diff check
   catches any unformatted output.
-- MX on Protocol 1 firmware (roadmap): one model number may later need tables under both
-  protocols; nothing in the generated lookup may rule that out.
+- One model number with tables under both protocols (X-series today), or under one protocol
+  only (AX and XL-320 today, MX(1.0) on P1 after tables T2): the lookup is per protocol, so each
+  protocol picks from its own table list.
 
 ## Requirements *(mandatory)*
 
@@ -215,42 +245,59 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   time (FR-7.3, constitution V).
 - **FR-002**: Output MUST be deterministic and formatted: the same inputs give byte-identical
   files. Each file states that it is generated and names its source table (NFR-8).
-- **FR-003**: Codegen MUST validate all input before writing any file. On any error it exits
-  non-zero, names the file and the problem, and leaves the committed output unchanged. Error
-  classes: missing or unparsable file; `from_fw` not starting at 0 or not strictly increasing;
-  duplicate type or register identifiers; unknown family; missing common register (FR-011);
-  missing position scale or protocol data (FR-012, FR-013); Model Number location differing
-  between tables (FR-008); a P1-capable model with a common register above address 255.
-- **FR-004**: A table with no model number in `dynamixel.ron` MUST be skipped with one warning
-  per file, and codegen MUST still succeed (FR-7.4).
+- **FR-003**: Codegen MUST validate all input before writing any file, and report every
+  problem in one run. On any error it exits non-zero, names the file and the problem, and
+  leaves the committed output unchanged. Error classes: missing or unparsable file; a malformed
+  model map (`from_fw` not starting at 0 or not strictly increasing, no protocol list or an
+  empty one, `default` missing or not P2 when both lists exist, a file under two model numbers,
+  a file both mapped and in `not_mapped`); unknown family (FR-005); a mapped table without
+  `source` or `protocols`, or a row without `access` or `area` (FR-012); a protocol list naming
+  a table that lacks that protocol; a missing common register, or one with the wrong access or
+  area (FR-011); no mode source, an Operating Mode register beside CW/CCW limits, or two mode
+  registers (FR-019); Model Number or Firmware Version location differing between tables
+  (FR-008); a P1-listed table with a common register above address 255; an inconsistent
+  position scale (FR-013); duplicate type or register identifiers, or a reserved module name.
+- **FR-004**: A table with no model number in `dynamixel.ron` MUST be skipped. It gives one
+  warning per file unless `not_mapped` lists it, and codegen MUST still succeed (FR-7.4).
 - **FR-005**: Every model type and `ActuatorKind` variant MUST be gated by its family feature.
   The family names are exactly `ax`, `mx`, `x-series`, `y-series`, `pro` (FR-7.5); any other
   name in `dynamixel.ron` is a codegen error.
-- **FR-006**: The lookup MUST map a model number and a firmware version to the `ActuatorKind`
-  variant whose table has the highest `from_fw` not above the firmware (FR-2.3). It MUST accept
-  the `ModelNumber` newtype that declared setup uses (FR-2.5).
-- **FR-007**: The lookup MUST return `UnsupportedModel { model_number, feature }`: with the
-  family name when the model is known but its family is off, and with no feature when the model
-  number is unknown (FR-2.4).
-- **FR-008**: For each known model number, the generated code MUST tell whether its table
-  depends on firmware and, if so, where its Firmware Version register is. It MUST also expose
-  the one Model Number location shared by all tables, checked at codegen time.
-- **FR-009**: Each model type MUST hold the per-actuator cache (the core-defined type: torque
-  state, fault state, limits) and give access to it; `ActuatorKind` MUST give the same access
-  by `match`, with no `dyn` and no allocation (NFR-4).
-- **FR-010**: Each model type MUST implement every method of the `Actuator` trait that the core
-  module declares, and `ActuatorKind` MUST implement the trait by delegating with `match`
-  (FR-3.2). The scope of those impls follows SRS OQ-2 meanwhile: torque, goal position,
-  present position and limits, plus today's `id`, `model_number` and `name`.
-  The generated impls only supply per-model data (registers, scale, cache); they perform no
-  I/O, which the bus does through `ActuatorRef` (single responsibility).
+- **FR-006**: The lookup MUST map a protocol (P1 or P2), a model number and a firmware version
+  to the `ActuatorKind` variant from that protocol's table list whose `from_fw` is the highest
+  not above the firmware (FR-2.3). It takes the actuator's `Id` and accepts the `ModelNumber`
+  newtype that declared setup uses (FR-2.5). Nothing in it may rule out one model number
+  having tables under both protocols.
+- **FR-007**: The lookup MUST fail with `SetupError::UnsupportedModel { id, model_number,
+  protocol, feature }`. `feature` is the family name when the model has tables on that
+  protocol but its family is off, and none when the model number is unknown or has no tables on
+  that protocol (FR-2.4; the error moved from `Error` into `SetupError` and gained `id` and
+  `protocol`, module-interfaces §8 conflicts 6 and 19).
+- **FR-008**: For each model number and protocol, the generated code MUST tell, inside the
+  crate, whether its table depends on firmware and, if so, where its Firmware Version register
+  is. It MUST also expose, inside the crate, the one Model Number location shared by all
+  tables, checked at codegen time. None of these is on the public trait (module-interfaces §8
+  conflict 17).
+- **FR-009**: Each model type MUST hold the per-actuator cache (the core-defined type: the
+  Id, the limit mode and the limits, set at Setup) and give crate-internal access to it;
+  `ActuatorKind` MUST give the same access by `match`, with no `dyn` and no allocation (NFR-4).
+  The cache holds no torque or fault state; the bus keeps those, one byte per slot.
+- **FR-010**: Each model type MUST implement the core-defined crate-internal description trait
+  (model data, cache, mutable cache) and the public `Actuator` trait, and `ActuatorKind` MUST
+  implement both by delegating with `match` (FR-3.2). The generated impls only supply
+  per-model data (registers, scale, mode source, cache); they perform no I/O, which the bus does
+  through `ActuatorRef` (single responsibility). The operations of SRS OQ-2 meanwhile (torque,
+  goal position, present position and limits) reach the bus through that data. While core's
+  `Actuator` trait still requires `id`, `model_number` and `name`, the generated impls spell
+  them out.
 - **FR-011**: Each model type MUST expose, as compile-time data, the registers that serve the
   common operations: Torque Enable, Goal Position, Present Position; the position limits in
   min/max or CW/CCW form, with the form named; and the hardware-fault register or "none".
   Roles are matched to table rows by their e-Manual register names; codegen never guesses an
-  address.
+  address. Every register carries the access (R or RW) and area (EEPROM or RAM) its row gives,
+  and codegen fails when a role register has another access or area than its role needs.
 - **FR-012**: Each model type MUST expose the protocols it supports (P1, P2 or both), taken
-  only from explicit control-table data, never inferred from registers or family.
+  only from explicit control-table data, never inferred from registers or family. Every
+  protocol list in `dynamixel.ron` that names a table must be one of that table's protocols.
   When a mapped table lacks protocol-support data, codegen MUST fail and name the table: the
   gap is for the table maintainers to fix first, so this feature depends on a tables PR that
   records the protocol of every mapped table (not on full e-Manual verification).
@@ -265,28 +312,41 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   Register constants on model types stay crate-internal: users go through the get/set
   methods, which is easier for them; model types are public only as `match` targets.
 - **FR-016**: Every public generated item MUST be documented: model name, model number,
-  firmware range and source table (constitution VII).
+  firmware range per protocol, source table, and whether the table is verified against the
+  e-Manual (URL and date) or unverified (FR-7.2, constitution IV and VII).
 - **FR-017**: Codegen MUST be tested on fixture tables for each success path and each error
   class of FR-003, and the crate MUST test the generated lookup and data against the real
   tables. Generated files stay excluded from the coverage gate (NFR-6).
 - **FR-018**: xtask MUST NOT touch any file outside `src/models.rs` and `src/models/`. Other
-  modules' types it relies on (trait, cache, register, newtypes, errors) are consumed, not
-  defined, by generated code.
+  modules' types it relies on (traits, model data, cache, register, mode source, newtypes,
+  errors) are consumed, not defined, by generated code.
+- **FR-019**: Each model type MUST expose, as compile-time data, where Setup finds its
+  operating mode, because limits follow the operating mode (architect, 2026-10-28): the
+  "Operating Mode" register when the table has one (X, MX(2.0), PRO, PRO+, Y), XL-320's
+  "Control Mode" register, or "from the CW/CCW Angle Limits" when the table has no mode
+  register (AX, MX on P1). Codegen MUST fail, naming the table, when a table has neither a
+  mode register nor CW/CCW Angle Limit rows, has an Operating Mode row beside CW/CCW Angle
+  Limits, or has both an Operating Mode and a Control Mode row. A mode register MUST be one
+  byte in EEPROM, as the bus reads it once at Setup. The mode types and the meaning of each
+  mode value belong to core; codegen only emits the per-model source.
 
 ### Key Entities
 
-- **Model map** (`dynamixel.ron`): model number → family, display name, tables by `from_fw`,
-  and (FR-012) supported protocols.
-- **Control table** (`<model>.ron`): register rows (address, size, name) plus `type_info`
-  (position scale) and `unit_info`.
+- **Model map** (`dynamixel.ron`): model number → family, display name, `also` names, and one
+  table list per protocol (`p1`, `p2`) ordered by `from_fw`, with `default: P2` when both
+  exist; plus `not_mapped` tables, each with a reason.
+- **Control table** (`<model>.ron`): `source` (unverified, or e-Manual URL and date),
+  `protocols`, register rows (address, size, name, access, area), `type_info` (position scale)
+  and `unit_info`.
 - **Model type**: one generated public struct per table; holds the cache; carries registers,
-  common-role data, scale and protocols as compile-time data.
+  common-role data, mode source, scale and protocols as compile-time data.
 - **`ActuatorKind`**: generated, closed, `#[non_exhaustive]` enum, one variant per model type,
   family-gated; the type the bus stores.
 - **Common roles**: Torque Enable, Goal Position, Present Position, position limits (min/max or
-  CW/CCW), hardware-fault register (optional).
-- **Model lookup**: model number (+ firmware) → variant or `UnsupportedModel`; plus "needs
-  firmware" and the Firmware Version location per model number.
+  CW/CCW), hardware-fault register (optional), mode source (Operating Mode, Control Mode, or
+  the CW/CCW Angle Limits).
+- **Model lookup**: protocol + model number (+ firmware) → variant or `UnsupportedModel`; plus
+  "needs firmware" and the Firmware Version location per (protocol, model number).
 - **Family feature**: `ax`, `mx`, `x-series`, `y-series`, `pro`; gates model types and variants.
 
 ## Success Criteria *(mandatory)*
@@ -296,13 +356,13 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
 - **SC-001**: Running codegen on unchanged tables leaves zero diff, locally and in the CI
   check, on every run.
 - **SC-002**: For 100 % of mapped tables (69 today), an automated check confirms every common
-  role, the Model Number and Firmware Version locations, the scale and the protocol set match
-  the table data.
-- **SC-003**: All 7 builds (each of 5 families alone, all, none) pass clippy with warnings
-  denied, both std and `no_std` on `thumbv7em-none-eabihf`.
-- **SC-004**: For 100 % of model numbers, a test checks the lookup at firmware 0, at each
-  `from_fw` boundary and its predecessor, and at 255; and with the family off, that the error
-  names that family.
+  role, the mode source, the Model Number and Firmware Version locations, the scale and the
+  protocol set match the table data.
+- **SC-003**: All 14 builds pass clippy with warnings denied: 7 family combinations (each of
+  the 5 families alone, all, none), each built std and `no_std` on `thumbv7em-none-eabihf`.
+- **SC-004**: For 100 % of (protocol, model number) pairs, a test checks the lookup at
+  firmware 0, at each `from_fw` boundary and its predecessor, and at 255; and with the family
+  off, that the error names that family.
 - **SC-005**: Adding a model of an existing family takes a table, a map entry and one codegen
   run, with zero hand-written Rust lines.
 - **SC-006**: Each FR-003 error class has a fixture test showing a non-zero exit, a message
@@ -321,29 +381,35 @@ check outside the crate, a `match` on `ActuatorKind` without a wildcard arm does
   firmware, id)` with `from_fw` guards and `UnsupportedModel` naming the feature; `Actuator`
   impls for `id`, `model_number`, `name` on model types and `ActuatorKind`; public model types;
   crate-internal register constants; fixture tests in xtask; CI diff check.
-- **Gaps this feature covers**: common-role data (FR-011), scale (FR-013), protocol set
-  (FR-012), cache in model types (FR-009), trait impls beyond the three methods (FR-010), the
-  firmware-dependence and Firmware/Model Number locations (FR-008), `ModelNumber` input
-  (FR-006), the unknown-family check (FR-005), validate-before-write for the new checks
-  (FR-003), warning-free builds for every family combination including none (FR-014; today a
-  no-family build warns about an unused `Register::new`), documentation of source table
-  (FR-016).
-- **Dependencies on other modules**: `core` defines the extra `Actuator` trait methods, the
-  cache type, `ModelNumber`, the scale and protocol-set types, and fixes the no-family warning
-  in `register.rs`. `tables` adds protocol-support data and e-Manual verification metadata
-  (FR-7.2, NFR-9) to the map or tables. `ci` runs the per-family builds of SC-003. `bus` does
-  all wire I/O, the torque guard and the limit checks. This feature only generates code against
-  their types.
+- **Gaps this feature covers**: the new table and map schema (`source`, `protocols`, `access`,
+  `area`, per-protocol lists, `not_mapped`); common-role data with access and area (FR-011);
+  mode source (FR-019); scale (FR-013); protocol set (FR-012); cache in model types (FR-009);
+  the description trait and the trait impls (FR-010); the per-protocol lookup returning
+  `SetupError` (FR-006, FR-007); the firmware-dependence and Firmware/Model Number locations
+  (FR-008); `ModelNumber` input (FR-006); the unknown-family check (FR-005);
+  validate-before-write for every check (FR-003); warning-free builds for every family
+  combination including none (FR-014; today a no-family build warns about an unused
+  `Register::new`); documentation of source table and verification state (FR-016).
+- **Dependencies on other modules**: `core` defines `Actuator`, the description trait, the
+  model-data, cache, register, scale, protocol-set and mode-source types, `ModelNumber` and
+  `SetupError`, decides what each mode value means, and fixes the no-family warning in
+  `register.rs` (core-1). `protocol` defines `ProtocolVersion` (PR #7, merged). `tables` adds
+  `source`, `protocols`, `access`/`area` and the per-protocol map (T1), and the MX P1 tables
+  later (T2). `ci` runs the per-family builds of SC-003. `bus` does all wire I/O, the torque
+  guard, the mode read and the limit checks. This feature only generates code against their
+  types.
 - **Meanwhile defaults recorded**: model types public and `ActuatorKind` `#[non_exhaustive]`
-  (OQ-1); trait covers torque, goal position, present position and limits only (OQ-2);
-  `Position` SI form is radians as `f32`, so the scale is generated in radians (OQ-3); family
-  list `ax, mx, x-series, y-series, pro` (FR-7.5); declared setup uses a `ModelNumber`
+  (OQ-1); the operations served are torque, goal position, present position and limits only
+  (OQ-2); `Position` SI form is radians as `f32`, so the scale is generated in radians (OQ-3);
+  family list `ax, mx, x-series, y-series, pro` (FR-7.5); declared setup uses a `ModelNumber`
   newtype (FR-2.5).
 - Role-to-register matching uses e-Manual register names already in the tables (e.g.
-  "Min Position Limit" / "CW Angle Limit"); a family whose fault register has another name
-  (e.g. Y-series "Error Code") is mapped only once the tables module confirms it against the
-  e-Manual; until then it is "none".
-- Register access and value range are not in the tables yet; this feature does not generate
-  them.
-- MX on Protocol 1 firmware tables are out of scope (roadmap); the lookup must not prevent one
-  model number from mapping to tables under both protocols later.
+  "Min Position Limit" / "CW Angle Limit", "Operating Mode" / "Control Mode"); a family whose
+  fault register has another name (e.g. Y-series "Error Code") is mapped only once the tables
+  module confirms it against the e-Manual; until then it is "none".
+- Access and area are in every row after tables T1 and are generated on every register. Value
+  range, default and unit come per model with e-Manual verification; this feature does not
+  generate them yet.
+- MX on Protocol 1 is in scope: the lookup is per protocol now, and tables T2 adds the MX(1.0)
+  P1 tables with no xtask change. They have no mode register, so their mode source is the
+  CW/CCW Angle Limits.

@@ -1,12 +1,13 @@
 # Research: xtask codegen
 
-**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27
+**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27, updated 2026-10-28
 
 Sources: `xtask/src/{main.rs,codegen.rs}` and `src/{lib.rs,actuator.rs,register.rs,error.rs}`
 on `dev`; the generated `src/models*` (69 tables, 63 model numbers); `control_tables/*.ron`; the
-protocol module on `001-protocol-packets` (PR #7); `specs/ideas/module-interfaces.md` (the
-contract, cited as "contract §n"); the SRS patch `/tmp/dxl-srs-bus.patch`; constitution v1.2.0.
-Toolchain: rustc, clippy and rustfmt 1.97.1 / rustfmt 1.9.0, ron 0.12.2.
+protocol module on `main` (PR #7, merged); `specs/ideas/module-interfaces.md` (the contract,
+cited as "contract §n"), including the 2026-10-28 decisions (§2.4b, §9); the SRS patch
+`/tmp/dxl-srs-bus.patch`; constitution v1.3.0. Toolchain: rustc, clippy and rustfmt 1.97.1 /
+rustfmt 1.9.0, ron 0.12.2.
 
 Prototypes ran in scratch crates under `/tmp/claude-1000/xtaskplan/` (never in the repo):
 `ronproto` (input schema) and `genproto` (generated-code shape, lints, feature combinations).
@@ -94,10 +95,12 @@ per problem.
 | Limits, min/max form | `Min Position Limit` + `Max Position Limit` | one complete form |
 | Limits, CW/CCW form | `CW Angle Limit` + `CCW Angle Limit` | one complete form |
 | Hardware fault | `Hardware Error Status` | no; absent gives `None` |
+| Operating mode | `Operating Mode` or `Control Mode` | at most one; neither only with the CW/CCW form (R-17) |
 
 Both limit forms present, or one half of a form, is an error. Role attributes are checked as in
 contract §4.3 (Torque Enable and Goal Position `RW`/`RAM`, Present Position `R`/`RAM`, limits
-`RW`/`EEPROM`). A table listed under `p1` must have every role register at address ≤ 255.
+`RW`/`EEPROM`), plus a mode register 1 byte in `EEPROM` (plan C5). A table listed under `p1`
+must have every role register at address ≤ 255.
 
 **Rationale**: FR-011 and constitution III/IV: no guessed address. A scan of all 72 tables on
 `dev` found every role in every table:
@@ -111,6 +114,7 @@ contract §4.3 (Torque Enable and Goal Position `RW`/`RAM`, Present Position `R`
   elsewhere, and the same within each fw52/fw53 pair.
 - PRO and Y roles sit above 255 (512+), so they can never be listed under `p1`. X roles (≤ 132)
   can.
+- Mode rows: R-17.
 
 **Alternatives considered**: a per-family role table in xtask. Rejected: it duplicates table data
 and is a guess when a family has two layouts.
@@ -149,10 +153,14 @@ printed with Rust's shortest round-trip `f32` form (`{:?}`), e.g. `3.14159265` b
 `3.1415927`. `src/models.rs` carries `clippy::approx_constant` in its module-level `allow`, with a
 reason.
 
-The values are the tables' corrected `type_info` (tables research R-8, data-model): angle =
-(raw − zero) × rad_per_tick. X-series, MX(2.0), 2XL/2XC give `(2048, 0, 4095, -3.1415927,
-3.1400587)` (2π/4096 per tick). AX and XL-320 give `(512, 0, 1023, -2.6205530, 2.6154347)`.
-Tests and examples use these values, never ±π.
+The values are the tables' corrected `type_info` after T1 (tables research R-8, data-model):
+angle = (raw − zero) × rad_per_tick. In table text, X-series, MX(2.0), 2XL/2XC give `(2048, 0,
+4095, -3.1415927, 3.1400587)` (2π/4096 per tick), and AX and XL-320 give `(512, 0, 1023,
+-2.6205530, 2.6154347)`. The generated literal is `{:?}` of the parsed `f32`, not the table
+text: `-3.1415927`, `3.1400588`, `-2.620553` and `2.6154346` (checked with rustc 1.97.1). Tests
+never hard-code a radian literal: they build the expected text with `format!("{:?}", v)` from
+the table or fixture value. Examples in the contracts show the `{:?}` form of T1's values, never
+±π.
 
 **Rationale**: in `genproto`, `PositionScale::new(2048, 0, 4095, -3.14159265, 3.14159265)` failed
 clippy twice. `clippy::approx_constant` is deny-by-default, so it is an error even without
@@ -170,7 +178,8 @@ generated files. The value is table data, not a use of π, so the lint does not 
 
 **Decision**: each model type has `pub(crate) const DATA: ModelData`, and
 `Describe::data` returns `&Self::DATA`. `ModelData` refers to the role constants by name
-(`goal_position: Self::GOAL_POSITION`), so each address appears once per file.
+(`goal_position: Self::GOAL_POSITION`, `mode: ModeSource::OperatingMode(Self::OPERATING_MODE)`),
+so each address appears once per file.
 
 **Rationale**: the prototype compiled `fn data(&self) -> &'static ModelData { &Self::DATA }`.
 Constant promotion applies, since `ModelData` has no `Drop` and no interior mutability. No `static`
@@ -232,9 +241,15 @@ table edit would then change two files.
 ## R-10 Warning-free builds for every family combination
 
 **Decision**: generated code keeps one module-level attribute in `src/models.rs`:
-`#![allow(dead_code, unused_variables, clippy::approx_constant, reason = "...")]`. Imports in
-`models.rs` are limited to items that every combination uses, including none. Model-file imports
-only compile with their family.
+`#![allow(dead_code, unused_variables, clippy::approx_constant, reason = "...")]`. Each generated
+file has its own imports, and only the items it uses in every combination in which it compiles:
+
+- `models.rs`: items used with no family too (`Actuator`, `Cache`, `Describe`, `ModelData`,
+  `ModelNumber`, `SetupError`, `Id`, `ProtocolVersion`, `Access`, `Area`, `Register`). Not
+  `LimitRegisters`, `Protocols`, `ModeSource` or `PositionScale`: only model files use those.
+- A model file compiles only with its family, so it imports what its `DATA` and impls use.
+- `tests.rs`: top-level imports only for the tests that compile in every combination (the
+  unknown-number test). A family-gated test imports what it needs inside its body.
 
 **Rationale**:
 
@@ -255,23 +270,28 @@ the stand-in core types, which core-1 owns (contract conflict 14).
 
 **Decision**: three layers.
 
-1. **xtask unit and fixture tests**: names, parsing, every check of contract §4.3 (one fixture
-   per error class) and rendering snippets. Fixtures are inline RON strings written to a temp
-   directory by the existing `tempdir` helper.
+1. **xtask unit and fixture tests**: names, parsing, every check of data-model §3 (contract
+   §4.3 plus check 17; one fixture per error class) and rendering snippets. Fixtures are inline
+   RON strings written to a temp directory by the existing `tempdir` helper.
 2. **xtask end-to-end tests**: `run` on a temp root. They check that a second run leaves every
    file byte-identical and untouched (mtime), that a failing fixture leaves sentinel files
    untouched, and that a one-row change rewrites one file. Then one test runs on the real
    `control_tables/`. For every mapped table it re-finds each role row with a simple name lookup
    written in the test, and checks the resolver result and the rendered `reg(...)` line against
-   it. That is SC-002. It also checks hand-written acceptance values: XM430-W350 Goal Position
-   116/4, AX-12A CW/CCW at 6/8, XL330-M077 boundary 53, AX-12A hardware fault `None`.
+   it, mode source included. That is SC-002. It also checks hand-written acceptance values:
+   XM430-W350 Goal Position 116/4, AX-12A CW/CCW at 6/8, XL330-M077 boundary 53, AX-12A hardware
+   fault `None`, and the mode sources of XM430-W350 (`Operating Mode` at 11), XL-320 (`Control
+   Mode` at 11), AX-12A (angle limits) and YM070-210-M001 (`Operating Mode` at 33).
 3. **Generated crate tests** in `src/models/tests.rs` (`#[cfg(test)] mod tests;` in
    `models.rs`). For every (protocol, model number) they check the lookup at firmware 0, at each
    `from_fw` and the value before it, and at 255. With the family off (`cfg(not)`), they check
    that the error names the family. They also check `firmware_register`, an unknown number (the
    largest `u16` not in the map), and one round trip per model type: `data()` equals
-   `Type::DATA`, and limits recorded through `ActuatorKind::cache_mut` read back through
-   `cache()`. That is SC-004 and US1 AS5.
+   `Type::DATA`, and a limit mode and limits recorded through `ActuatorKind::cache_mut` read back
+   through `cache()`. Core gives no mode getter, so the test compares `*kind.cache()` with a
+   `Cache` built directly through the same calls. That is SC-004 and US1 AS5. The file names
+   registers and data only by constant (`<Type>::FIRMWARE_VERSION`, `<Type>::DATA`,
+   `MODEL_NUMBER`), never by literal address, so SC-007 holds for it too.
 
 **Rationale**: FR-017 asks for both fixture tests and crate tests against the real tables. No
 hand-written file under `src/` other than the `lib.rs` line is allowed, so crate tests over all
@@ -292,19 +312,23 @@ must be warning-free in each leg.
 
 ## R-12 Ordering with core-1, T1, core-2
 
-**Decision**: X1 assumes core-1, T1 and protocol PR #7 (with contract §5 `ProtocolVersion`) are
-merged. It emits:
+**Decision**: X1 assumes core-1 and T1 are merged. Protocol PR #7 (contract §5,
+`ProtocolVersion`) is merged into `main`. Core-1 brings the §2.4b items too (`ModeSource`,
+`LimitMode`, `ModelData::mode`, `Cache::record_mode`), since contract §7 puts every type of
+section 2 in core-1. X1 emits:
 
 - `impl Describe` on every model type and on `ActuatorKind`.
 - `impl Actuator` that still spells out `id`, `model_number` and `name`. Core-1's trait requires
   them, and core-2's provided methods accept the overrides.
 - `ActuatorKind::new` returning `SetupError` (core-1 adds it).
-- Imports: public items from the crate root as listed in contract §2.8 (`Id`, `ModelNumber`,
-  `PositionScale`, `SetupError`, `Actuator`). `ProtocolVersion` comes from
-  `crate::protocol::ProtocolVersion`, since a root re-export is not guaranteed at X1 time.
-  Crate-internal items come from their owning files:
-  `crate::actuator::{Cache, Describe, LimitRegisters, ModelData, Protocols}` and
-  `crate::register::{Access, Area, Register}`. These match the core plan's path table.
+- `mode: ModeSource::…` in every `DATA` (R-17).
+- Imports: every item by its owning module, as in the core plan's path table
+  (`specs/004-core/contracts/core-api.md`, "Paths for xtask and bus"):
+  `crate::actuator::{Actuator, Cache, Describe, LimitRegisters, ModeSource, ModelData, ModelNumber,
+  Protocols}`, `crate::units::PositionScale`, `crate::error::SetupError`, `crate::id::Id`,
+  `crate::protocol::ProtocolVersion` and `crate::register::{Access, Area, Register}`. No root
+  re-export is used, so generated code does not depend on when core adds them (contract §2.8 is
+  the list at the end of the chain). Each file imports only what it uses (R-10).
 
 **Rationale**: contract §7. Two things the contract leaves open are raised as clarifications in
 plan.md. The core plan (`specs/004-core/plan.md`, D1, D2 and its clarifications) resolves both
@@ -382,3 +406,54 @@ Indirect Address Write).
 
 **Rationale**: the generated `tests` module must not collide with a table named `tests`. No
 table name today is a keyword; the check makes that hold for the future too.
+
+## R-17 Mode source (limits follow the operating mode)
+
+**Decision**: each model's `DATA` gets `mode: ModeSource` (core's type, contract §2.4b, §2.6),
+from rows matched by exact `data_name`:
+
+1. Check 17 fails first if the table has an `Operating Mode` row beside CW/CCW Angle Limit rows,
+   both an `Operating Mode` and a `Control Mode` row, or neither a mode row nor CW/CCW Angle
+   Limit rows.
+2. An `Operating Mode` row gives `ModeSource::OperatingMode(Self::OPERATING_MODE)`.
+3. Else a `Control Mode` row gives `ModeSource::ControlMode(Self::CONTROL_MODE)`.
+4. Else (CW/CCW Angle Limits, no mode row) it is `ModeSource::AngleLimits`.
+
+Check 11 requires a mode register to be 1 byte in `EEPROM` (plan C5). The mode register is
+named by its constant, like the other roles (R-7). A mode row above address 255 in a table listed
+under `p1` fails check 14, like any role.
+
+**Rationale**: contract §2.4b (architect, 2026-10-28): the firmware applies position limits only
+in position mode, so the goal check follows the mode, and Setup must know where to read it. A
+scan of all 72 tables on `dev`:
+
+| Table has | Tables | `mode` |
+|---|---|---|
+| `Operating Mode` (1 byte), min/max limits | 66: X, MX(2.0), PRO, PRO+ at address 11 (54); Y at 33 (12) | `OperatingMode` |
+| `Control Mode` at 11 (1 byte), CW/CCW limits | `xl320` | `ControlMode` |
+| no mode row, CW/CCW limits | `ax_12a`, `ax_12_plus`, `ax_12w`, `ax_18a`, `ax_18f`; MX(1.0) P1 tables after T2 | `AngleLimits` |
+
+No table has an `Operating Mode` row beside CW/CCW limits, and none has both mode rows, so every
+table resolves today and check 17 guards future tables only. Matching by name keeps
+constitution III and IV: the register comes from the table, never from a family rule. What each
+value means (X: 3 → `Bounded`; 4, 5 → `Unbounded`; 0, 1, 16 → `NoPosition`; XL-320: 1 →
+`NoPosition`, 2 → `Bounded`; AX: CW = CCW = 0 → `NoPosition`) is core's, cited from each
+e-Manual page. Codegen emits no value table. The Setup cost (one 1-byte read on P2 and XL-320,
+none on AX and MX P1) is the bus's.
+
+Open for core and the architect: contract §2.4b maps Operating Mode values "per family", but
+`ModeSource::OperatingMode(Register)` carries no family. If core's value lists differ between
+families (PRO, PRO+, Y or RH-P12-RN against X), the contract must change first, and X1 then emits
+the discriminator. X1 can derive one per family from the map's `family` with no new input. It
+cannot split a family (RH-P12-RN is a `pro` table): that needs table data, never a rule keyed on
+a file name (constitution III). Until the contract changes, X1 emits §2.4b's shape.
+
+**Alternatives considered**:
+- Derive the source from the limit form alone (min/max → `Operating Mode`, CW/CCW → angle
+  limits). Rejected: XL-320 has CW/CCW limits and a `Control Mode` register, and a register
+  inferred from the form is a guess.
+- Emit a mode-value table per model from xtask. Rejected: the tables hold no mode values, and
+  the mapping is core's (contract §2.4b).
+- A per-family mode register in xtask. Rejected, as in R-4: it duplicates table data.
+- A warning instead of an error for two mode rows. Rejected: Setup reads exactly one register,
+  so picking one is a guess.

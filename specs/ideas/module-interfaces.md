@@ -1,18 +1,20 @@
 # Cross-module interface contract (core, tables, xtask, bus, ci)
 
-**Status**: Draft contract, 2026-10-27. Input for the five parallel `/speckit-plan` runs of
-specs 003 (bus), 004 (core), 005 (tables), 006 (xtask), 007 (ci).
+**Status**: Contract, 2026-10-27, updated 2026-10-28 (PR #7 merged, architect decisions of
+2026-10-28, plan deviations folded in). The plans of specs 003 (bus), 004 (core), 005 (tables),
+006 (xtask), 007 (ci) follow it.
 
-**Sources**: SRS (with the 2026-10-27 architect answers, patch `/tmp/dxl-srs-bus.patch`),
-constitution v1.2.0, ARCHITECTURE.md, the five specs and their Clarifications,
-`specs/ideas/bus-proposal.md`, the protocol module on branch `001-protocol-packets` (PR #7), and
-`src/` + `xtask/` on `dev`.
+**Sources**: SRS (2026-10-27 architect answers, applied; the 2026-10-28 decisions are not in it
+yet, section 9), constitution v1.3.0, ARCHITECTURE.md, the five specs and plans,
+`specs/ideas/bus-proposal.md`, and `src/` + `xtask/` on `main` (protocol PR #7 merged
+2026-10-28).
 
 **Rule for planners**: every plan uses the names, signatures, file owners and order below. A
 plan that needs something else raises it as a deviation in its Architecture section. It does
 not silently redefine an item another module owns. Signatures are the contract; bodies, private
 helpers, tests and doc text are not. "Crate-internal" means `pub(crate)`, or a `pub` item inside
-a private module (the sealed pattern PR #7 already uses for `Link`, `Pong` and `Exchange`).
+a private or `pub(crate)` module (the sealed pattern PR #7 uses for `Link`, `Pong` and
+`Exchange`).
 
 ---
 
@@ -20,15 +22,16 @@ a private module (the sealed pattern PR #7 already uses for `Link`, `Pong` and `
 
 | File or path | Owner | Others may |
 |---|---|---|
-| `src/lib.rs` | core | Add only their own `mod x;` line and their own `pub use x::…` lines. List them in the PR. One exception: the last of bus-2/3/4 to merge (the one that leaves no protocol item unused) deletes PR #7's `#[cfg_attr(not(test), expect(dead_code, …))]` on `mod protocol;`, listed in that PR (bus plan, deviation 6). |
-| `src/error.rs` | core | Protocol PR #7 already adds `Transport`, `Protocol`, `Status` (accepted). No other module edits it. A missing variant is raised to core. |
+| `src/lib.rs` | core | Add only their own `mod x;` line and their own `pub use x::…` lines. List them in the PR. PR #7's `#[cfg_attr(not(test), expect(dead_code, …))]` on `mod protocol;` stays: the bus never calls `P2::broadcast_ping`, so it stays fulfilled (bus plan, deviation 6, checked on `main` 2026-10-28). An `unfulfilled_lint_expectations` error goes to the protocol owner. |
+| `src/error.rs` | core | PR #7 (merged) added `Transport`, `Protocol`, `Status`. No other module edits it. A missing variant is raised to core. |
 | `src/id.rs`, `src/actuator.rs`, `src/register.rs`, `src/units.rs`, `src/units/**` | core | Nothing. |
-| `src/protocol.rs`, `src/protocol/**` | protocol (PR #7, not one of the five) | Nothing. Needed changes are listed in section 5. |
+| `src/protocol.rs`, `src/protocol/**` | protocol (PR #7, merged; not one of the five) | Nothing. Section 5 is merged. A further need goes to a protocol follow-up PR. |
 | `src/transport.rs`, `src/transport/**` | transport (merged) | Nothing. |
 | `src/models.rs`, `src/models/**` | xtask (generated only) | A tables PR commits the regenerated output when it changes a table. Nobody edits by hand. |
 | `xtask/**` | xtask | Nothing. |
 | `control_tables/**` | tables | Nothing. |
 | `src/bus.rs`, `src/bus/**` | bus | Nothing. |
+| `tests/bus_no_alloc.rs` | bus (bus plan, deviation 3: a counting allocator needs its own test binary) | Nothing. |
 | `.github/workflows/**` (never `ov-*.yml`) | ci | Nothing. |
 | `Cargo.toml` `[package]`, metadata, `[lints]` | ci | Nothing. |
 | `Cargo.toml` `[features]`, `[dependencies]`, `[dev-dependencies]` | The module that first needs the line, in its own PR, flagged as a shared-file touch | ci never adds or removes features or dependencies (ci FR-015). |
@@ -36,8 +39,9 @@ a private module (the sealed pattern PR #7 already uses for `Link`, `Pong` and `
 | `docs/ARCHITECTURE.md` | architect | Nothing. Stale lines are listed in section 9. |
 
 Known `Cargo.toml` touches: `heapless` (bus-1), `partial-reads` and `raw-registers` features
-(bus-5). Protocol PR #7 already adds dev-dependency `proptest`. Family features
-`ax, mx, x-series, y-series, pro` do not change.
+(bus-5). Missing docs are caught by `#![warn(missing_docs)]` in `src/lib.rs` (PR #7) under CI's
+`-D warnings`, so ci adds no `[lints]` table (ci plan). PR #7 (merged) added dev-dependency
+`proptest`. Family features `ax, mx, x-series, y-series, pro` do not change.
 
 ---
 
@@ -101,7 +105,9 @@ impl Register {
   2026-10-27).
 - The decode sign rule covers the four common registers. Every table today has 1- and 2-byte
   positions unsigned and 4-byte positions signed. The tables module confirms this per model on
-  verification. A register with another sign rule needs a contract change.
+  verification. A register with another sign rule needs a contract change. Known case: MX on P1
+  in multi-turn mode, where the 2-byte Goal Position ranges -28 672 to 28 672 on the e-Manual;
+  until T2 checks it, a negative goal is refused with `DoesNotFit` (core research R-17).
 - Registers are built only by X1's private generated helper
   `const fn reg(addr, size, access, area) -> Register`, a struct literal over the four
   `pub(crate)` fields. Core has no 4-argument `new` (core and xtask plans, deviation D1). Rust has
@@ -142,8 +148,10 @@ impl PositionScale {
 ```
 
 Raw ticks are `i32` everywhere (API, cache, buffers). The scale uses only `zero_raw` and the
-slope, so the AX `type_info` quirk (`min_radian: 0.0` with zero at 512) does not shift angles. The
-tables module still checks it against the e-Manual when AX-12 is verified.
+slope. T1 checks `type_info` against each page and fixes it (tables research R-8): AX angles
+moved to the zero, XL-320 range, X/MX(2.0)/2XL slope 2π/4096. After T1, 4096-tick tables read
+`PositionScale::new(2048, 0, 4095, -3.1415927, 3.1400587)` and AX / XL-320
+`(512, 0, 1023, -2.6205530, 2.6154347)`.
 
 ### 2.4 Limits and the per-actuator cache
 
@@ -174,7 +182,8 @@ impl Cache {
 }
 ```
 
-No constructor fills limits from a control table (FR-007 core).
+No constructor fills limits from a control table (FR-007 core). Section 2.4b adds
+`mode: LimitMode` to `Cache` and makes `check_goal` follow it.
 
 ### 2.4b Limit mode (architect, 2026-10-28: limits follow the operating mode)
 
@@ -208,23 +217,64 @@ impl Cache {
     pub(crate) fn check_goal(&self, raw: i32) -> Result<i32, ValidationError>;
 }
 
-// generated per model (xtask), in ModelData
+// src/actuator.rs, crate-internal (core-1). X1 emits one value per model in `ModelData::mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]       // ModelData derives these
 pub(crate) enum ModeSource {
-    /// "Operating Mode" (X, MX(2.0), PRO, PRO+, Y): 1 byte read at Setup.
-    OperatingMode(Register),
+    /// "Operating Mode" (X, MX(2.0), PRO, PRO+, Y, RH-P12-RN): 1 byte read at Setup, decoded
+    /// with the value list of `values` (core research R-17, deviation D3).
+    OperatingMode { register: Register, values: ModeValues },
     /// XL-320 "Control Mode": 1 = wheel → NoPosition, 2 = joint → Bounded.
     ControlMode(Register),
     /// AX, MX on P1: no register; derived from the CW/CCW limits already read.
     /// CW = CCW = 0 → NoPosition (wheel). MX P1 CW = CCW = 4095 → Unbounded (multi-turn).
     AngleLimits,
 }
+impl ModeSource {
+    pub(crate) const fn register(self) -> Option<Register>;               // None for AngleLimits
+    pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode>; // None: not listed
+}
+
+/// Which Operating Mode value list applies. Value 5 is Unbounded on X and Bounded on RH-P12-RN,
+/// so the register alone cannot pick it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModeValues { X, Pro, Y, RhP12Rn }
+impl ModeValues {
+    pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode>;
+}
+impl LimitMode {
+    /// AX and MX on P1, from the limits Setup has just read.
+    pub(crate) const fn from_angle_limits(limits: Limits) -> LimitMode;
+}
 ```
 
-- Operating Mode values → `LimitMode` per family, each cited from that family's e-Manual page
-  (X: 3 → Bounded; 4, 5 → Unbounded; 0, 1, 16 → NoPosition; PRO/PRO+/Y checked by core).
-- An Operating Mode or Control Mode value not listed for the family fails Setup with
-  `SetupError::UnknownOperatingMode { id, value }` (constitution III: no fallback).
-- Setup cost: P2 and XL-320, one 1-byte read per actuator; AX and MX P1, none.
+- Value lists, each cited from the family's e-Manual pages in core research R-17:
+
+  | Source | Bounded | Unbounded | NoPosition |
+  |---|---|---|---|
+  | `X` (X-series but XL-320, MX(2.0)) | 3 | 4, 5 | 0, 1, 16 |
+  | `Pro` (PRO (A), PRO+) | 3 | 4 | 0, 1, 16 |
+  | `Y` | 3 | — | 0, 1 |
+  | `RhP12Rn` | 5 | — | 0 |
+  | `ControlMode` (XL-320) | 2 | — | 1 |
+  | `AngleLimits` (AX, MX P1) | any other pair | CW = CCW = 4095 | CW = CCW = 0 |
+
+- An Operating Mode or Control Mode value not listed for the family (`None`) fails Setup with
+  `SetupError::UnknownOperatingMode { id, value }` (constitution III: no fallback). The bus
+  builds the error; core never guesses a mode.
+- X1 takes the source from the rows, by e-Manual name: an `Operating Mode` row gives
+  `OperatingMode`, a `Control Mode` row gives `ControlMode`, the CW/CCW pair with no mode row
+  gives `AngleLimits`. Each table has exactly one source; codegen and the tables check reject any
+  other mix (§4.3). The register comes from the row, never a per-family constant (address 11 in
+  54 tables, 33 in the 12 Y tables). Today: 66 tables have `Operating Mode` + Min/Max, `xl320`
+  has `Control Mode` + CW/CCW, the 5 AX tables have CW/CCW only; T2's 3 MX P1 tables add CW/CCW
+  only.
+- Open: how X1 picks `values` per table. Core proposes `X` for `x-series` and `mx`, `Y` for
+  `y-series`, `RhP12Rn` for RH-P12-RN and `Pro` for every other `pro` table (core contract,
+  "For X1 (D3)"). Family alone is not enough for RH-P12-RN, so the xtask plan settles how X1
+  tells it apart before X1.
+- Setup cost: one 1-byte read per actuator for `OperatingMode` and `ControlMode` models, on
+  either protocol (X and MX(2.0) on P1 use the same table as on P2); none for `AngleLimits` (AX,
+  MX P1).
 - Memory cost: zero. `mode` fits in the 3 padding bytes after `id` in `Cache`.
 - The mode is read once at Setup. It is EEPROM and changes only with torque off. A
   `raw-registers` write to it leaves the cache stale until the next Setup; documented on
@@ -271,8 +321,9 @@ The bus applies these rules (core only defines them):
   error applies `state.disable()`, never `On` (bus FR-027): `On` and `Off` give `Off`, and a
   `Faulted` slot stays `Faulted`.
 - Any status reply whose `StatusError::is_hardware_fault()` is true gives `fault()`. This
-  applies on every path except `raw-registers`, which returns the error and leaves the state
-  alone (bus spec, proposal Q5).
+  applies on every path, `raw-registers` included: raw replies run `observe` too (architect,
+  2026-10-28; no exception to constitution III). Raw calls still skip the torque guard, the
+  limit check and the cache.
 - `clear()` runs only after the actuator reports no fault (bus FR-028).
 - Setup always starts every slot at `Off` and sends no torque write.
 
@@ -310,7 +361,7 @@ impl Protocols {
     pub(crate) const fn supports(self, protocol: ProtocolVersion) -> bool;
 }
 
-mod sealed {
+pub(crate) mod sealed {
     /// What the bus needs from a model. No I/O.
     pub trait Describe {
         fn data(&self) -> &'static ModelData;
@@ -318,27 +369,40 @@ mod sealed {
         fn cache_mut(&mut self) -> &mut Cache;
     }
 }
+pub(crate) use sealed::Describe;   // X1 and bus name it `crate::actuator::Describe`
 
-/// What every model shares. Sealed: only generated types (and `ActuatorKind`) implement it.
-/// Describes a model; performs no I/O (I/O is on `ActuatorRef`).
+/// What every model shares. Sealed: only generated types, `ActuatorKind` and `ActuatorRef`
+/// implement it. Describes a model; performs no I/O (I/O is on `ActuatorRef`).
+/// core-2: every method is provided (core research R-13).
 pub trait Actuator: sealed::Describe {
     fn id(&self) -> Id { self.cache().id() }
     fn model_number(&self) -> u16 { self.data().model_number }
     fn name(&self) -> &'static str { self.data().name }
     fn position_scale(&self) -> PositionScale { self.data().scale }
     /// `None` until Setup read the limits from EEPROM.
-    fn position_limits_raw(&self) -> Option<core::ops::RangeInclusive<i32>>;
-    fn position_limits(&self) -> Option<core::ops::RangeInclusive<Position>>;
+    fn position_limits_raw(&self) -> Option<core::ops::RangeInclusive<i32>> {
+        self.cache().limits().map(|l| l.min_raw()..=l.max_raw())
+    }
+    fn position_limits(&self) -> Option<core::ops::RangeInclusive<Position>> {
+        let scale = self.position_scale();
+        self.position_limits_raw()
+            .map(|r| scale.to_position(*r.start())..=scale.to_position(*r.end()))
+    }
 }
 ```
 
+- `sealed` is `pub(crate)`, not private, so `crate::models` can name `Describe` to implement it
+  (core research R-12, xtask C1). Outside the crate it cannot be named, which seals `Actuator`
+  (a `compile_fail,E0603` doc example shows it).
+- Every method is provided, so X1's emitted `impl Actuator for X { fn id… fn model_number…
+  fn name… }` stays valid at core-2, and `impl Actuator for X {}` compiles too.
 - The four OQ-2 registers, the fault register and the scale are reachable in-crate only, via
   `Describe`. That keeps register locations crate-internal (xtask clarification) while the bus
   stays generic (core FR-010, FR-011). The public trait exposes no registers (core FR-012).
 - One `match` per `Describe` method on `ActuatorKind`, returning `&'static ModelData`. This is
   static dispatch with no runtime address lookup (NFR-4).
 - Transition: in core-1, `Describe` exists alone and `Actuator` keeps its three required
-  methods. core-2 adds the supertrait and the provided methods (section 7).
+  methods. core-2 adds the supertrait and makes all six methods provided (section 7).
 
 ### 2.7 Errors after the change
 
@@ -368,6 +432,8 @@ pub enum ValidationError {
     DoesNotFit { raw: i64, size: u8 },                    // size 0 = does not fit i32
     BufferLength { targets: usize, got: usize },          // caller buffer or value slice
     DuplicateId { id: Id },                               // multi-actuator targets, declared list
+    /// Goal position is ignored in the actuator's operating mode (§2.4b, `LimitMode::NoPosition`).
+    NotPositionMode { id: Id },
 }
 
 #[non_exhaustive]
@@ -379,6 +445,8 @@ pub enum SetupError {
     Missing { id: Id },                                   // declared, did not answer
     WrongModel { id: Id, declared: u16, found: u16 },
     NotOnBus { id: Id },                                  // target Id the bus does not hold
+    /// Operating Mode / Control Mode value not listed for the family (§2.4b). No fallback.
+    UnknownOperatingMode { id: Id, value: u8 },
 }
 ```
 
@@ -388,20 +456,24 @@ pub enum SetupError {
   multi-actuator targets and for explicit calls that must name an Id.
 - Transition: core-1 adds `Setup` and keeps the old top-level variant, `#[doc(hidden)]`, for the
   generated code. core-2 removes it.
+- `NotPositionMode` and `UnknownOperatingMode` come with §2.4b in core-1. Like every other
+  validation refusal, `NotPositionMode` sends zero bytes.
 
 ### 2.8 Public re-exports at the end of the chain
 
-`dxl_rs_v2::{Actuator, ActuatorKind, ActuatorRef, Bus, Config, SerialBus (std), Clock,
-DefaultClock, NoClock, StdClock (std), Error, TransportError, ProtocolError, StatusError,
-StatusReport, P1Flag, P1Flags, P2Code, ValidationError, SetupError, Id, ModelNumber, Position,
-PositionScale, TorqueState, Protocol, ProtocolVersion, P1, P2, Transport, SerialTransport (std),
-MockTransport, MockTime, Mismatch (mock), embedded_io, serialport (std), models}`.
+`dxl_rs_v2::{Actuator, ActuatorKind, ActuatorRef, Bus, Config, IdSet, field, SerialBus (std),
+DynBus (std), Clock, DefaultClock, NoClock, StdClock (std), Error, TransportError, ProtocolError,
+StatusError, StatusReport, P1Flag, P1Flags, P2Code, ValidationError, SetupError, Id, ModelNumber,
+Position, PositionScale, TorqueState, Protocol, ProtocolVersion, P1, P2, Transport,
+SerialTransport (std), MockTransport, MockTime, Mismatch (mock), embedded_io, serialport (std),
+models}`.
 
-`ProtocolVersion` is re-exported from the root (`pub use protocol::ProtocolVersion;`). core-1
-adds that line if PR #7 does not.
+`IdSet`, `field` and `DynBus` are bus additions (bus plan, deviation 4). `ProtocolVersion` is
+already re-exported from the root by PR #7 (`pub use protocol::{Clock, P1, P2, Protocol,
+ProtocolVersion};`), so core-1 does not add it.
 
-`Register`, `Access`, `Area`, `Limits`, `Cache`, `ModelData`, `LimitRegisters`, `Protocols` and
-`Describe` are never re-exported.
+`Register`, `Access`, `Area`, `Limits`, `Cache`, `LimitMode`, `ModelData`, `ModeSource`,
+`ModeValues`, `LimitRegisters`, `Protocols` and `Describe` are never re-exported.
 
 ---
 
@@ -411,13 +483,14 @@ adds that line if PR #7 does not.
 
 ```ron
 (
-    source: Unverified,
-    // or: source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/", verified: "2026-10-28"),
+    source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/", verified: "2026-10-28"),
+    // or: source: Unverified, and then no `instructions`
     protocols: [P1],                 // [P1], [P2] or [P1, P2]: protocols the e-Manual serves this layout on
-    instructions: [                  // optional; verified tables only; codegen ignores it for now
-        (protocol: P1, list: [Ping, Read, Write, RegWrite, Action, FactoryReset, Reboot, SyncWrite]),
+    instructions: [                  // verified tables only; codegen ignores it for now
+        (protocol: P1, source: "https://emanual.robotis.com/docs/en/dxl/protocol1/",
+         list: [Ping, Read, Write, RegWrite, Action, FactoryReset, SyncWrite]),   // AX: no Reboot, no Bulk Read
     ],
-    type_info: { /* unchanged: position scale */ },
+    type_info: { /* shape unchanged: position scale; values checked in T1 (§2.3) */ },
     unit_info: [ /* unchanged */ ],
     control_table: [
         { address: 24, size: 1, data_name: "Torque Enable", access: RW, area: RAM },
@@ -430,7 +503,11 @@ adds that line if PR #7 does not.
   every row. All come from the e-Manual.
 - `source` follows the SRS "Meanwhile" shape `(url, verified)`, tagged so "unverified" is
   explicit. One flag per table.
-- `instructions` is free to change shape until xtask reads it.
+- `instructions` is free to change shape until xtask reads it. Tables uses
+  `(protocol, source, list, from_fw?)`: `source` is the protocol page, since model pages list no
+  instructions, and `from_fw` carries firmware conditions such as P1 Reboot on MX-28/64/106
+  from V40 (tables research R-5, contracts/ron-schema.md). Verified tables have at least one
+  entry per protocol in `protocols`; unverified tables have none.
 - A table keeps brace style. xtask's brace-to-paren rewrite stays valid: no real maps appear in
   a table.
 - If the e-Manual shows an access other than R or RW (e.g. W), the tables plan raises it before
@@ -452,11 +529,15 @@ adds that line if PR #7 does not.
                p2: [(from_fw: 0, file: "xl330_m077_fw52"), (from_fw: 53, file: "xl330_m077")], ...),
     },
     not_mapped: [
-        (file: "xw430_t200", reason: SameNumberAs(1270)),
         (file: "ax_12_plus", reason: SameNumberAs(12)),
+        (file: "ax_18f", reason: SameNumberAs(18)),
+        (file: "xw430_t200", reason: SameNumberAs(1270)),
     ],
 )
 ```
+
+Shown in the T2 shape (no legacy `tables`, `also` present). T1 writes the three `not_mapped`
+records; T2 adds `also` on 12, 18 and 1270.
 
 - Per model number: `p1` and/or `p2`, each a firmware-ordered list (from_fw starts at 0 and
   strictly increases). At least one list is present.
@@ -466,6 +547,9 @@ adds that line if PR #7 does not.
   two model numbers.
 - `also`: other product names sold under the same number (FR-012 tables). Docs only.
 - `not_mapped` reasons: `NoModelNumber` or `SameNumberAs(u16)`. "Unverified" is never a reason.
+  `SameNumberAs(n)` names a key of `models`.
+- XW430-T200 and XW430-T333 both give Model Number 1270 on the e-Manual (pages re-checked
+  2026-10-28). AX-18F is on the AX-18A page, number 18. AX-12+ is on the AX-12A page, number 12.
 - Transition: T1 adds `p1`/`p2`/`default`/`not_mapped` and keeps the legacy `tables:` field (equal
   to the default protocol's list) so today's xtask still reads the map. X1 reads only the new
   fields and ignores `tables`. T2 deletes `tables`.
@@ -486,21 +570,28 @@ pub struct Xm430W350 { cache: Cache }
 
 impl Xm430W350 {
     pub(crate) const fn new(id: Id) -> Self;
-    pub(crate) const DATA: ModelData = ModelData { /* name, number, protocols, roles, scale */ };
-    pub(crate) const TORQUE_ENABLE: Register = reg(64, 1, Access::RW, Area::Ram);
+    pub(crate) const DATA: ModelData = ModelData {
+        /* name, number, protocols, roles, hardware_error, */
+        mode: ModeSource::OperatingMode { register: Self::OPERATING_MODE, values: ModeValues::X }, // §2.4b
+        /* scale */
+    };
+    pub(crate) const TORQUE_ENABLE: Register = super::reg(64, 1, Access::RW, Area::Ram);
     // ... one crate-internal const per row, as today
 }
-impl sealed::Describe for Xm430W350 {
+impl Describe for Xm430W350 {        // crate::actuator::Describe
     fn data(&self) -> &'static ModelData { &Self::DATA }
     fn cache(&self) -> &Cache { &self.cache }
     fn cache_mut(&mut self) -> &mut Cache { &mut self.cache }
 }
-impl Actuator for Xm430W350 {}   // X1 still emits id/model_number/name until core-2 lands
+impl Actuator for Xm430W350 {
+    // X1 emits id, model_number, name (core-1 requires them). After core-2 they are valid
+    // overrides; the optional X2 regeneration drops them.
+}
 ```
 
 Public: the model type (as a documented `match` target). Crate-internal: `new`, `DATA`, every
 register const, the `cache` field. `reg()` is private to `models` (model files call
-`super::reg`).
+`super::reg`). Exact shape: specs/006-xtask-codegen/contracts/generated-api.md.
 
 ### 4.2 `src/models.rs`
 
@@ -519,6 +610,7 @@ pub enum ActuatorKind {
 }
 
 /// Model Number location, the same in every table (codegen checks it). Read on P1 Setup.
+/// Access and area come from the tables; codegen checks they agree (xtask C4).
 pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);
 
 impl ActuatorKind {
@@ -527,12 +619,16 @@ impl ActuatorKind {
     pub(crate) fn new(protocol: ProtocolVersion, model_number: ModelNumber, firmware: u8, id: Id)
         -> Result<Self, SetupError>;
     /// `Some` when the table depends on firmware on this protocol: the Firmware Version register
-    /// to read first (the same location in every variant; codegen checks it).
+    /// to read first (the same location in every variant; codegen checks it). `None` otherwise,
+    /// including when the model's family is off (xtask C3).
     pub(crate) fn firmware_register(protocol: ProtocolVersion, model_number: ModelNumber)
         -> Option<Register>;
 }
-impl sealed::Describe for ActuatorKind { /* match over variants */ }
-impl Actuator for ActuatorKind {}
+impl Describe for ActuatorKind { /* match over variants */ }
+impl Actuator for ActuatorKind { /* id, model_number, name emitted, as in §4.1 */ }
+
+#[cfg(test)]
+mod tests;   // generated src/models/tests.rs: lookup at every boundary, family off, cache
 ```
 
 Lookup results:
@@ -550,34 +646,40 @@ warnings.
 
 On top of today's checks (missing file, `from_fw` order, duplicate identifiers, unmapped warning):
 
-- Unknown family. Missing `source` or `protocols` on a mapped table (fails and names the table).
-  Missing `access`/`area` on any row.
-- A map list (`p1`/`p2`) naming a table whose `protocols` lacks that protocol. `default` missing
-  or not `P2` when both lists exist. A file under two model numbers. A file both mapped and in
-  `not_mapped`. A `not_mapped` entry naming no file.
+- Unknown family. Missing `source` or `protocols` on a mapped table (fails and names the table),
+  or empty `protocols`. Missing `access`/`area` on any row.
+- No `p1` and no `p2`, or an empty list. A map list (`p1`/`p2`) naming a table whose `protocols`
+  lacks that protocol. `default` missing or not `P2` when both lists exist, or present with one
+  list. A file under two model numbers. A file both mapped and in `not_mapped`. A `not_mapped`
+  entry naming no file.
 - Missing role: Torque Enable, Goal Position, Present Position, and one complete limit pair
-  (Min/Max Position Limit, or CW/CCW Angle Limit). Roles match e-Manual names only; codegen never
-  guesses an address.
+  (Min/Max Position Limit, or CW/CCW Angle Limit; half a pair or both pairs fail). Roles match
+  e-Manual names only; codegen never guesses an address.
+- Mode source (§2.4b), exactly one per table (xtask C5, check 17; tables plan, deviation 4): no
+  source, an `Operating Mode` row beside the CW/CCW pair, or both mode rows fail. A `Control
+  Mode` row outside `xl320` fails the tables check. The mode register counts as a role for the P1
+  address check.
 - Role attributes: Torque Enable and Goal Position RW and RAM; Present Position R and RAM; limit
-  registers RW and EEPROM.
-- Model Number not at (0, 2). Firmware Version at different locations across the variants of one
-  (model number, protocol).
+  registers RW and EEPROM; mode register 1 byte, RW, EEPROM.
+- Model Number not at (0, 2), or its access/area differ between tables. Firmware Version at
+  different locations across the variants of one (model number, protocol).
 - A table listed under `p1` with a role register above address 255.
 - Scale: `max_raw > min_raw`, `max_rad > min_rad`, `zero_raw` in `min_raw..=max_raw`.
+- Duplicate type identifier or register constant. A module identifier `tests` or a Rust keyword.
 
-Unmapped files without a `not_mapped` record still only warn (FR-7.4). The tables check reports
-them as errors.
+The numbered list is xtask data-model §3: 16 checks, plus check 17 (mode source) from the
+xtask plan, C5. Unmapped files without a `not_mapped` record still only warn (FR-7.4). The tables check reports
+them as errors, and repeats every data-only check above (tables plan, deviation 4).
 
 ---
 
-## 5. Protocol module changes the bus needs (PR #7 or a protocol follow-up)
+## 5. Protocol items the bus uses (done: merged in PR #7, 2026-10-28)
 
-Not one of the five modules. The preferred route is to fold these into PR #7 before merge.
-`ProtocolVersion` is needed before core-1. The hooks are needed before bus autoscan and the Easy
-tier reads.
+Not one of the five modules. Everything below is on `main` (commits `e5f460c`, `b2c9a9e`). The
+signatures are the merged code. A further need goes to a protocol follow-up PR.
 
 ```rust
-// src/protocol.rs
+// src/protocol.rs. Root re-export: pub use protocol::{Clock, P1, P2, Protocol, ProtocolVersion};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProtocolVersion { P1, P2 }           // Display: "Protocol 1" / "Protocol 2"
 
@@ -586,25 +688,56 @@ pub trait Protocol: sealed::Sealed + Exchange {
     const VERSION: ProtocolVersion;
 }
 
+// `Link`, `Pong` and `Exchange` are `pub` in the private `protocol` module: crate-internal.
+pub struct Link<'a, T, C> {
+    pub(crate) transport: &'a mut T,
+    pub(crate) clock: &'a mut C,
+    pub(crate) timeout: Duration,             // wait for each expected reply
+}
+
+pub struct Pong {
+    pub(crate) id: Id,
+    pub(crate) model_number: Option<u16>,     // P2 only
+    pub(crate) firmware: Option<u8>,          // P2 only
+    pub(crate) fault: Option<StatusReport>,   // scan / broadcast ping only; unicast ping gives Err(Status)
+}
+
 pub trait Exchange: sealed::Sealed {
-    // existing: ping, read, write, sync_write, report
-    /// Finds every actuator at this baud. P2: one broadcast ping. P1: ping 0..=252 in turn, each
-    /// bounded by `link.timeout` (the bus passes its scan wait). A reply with an error byte is a
-    /// `Pong` with `fault` set. A corrupted reply is passed on as `Err`, not skipped.
-    /// Returns `Err` only when the transport fails.
+    // also: ping, read, write, sync_write, report
+    /// Finds every actuator at this baud and calls `on_reply` for each answer.
+    /// P2: one broadcast Ping, replies collected for one `link.timeout`.
+    /// P1: pings 0..=252 in turn, each bounded by `link.timeout`; a silent Id is skipped. A reply
+    /// with its error byte set becomes `Ok(Pong { fault: Some(report), .. })`.
+    /// A corrupted reply (checksum or CRC, malformed, wrong Id or length) is passed on as `Err`.
+    /// Returns `Err` only on `Transport(Io)`.
     fn scan<T: Transport, C: Clock, F>(link: &mut Link<'_, T, C>, on_reply: F) -> Result<(), Error>
     where F: FnMut(Result<Pong, Error>);
 
-    /// Reads `size` bytes at `addr` from each Id. P2: one Sync Read (today's `P2::sync_read`).
-    /// P1: one Read per Id. `on_reply` is called once per Id, in order.
+    /// Reads `size` bytes at `addr` from every Id in `ids`. P2: one Sync Read (`P2::sync_read`).
+    /// P1: one Read per Id, in order, each bounded by `link.timeout`. `on_reply` is called exactly
+    /// once per Id, in order, with its data or its own error (timeout, status, corrupted reply).
+    /// Checked first, before any byte, returning `Err(Validation)`: P1 `addr` ≤ 255
+    /// (`AddressOutOfRange`), `size` ≤ 253 on P1 / 65531 on P2 (`PacketTooLarge`), `scratch` ≥
+    /// `size` (`DataLength`). After that, only `Transport(Io)` returns `Err` from the function.
     fn read_many<T: Transport, C: Clock, I, F>(
         link: &mut Link<'_, T, C>, addr: u16, size: u16, ids: I, scratch: &mut [u8], on_reply: F,
     ) -> Result<(), Error>
     where I: Iterator<Item = Id> + Clone, F: FnMut(Id, Result<&[u8], Error>);
 }
+
+// src/protocol/clock.rs
+#[diagnostic::on_unimplemented(message = "`{Self}` is not a dxl_rs_v2 clock", note = "…")]
+pub trait Clock { fn now_us(&mut self) -> u64; }   // any FnMut() -> u64; StdClock under std
 ```
 
-`P2::sync_read` stays as the explicit-tier entry (`impl Bus<P2, …>` only).
+- `P2::sync_read` (`pub(crate)`, inherent) stays the explicit-tier entry (`impl Bus<P2, …>` only).
+- `P2::broadcast_ping` (`pub(crate)`) is `scan` with corrupted replies dropped. Setup uses `scan`
+  (conflict 16), so the bus never calls `broadcast_ping`, and it keeps PR #7's
+  `expect(dead_code)` on `mod protocol;` fulfilled (section 1).
+- On a P2 scan, a reply with its error byte set but not 3 data bytes is `Err(Status)`, and one
+  from an invalid Id is `Err(Protocol(Malformed))`.
+- `on_unimplemented` makes a no_std `Bus::new` without a named clock report "not a dxl_rs_v2
+  clock" instead of a bare E0277 (conflict 15).
 
 ---
 
@@ -617,7 +750,10 @@ pub trait Exchange: sealed::Sealed {
 /// Always present. Implements no `Clock`, so a no_std bus must name its clock.
 pub enum NoClock {}
 
-pub struct Bus<P: Protocol, T: Transport, C: Clock = DefaultClock, const N: usize = 32> {
+/// No `C: Clock` bound on the struct: rustc checks a default against the bound, and `NoClock`
+/// is not a `Clock`, so every no_std build would fail (bus research R-2). `C: Clock` is on
+/// every impl.
+pub struct Bus<P: Protocol, T: Transport, C = DefaultClock, const N: usize = 32> {
     transport: T,
     clock: C,
     config: Config,
@@ -635,16 +771,21 @@ impl Config {
     pub const fn scan_timeout(self, t: Duration) -> Self;
     pub const fn retries(self, n: u8) -> Self;
 }
+impl Default for Config;   // = new()
 
 impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
-    pub fn new(transport: T, clock: C, config: Config) -> Self;            // no I/O
+    pub fn new(transport: T, clock: C, config: Config) -> Self;            // no I/O; N > 253 fails to compile
     pub fn into_parts(self) -> (T, C);
+    pub fn config(&self) -> Config;
     pub fn autoscan(&mut self) -> Result<&[ActuatorKind], Error>;          // no_std too
     pub fn declare<I: IntoIterator<Item = (Id, ModelNumber)>>(&mut self, list: I)
         -> Result<&[ActuatorKind], Error>;
     pub fn actuators(&self) -> &[ActuatorKind];
+    pub fn ids(&self) -> IdSet;
     pub fn actuator(&mut self, id: Id) -> Option<ActuatorRef<'_, P, T, C>>;
-    // Easy and Explicit tiers: names and buffers per the bus plan (FR-4)
+    pub fn torque_state(&self, id: Id) -> Option<TorqueState>;
+    pub fn torque_states(&self) -> &[TorqueState];
+    // Easy and Explicit tiers: names and buffers per the bus plan (FR-4, contracts/bus-api.md)
 }
 impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> { /* sync_read */ }
 
@@ -668,6 +809,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     pub fn disable_torque(&mut self) -> Result<(), Error>;
     pub fn set_goal_position(&mut self, goal: Position) -> Result<(), Error>;
     pub fn set_goal_position_raw(&mut self, raw: i32) -> Result<(), Error>;
+    pub fn goal_position(&mut self) -> Result<Position, Error>;      // explicit read-back (FR-3.8)
+    pub fn goal_position_raw(&mut self) -> Result<i32, Error>;
     pub fn present_position(&mut self) -> Result<Position, Error>;
     pub fn present_position_raw(&mut self) -> Result<i32, Error>;
     pub fn clear_fault(&mut self) -> Result<(), Error>;
@@ -678,34 +821,50 @@ impl<P: Protocol, T: Transport, C: Clock> Actuator for ActuatorRef<'_, P, T, C> 
 How the bus uses lower layers:
 
 - Only `src/bus/wire.rs` builds a `protocol::Link { transport, clock, timeout }` and calls
-  `Exchange`. It holds the retry loop: unicast only, on timeout or protocol corruption only, never
-  on `Status`, never on broadcast.
-- Setup per actuator:
-  1. Ping (P2) or scan reply.
-  2. On P1, read `models::MODEL_NUMBER`.
+  `Exchange`. Unicast calls use `config.timeout`, `scan` uses `config.scan_timeout`. It holds the
+  retry loop: unicast only, on timeout or protocol corruption only, never on `Status`, never on
+  `sync_write`, `scan` or `read_many` (bus research R-5).
+- Setup (bus research R-6). `declare` checks the whole list before any byte: overflow
+  (`TooManyActuators`), a repeated Id (`DuplicateId`), and `ActuatorKind::new(P::VERSION, n, 0,
+  id)` for each entry (`UnsupportedModel`). Then per actuator:
+  1. Ping (`declare`; a timeout gives `Missing`) or scan reply (`autoscan`; an `Err` reply, or a
+     `Pong` with `fault` set, fails Setup).
+  2. Model number: from the `Pong` on P2; on P1, read `models::MODEL_NUMBER`. A declared model
+     that differs gives `WrongModel`.
   3. If `ActuatorKind::firmware_register(P::VERSION, n)` is `Some`, read it (on P2 the `Pong`
      already carries the firmware).
   4. Call `ActuatorKind::new(P::VERSION, n, fw, id)`.
   5. Read the limits via `data().limits.min()/max()` and call `cache_mut().record_limits(..)`.
-  6. Set the slot to `TorqueState::Off`.
+  6. Mode (§2.4b): if `data().mode.register()` is `Some`, read that 1 byte and map it with
+     `mode.limit_mode(value)`; `None` gives `UnknownOperatingMode { id, value }`. For
+     `AngleLimits`, `LimitMode::from_angle_limits` on the limits of step 5, no read. Then
+     `cache_mut().record_mode(..)`.
+  7. Set the slot to `TorqueState::Off`.
 
   Any error leaves the list empty. A fault reported at Setup fails Setup.
-- Goal path: `state.check_goal(id)?`, then `scale.to_raw`, then `cache.check_goal(raw)?`, then
-  `Register::encode`, then send. Every refusal sends zero bytes.
-- The `alloc` variant (`DynBus`, FR-1.3) is bus-internal design. It must not change `Bus`.
+- Goal path: `state.check_goal(id)?`, then `scale.to_raw`, then `cache.check_goal(raw)?`
+  (mode-aware: `NotPositionMode`, `LimitsUnknown`, `OutOfLimits`), then `Register::encode`, then
+  send. Every refusal sends zero bytes.
+- Every status reply runs `observe`, `raw-registers` included (§2.5).
+- `partial-reads` (bus-5): inside a P2 sync group each actuator keeps its own result; only a
+  failed instruction (`read_many` returns `Err`) fails every slot of the group (architect,
+  2026-10-28).
+- `DynBus` (`std`, FR-1.3) is bus-internal design. It must not change `Bus`.
 
 ---
 
 ## 7. Delivery order
 
 ```
-protocol PR #7 (+ section 5)
+protocol PR #7 (with section 5) ── merged 2026-10-28
    │
    ├── core-1 ─────────┐        tables T1  (no dependency; parallel with core-1)
    │                   ▼            │
    │               xtask X1 ◄───────┘
    │                   │
    │                core-2 ──────────► bus-1 … bus-6
+   │                   │
+   │                   ├─(optional)──► xtask X2
    │                   │
    │                   └─(after X1)──► tables T2   (parallel with core-2 and bus)
    │
@@ -714,17 +873,25 @@ protocol PR #7 (+ section 5)
 
 | Step | Module | Content | Needs |
 |---|---|---|---|
-| P | protocol | Section 5 in PR #7 | — |
-| core-1 | core | Every type in section 2, standalone `Describe`, `SetupError` + `Error::Setup`. Shims: old `Error::UnsupportedModel` (`#[doc(hidden)]`), 2-argument `Register::new(addr, size)` (`#[doc(hidden)]`, unconditional `allow(dead_code)`; no 4-argument `new`), `Actuator` with three required methods. Fixes the no-family warning. Builds against today's generated code with no regeneration. | P |
-| T1 | tables | `source: Unverified` on all 72 tables, `protocols`, `access` + `area` on every row, `p1`/`p2`/`default` beside legacy `tables`, `not_mapped`, table check script. AX-12A and MX-64(2.0) verification may land here. No regeneration (today's xtask ignores the new fields). | — |
-| X1 | xtask | Reads section 3. Emits section 4: `Describe`, `DATA`, `cache` field, registers built by a private generated `reg()` helper (never `Register::new`), per-protocol lookup returning `SetupError`, `firmware_register`, `MODEL_NUMBER`, checks, verification docs. Still emits `id`/`model_number`/`name` in `impl Actuator`. | core-1, T1 |
-| core-2 | core | `Actuator: Describe` with provided methods; removes the shims (no `Register::new` remains). Generated overrides stay valid, and a later regeneration may drop them. | X1 |
-| T2 | tables | MX-28/64/106 P1 tables, AX-12+ (`also`), AX-18F, XW430-T200, verification of AX-12+ and MX-64 P1, removal of legacy `tables`, regenerated `src/models*` committed. | X1 |
-| bus-1 … bus-6 | bus | As in specs/003-bus/plan.md. bus-1 adds `heapless`; bus-5 adds `partial-reads`/`raw-registers` to `Cargo.toml`. | core-2, X1, P |
-| ci | ci | Gates from spec 007. The feature-set job needs core-1 (today `--no-default-features` fails under `-D warnings`). The missing-docs gate needs #7 (it documents the `UnsupportedModel` fields). The `control tables: schema check` job runs T1's script; it is guarded until T1 merges, and the first ci change after T1 removes the guard. | P, core-1, T1 (optional) |
+| P | protocol | Section 5. **Merged in PR #7, 2026-10-28.** | — |
+| core-1 | core | Every type in section 2, including `LimitMode`, `ModeSource`, `ModeValues`, the value mappings, `Cache::record_mode` and the mode-aware `check_goal` (§2.4b), `NotPositionMode` and `UnknownOperatingMode` (§2.7). Standalone `Describe` (`pub(crate) mod sealed`), `SetupError` + `Error::Setup`. Shims: old `Error::UnsupportedModel` (`#[doc(hidden)]`), 2-argument `Register::new(addr, size)` (`#[doc(hidden)]`, unconditional `allow(dead_code)`; no 4-argument `new`), `Actuator` with three required methods. Drops its `ActuatorKind::new` tests (core D2). Fixes the no-family warning. Builds against today's generated code with no regeneration. | P (merged) |
+| T1 | tables | Tools and tests (`check_tables.py`, `emanual.py`). `source` and `protocols` on all 72 tables (`Unverified`; AX-12A `Verified` with `instructions`). `access` + `area` on every row. `type_info` checked and fixed (§2.3). `p1`/`p2`/`default` beside legacy `tables`. `not_mapped` for `ax_12_plus`, `ax_18f`, `xw430_t200`, all `SameNumberAs`. Findings list. No generated diff (today's xtask ignores the new fields). | — |
+| X1 | xtask | Reads section 3. Emits section 4: `Describe`, `DATA` with `mode` (§2.4b), `cache` field, registers built by a private generated `reg()` helper (never `Register::new`), per-protocol lookup returning `SetupError`, `firmware_register`, `MODEL_NUMBER`, the checks of §4.3 (mode source included), verification docs, generated `src/models/tests.rs`. Still emits `id`/`model_number`/`name` in `impl Actuator`. Commits the output regenerated from T1's tables. | core-1, T1 |
+| core-2 | core | `Actuator: Describe` with all six methods provided; removes the shims (no `Register::new` remains). Generic tests over every compiled-in model. Generated overrides stay valid. | X1 |
+| X2 | xtask | Optional. Drops the generated `id`/`model_number`/`name` overrides and regenerates. | core-2 |
+| T2 | tables | `mx_28_p1`, `mx_64_p1`, `mx_106_p1` + map entries 29, 310, 320 (`p1` only). `also` on 12, 18, 1270. Verification of MX-64(2.0), AX-12+ and MX-64 P1. MX-64(2.0) waits for T2 because removing its alias rows changes generated constants (tables research R-9, R-14). Alias rows removed from 66 tables, other T1 findings applied, `RH-P12-RN(A)` name fix (35074), legacy `tables` removed, regenerated `src/models*` committed. | X1 |
+| bus-1 … bus-6 | bus | As in specs/003-bus/plan.md (PR split). bus-1 adds `heapless` and reads the mode at Setup (§6 step 6). bus-2 uses `scan`, bus-4 `read_many`. bus-4 needs bus-2 and bus-3 (the SC-001 example) and creates `tests/bus_no_alloc.rs`; bus-5 and bus-6 extend it. bus-5 adds `partial-reads`/`raw-registers` to `Cargo.toml`; raw replies run `observe`. Bus edits only its own `lib.rs` lines (section 1). bus-2/bus-3 and bus-5/bus-6 are independent. | core-2, X1, P (merged) |
+| ci | ci | Gates from spec 007, one PR. The feature-set job needs core-1 (today `--no-default-features` fails under `-D warnings`). The missing-docs gate needed #7 (it documents the `UnsupportedModel` fields; merged). The `control tables: schema check` job runs T1's script; it is guarded until T1 merges, and the first ci change after T1 removes the guard. A ci-1/ci-2 split, only if core-1 slips, needs its own approval (ci plan). | P (merged), core-1, T1 (optional) |
 
-Core, tables and bus each ship as more than one PR. That needs the architect's approval under
-"one module per PR" (section 9).
+Core, tables and bus each ship as more than one PR. The architect approved this split under
+"one module per PR" on 2026-10-28.
+
+Each plan and its tasks carry the 2026-10-28 items of its PRs. A plan or task list dated
+2026-10-27 only does not yet: core-1 `LimitMode`, `ModeSource`, `ModeValues`, `record_mode`,
+mode-aware `check_goal`, the two new error variants and their messages; X1 `ModelData::mode` and
+check 17; T1 the mode-source rule in the table check; bus-1 the mode read at Setup and
+`NotPositionMode` in place of "limits apply in every operating mode"; bus-5 `observe` on raw
+replies and per-actuator partial results.
 
 ---
 
@@ -732,40 +899,51 @@ Core, tables and bus each ship as more than one PR. That needs the architect's a
 
 | # | Conflict | Resolution in this contract |
 |---|---|---|
-| 1 | xtask FR-009, US1 AS5: the cache holds torque state and fault state. Core FR-008/009, bus FR-024, SRS patch: one byte per slot in a bus array. | Cache = `Id` + limits. `TorqueState` lives in `Bus::states`. xtask's plan drops torque/fault from the cache. |
+| 1 | xtask FR-009, US1 AS5: the cache holds torque state and fault state. Core FR-008/009, bus FR-024, SRS patch: one byte per slot in a bus array. | Cache = `Id` + limit mode (§2.4b) + limits. `TorqueState` lives in `Bus::states`. xtask's plan drops torque/fault from the cache. |
 | 2 | xtask Assumptions: "register access not in tables, not generated". Core Assumptions: `Register` is address + size only (gap). Tables FR-007 + architect: access and area on every row now. | `Register` carries `access` and `area`. xtask requires and emits them, and checks role attributes. |
 | 3 | xtask Assumptions/Edge: MX on P1 is roadmap. Tables Clarification + SRS step 7: MX P1 tables are written now. | In scope. X1 generates a per-protocol lookup. T2 adds the tables. |
-| 4 | xtask FR-006: lookup by model number + firmware. Tables FR-008: per-protocol map. | `ActuatorKind::new(ProtocolVersion, ModelNumber, fw, Id)`. Needs `Protocol::VERSION` (section 5). |
+| 4 | xtask FR-006: lookup by model number + firmware. Tables FR-008: per-protocol map. | `ActuatorKind::new(ProtocolVersion, ModelNumber, fw, Id)`. Needs `Protocol::VERSION` (section 5, merged in PR #7). |
 | 5 | xtask FR-012: protocol set per model type. Tables FR-005/008: protocol per table and per map entry. | Both, kept consistent: the table's `protocols` must include every map list naming it (codegen check). `ModelData::protocols` comes from the table. |
-| 6 | Bus FR-012: a model unreachable on the bus protocol fails Setup with its own error. Tables US4 AS4: the bus reports `UnsupportedModel`. Core FR-016 has no such variant. | One variant: `UnsupportedModel` gains `protocol` (and `id`), and covers unknown numbers, families that are off, and missing tables on this protocol. |
-| 7 | SRS FR-6.4 and core FR-016: "`Id` not on the bus" is a Setup error. Bus US5 AS4 and FR-034: an unknown target Id is a validation error. | SRS wins (higher authority): `SetupError::NotOnBus`. Repeated Id: `ValidationError::DuplicateId`. Both still send nothing. `bus.actuator(id)` returns `None`. |
+| 6 | Bus FR-012: a model unreachable on the bus protocol fails Setup with its own error. Tables US4 AS4: the bus reports `UnsupportedModel`. Core FR-016 has no such variant. | One variant: `UnsupportedModel` gains `protocol` (and `id`), and covers unknown numbers, families that are off, and missing tables on this protocol. Accepted by the architect 2026-10-28. |
+| 7 | SRS FR-6.4 and core FR-016: "`Id` not on the bus" is a Setup error. Bus US5 AS4 and FR-034: an unknown target Id is a validation error. | SRS wins (higher authority): `SetupError::NotOnBus`. Repeated Id: `ValidationError::DuplicateId`. Both still send nothing. `bus.actuator(id)` returns `None`. Accepted by the architect 2026-10-28. |
 | 8 | Bus FR-026: enabling torque while faulted is refused with a typed error. Core FR-015 lists no such variant. | Add `ValidationError::ActuatorFaulted { id }`. |
 | 9 | Core spec: `ModelNumber` is a bus item. xtask spec: core defines it. | Core (`src/actuator.rs`). |
 | 10 | Core spec: core and xtask sequencing left open; the trait change breaks generated code. xtask FR-018 and the no-go rules forbid cross edits. | core-1 (additive + shims) → X1 → core-2 (cutover). No hand edits to generated code. |
 | 11 | Tables FR-016 (keep today's codegen working) vs the new map format. | T1 keeps the legacy `tables:` beside `p1`/`p2`. X1 ignores it. T2 removes it. |
-| 12 | SRS §9 gives `Cargo.toml` to ci, and ci FR-015 forbids feature and dependency edits. Bus needs `heapless`, `partial-reads`, `raw-registers`. PR #7 already adds `proptest`. | Split ownership (section 1). The module that needs a line adds it and flags it. |
+| 12 | SRS §9 gives `Cargo.toml` to ci, and ci FR-015 forbids feature and dependency edits. Bus needs `heapless`, `partial-reads`, `raw-registers`. PR #7 added `proptest`. | Split ownership (section 1). The module that needs a line adds it and flags it. |
 | 13 | Bus proposal: compile-fail via trybuild `.stderr`. ci FR-008: rustdoc `compile_fail,EXXXX` checked on a pinned toolchain. | Compile-fail cases are rustdoc examples with error codes, so the ci check covers them. No `trybuild` dependency. |
-| 14 | ci Assumptions: the no-feature build is green on day one. xtask Assumptions: a no-family build warns. Checked on `dev` with `-D warnings`: `cargo build --lib --no-default-features` fails (`Register::new` never used). | core-1 fixes it. The ci feature-set job lands after core-1. |
-| 15 | Bus proposal: `C: Clock = fn() -> u64`. Architect: zero bytes, no indirect call, system clock under std. A cfg-switched default must not break additivity. | `DefaultClock` = `StdClock` (std) or `NoClock` (no_std, not a `Clock`). No_std users must name a clock, and enabling std only makes more code compile. |
-| 16 | PR #7 `broadcast_ping` skips corrupted replies. Bus spec edge case: a corrupted reply fails Setup with a protocol error. | `scan` passes corrupted replies on as `Err`. The bus fails Setup (nothing hidden). A protocol change, section 5. |
+| 14 | ci Assumptions: the no-feature build is green on day one. xtask Assumptions: a no-family build warns. Checked on `dev` and PR #7 with `-D warnings` (ci research R-16): `cargo build --lib --no-default-features` fails (`Register::new` never used). | core-1 fixes it. The ci feature-set job lands after core-1. |
+| 15 | Bus proposal: `C: Clock = fn() -> u64`. Architect: zero bytes, no indirect call, system clock under std. A cfg-switched default must not break additivity. | `DefaultClock` = `StdClock` (std) or `NoClock` (no_std, not a `Clock`). No_std users must name a clock, and enabling std only makes more code compile. The clock comes before `N`. Accepted by the architect 2026-10-28. |
+| 16 | PR #7 `broadcast_ping` skips corrupted replies. Bus spec edge case: a corrupted reply fails Setup with a protocol error. | `scan` passes corrupted replies on as `Err`. The bus fails Setup (nothing hidden). A protocol change, section 5, merged in PR #7. Accepted by the architect 2026-10-28. |
 | 17 | Core FR-012: no registers beyond OQ-2 in the trait. xtask FR-008/011: fault register, Firmware Version, Model Number exposed. | Those are crate-internal (`ModelData`, `firmware_register`, `MODEL_NUMBER`), not on the public `Actuator` trait. |
-| 18 | Bus Assumptions: "position scale … not in the tables yet". All 72 tables have `type_info`. | The scale comes from `type_info` (zero + slope). The AX `min_radian` oddity is checked at AX-12 verification. Model Number (0, 2) and Firmware Version (2 or 6) are table rows. |
-| 19 | Core FR-016 names `UnsupportedModel { model_number, feature }`. | Fields `id` and `protocol` are added (DX: name the actuator and the protocol). Flagged to the architect. |
-| 20 | ARCHITECTURE.md: "Torque state = runtime field on the actuator", "Actuator cache: Id, torque state, limits", `Bus<P, T, N>`, autoscan std-only (SRS 2.1 text not yet patched in modules). | Superseded by the 2026-10-27 decisions. ARCHITECTURE.md and `docs/srs/modules/*.md` need the architect's update. Agents do not edit them. |
+| 18 | Bus Assumptions: "position scale … not in the tables yet". All 72 tables have `type_info`. | The scale comes from `type_info` (zero + slope). T1 fixes the AX angles, the XL-320 range and the 2π/4096 slope against each page (§2.3). Model Number (0, 2) and Firmware Version (2 or 6) are table rows. |
+| 19 | Core FR-016 names `UnsupportedModel { model_number, feature }`. | Fields `id` and `protocol` are added (DX: name the actuator and the protocol). Accepted by the architect 2026-10-28. |
+| 20 | ARCHITECTURE.md: "Torque state = runtime field on the actuator", "Actuator cache: Id, torque state, limits", `Bus<P, T, N>`, autoscan std-only. `docs/srs/modules/bus.md` still has `const N` before `C`. | Superseded by the 2026-10-27 and 2026-10-28 decisions. ARCHITECTURE.md and `docs/srs/modules/*.md` need the architect's update (section 9). Agents do not edit them. |
+| 21 | SRS FR-3.7 (Decided): limits are unconditional. e-Manual: X-series Min/Max Position Limit "not used in Extended Position Control Mode and Current-based Position Control Mode"; AX CW = CCW = 0 is wheel mode (bus spec conflict 8, bus research R-9). The bus plan kept the unconditional check. | Resolved by §2.4b (architect 2026-10-28): limits follow the operating mode, read once at Setup. |
+| 22 | Bus plan: `raw-registers` replies return a hardware fault but leave the state alone, an exception to constitution III. | Architect 2026-10-28: raw replies run `observe`; a fault sets `Faulted`. No exception (§2.5). |
+| 23 | SRS FR-4.7: "On P2 a failed sync group fails all slots in that group". Bus plan SRS deviation 1: per-Id results inside the group. | Architect 2026-10-28: each actuator keeps its own result; only a failed instruction fails the group (§6). |
+| 24 | §6 had `C: Clock = DefaultClock` on the `Bus` struct. rustc checks the default against the bound, and `NoClock` is not a `Clock` (bus plan deviation 1, research R-2). | No bound on the struct; `C: Clock` on every impl (§6). The "name your clock" error stays, with PR #7's `on_unimplemented` text. |
 
 ---
 
 ## 9. For the architect
 
-- Approve the multi-PR split: core-1/core-2, T1/T2, bus-1 … bus-6. Approve that protocol changes
-  (section 5) go into PR #7.
-- Confirm conflict resolutions 6, 7, 15, 16 and 19. They change public error shapes or the
-  protocol.
-- Update ARCHITECTURE.md to the 2026-10-27 decisions (`docs/srs/modules/*.md` were regenerated
-  from the patched SRS).
-- Constitution IV already has the deferred-verification amendment (v1.2.0). Principle VI still
-  lists four error categories and needs `Setup` added (core plan).
-- Decided 2026-10-28: limits follow the operating mode (section 2.4b, SRS FR-3.7);
-  `raw-registers` replies run `observe`, so a fault on a raw reply sets `Faulted` (SRS FR-8.1,
-  no exception to constitution III); `partial-reads` keeps a result per actuator inside a P2
-  sync group, and only a failed instruction fails the whole group (SRS FR-4.7).
+Open:
+
+- Update ARCHITECTURE.md to the 2026-10-27 and 2026-10-28 decisions (conflict 20).
+- Patch the SRS (architect-only) to the 2026-10-28 decisions: FR-3.7 still says limits are
+  unconditional (now §2.4b); FR-4.7 still says a failed P2 sync group fails all slots (now
+  per-actuator results, §6); FR-8.1 could say raw replies still mark faults (§2.5); FR-2.4 and
+  constitution Principle II still write `UnsupportedModel { model_number, feature }` (conflict
+  19); the roadmap line "AX-12+, AX-18F, XW430-T200 … Adding the number is enough" is stale (the
+  numbers are shared, §3.2). Then regenerate `docs/srs/modules/*.md`; `bus.md` also predates the
+  clock-before-`N` change.
+- `position_limits()` and `position_limits_raw()` return the EEPROM limits in every mode, though
+  the firmware ignores them outside `Bounded`. Keep, or return `None` outside `Bounded` (core
+  research R-17)?
+- How X1 picks `ModeValues` per table (§2.4b, open; xtask plan to settle).
+- AX-18F is recorded as `SameNumberAs(18)` (tables plan, deviation 2): the AX-18A page covers
+  "AX-18F, AX-18A", number 18, same layout. Data only; confirm.
+- `cache_mut` misuse (core research R-12): generic user code bounded on `A: Actuator` can call
+  `cache_mut()` and copy one actuator's `Cache` (Id, mode, limits) over another's. Fix if wanted: a
+  crate-private token argument on `cache_mut`. It changes X1's emitted impl, so decide before X1.

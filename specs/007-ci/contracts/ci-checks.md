@@ -3,8 +3,8 @@
 **Feature**: [../spec.md](../spec.md) | **Model**: [../data-model.md](../data-model.md) |
 **Research**: [../research.md](../research.md)
 
-This is the surface the ci PR delivers: one workflow file, its checks, and three lines of
-`Cargo.toml`. Check names, commands, triggers and permissions are the contract. Step order inside
+This is the surface the ci PR delivers: one workflow file and its checks. `Cargo.toml` is not
+changed. Check names, commands, triggers and permissions are the contract. Step order inside
 a job, cache keys and YAML layout are not, except where a row says so.
 
 ## Workflow `.github/workflows/ci.yml`
@@ -20,7 +20,8 @@ a job, cache keys and YAML layout are not, except where a row says so.
 | Checkout | `actions/checkout@v4` with `persist-credentials: false` |
 | Job time-out | `timeout-minutes: 20` on every job |
 
-`ov-aiignore.yml` is not touched and not duplicated.
+`ov-aiignore.yml` is not touched and not duplicated. The human commits it, with `.aiignore`, to
+`main` before the ci PR (precondition, spec Assumptions).
 
 ## Checks
 
@@ -38,7 +39,7 @@ Shown on the PR as `CI / <check name>`. "Kept" rows must keep every listed comma
 | `features` (new) | `feature sets` | ubuntu | `if: always()`; fails unless `feature-sets`, every `feature-set` leg and every `feature-test` leg succeeded | FR-004, FR-005 (one stable name to mark required) |
 | `docs` (new) | `docs: complete, no warnings` | ubuntu, stable | with `RUSTDOCFLAGS: -D warnings`: `cargo doc --no-deps --all-features`; `cargo doc --no-deps --no-default-features` | FR-007 |
 | `compile-fail` (new) | `doc examples: compile-fail error codes` | ubuntu, `COMPILE_FAIL_TOOLCHAIN` | with `RUSTC_BOOTSTRAP=1` on these steps only, three passes: `cargo test --doc --all-features`; `cargo test --doc` (defaults); `cargo test --doc --no-default-features --features $NO_STD` | FR-008 (also the examples that compile only with a feature or `std` off) |
-| `control-tables` (new) | `control tables: schema check` | ubuntu, preinstalled `python3` | `python3 control_tables/check_tables.py`; `python3 -m unittest discover -s control_tables -p 'test_*.py'`; both guarded by `if [ -f control_tables/check_tables.py ]` until tables T1 merges | FR-014 of the tables spec (005) |
+| `control-tables` (new) | `control tables: schema check` | ubuntu, preinstalled `python3` | `python3 control_tables/check_tables.py`; `python3 -m unittest discover -s control_tables -p 'test_*.py'`; both guarded by `if [ -f control_tables/check_tables.py ]` until tables T1 merges | FR-016 (tables spec 005 FR-014) |
 | `os` (new, matrix) | `std build and tests (Windows)`, `std build and tests (macOS)` | `windows-latest`, `macos-latest`, stable | `cargo build -p dxl_rs_v2`; `cargo test -p dxl_rs_v2` | FR-009 |
 
 `$HEAP_FREE`, `$NO_STD` and `$ARGS` come from the `feature-sets` job outputs and reach scripts
@@ -79,20 +80,16 @@ Mark as required: `fmt, clippy, test (Linux)`, `no_std build (thumbv7em-none-eab
 `coverage (>= 70 % lines)`, `generated models up to date`, `feature sets`,
 `docs: complete, no warnings`, `doc examples: compile-fail error codes`,
 `control tables: schema check`, `std build and tests (Windows)`, `std build and tests (macOS)`.
+`.github/ov-ruleset-main.json` is not in the repository yet; the architect creates it.
 Not the individual `feature set (…)` or `feature tests (…)` legs: their names follow
 `Cargo.toml`.
 
 ## `Cargo.toml`
 
-Added, nothing else changed:
-
-```toml
-[lints.rust]
-missing_docs = "warn"
-```
-
-No `rust-version` (FR-010). No feature, dependency or `[package]` field is added, removed or
-renamed (FR-015).
+Not changed (FR-015). The missing-docs lint is `#![warn(missing_docs)]` in `src/lib.rs` (core's
+line, on `main` since PR #7); `RUSTFLAGS: -D warnings` makes it fail every check that compiles
+the crate (R-5). No `[lints]` table, no `rust-version` (FR-010), and no feature, dependency or
+`[package]` field is added, removed or renamed.
 
 ## Reproduce a check locally
 

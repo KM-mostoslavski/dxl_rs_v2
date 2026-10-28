@@ -1,13 +1,13 @@
 # Research: Bus
 
-**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27
+**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27, updated 2026-10-28 (architect decisions)
 
 Sources:
-- `specs/ideas/module-interfaces.md` (the cross-module contract) and `specs/ideas/bus-proposal.md`.
-- The protocol module on branch `001-protocol-packets` (PR #7): `src/protocol.rs`, `p1.rs`,
+- `specs/ideas/module-interfaces.md` (the cross-module contract, with the 2026-10-28 decisions in
+  §2.4b and §9) and `specs/ideas/bus-proposal.md`.
+- The protocol module (PR #7, merged into `main` 2026-10-28): `src/protocol.rs`, `p1.rs`,
   `p2.rs`, `clock.rs`, `no_alloc.rs`, `src/error.rs`, `src/lib.rs`.
-- `src/` on `dev`; the SRS with the 2026-10-27 patch (`/tmp/dxl-srs-bus.patch`); constitution
-  v1.2.0.
+- `src/` on `dev` and `main`; the SRS as of 2026-10-28; constitution v1.3.0.
 - The ROBOTIS e-Manual pages for the XM430-W350, the AX-12A and Protocol 2.0, fetched
   2026-10-27.
 - A scratch crate (`/tmp/claude-1000/bus-proto`, heapless 0.9.3, rustc 1.97.1) that checked the
@@ -198,7 +198,15 @@ Autoscan (`autoscan()`):
    `cache_mut().record_limits(min, max)`.
    - CW maps to min and CCW maps to max.
    - Any error, `InvertedLimits` included, fails Setup.
-4. Push the actuator and set its slot to `TorqueState::Off`. No torque write is sent (FR-014).
+4. Record the limit mode (research R-9) from `data().mode`:
+   - `register()` is `Some(r)` (Operating Mode or Control Mode): read `r` (1 byte) and map it
+     with `data().mode.limit_mode(value)`; `None` fails Setup with
+     `SetupError::UnknownOperatingMode { id, value }`. A failed read fails Setup.
+   - `register()` is `None` (`AngleLimits`: AX, MX on P1): no read,
+     `LimitMode::from_angle_limits(limits)` on the limits of step 3.
+   - `cache_mut().record_mode(mode)`.
+   - Function names are core's (specs/004-core contracts); module-interfaces §2.4b names none.
+5. Push the actuator and set its slot to `TorqueState::Off`. No torque write is sent (FR-014).
 
 A hardware fault reported at Setup fails Setup (spec Assumptions, proposal Q6).
 
@@ -219,9 +227,9 @@ before the first byte.
   - every `ActuatorRef` exchange;
   - every per-slot reply of a multi-read;
   - every Easy-tier torque write;
-  - every `clear_fault` check.
-- It does not run on `sync_write` (no reply, FR-029) or on `raw-registers` calls (FR-8.1). The
-  raw case is an exception to constitution III, flagged in plan.md Complexity Tracking.
+  - every `clear_fault` check;
+  - every `raw-registers` reply (architect, 2026-10-28; research R-21).
+- It does not run on `sync_write` (no reply, FR-029).
 - After a torque write:
   - `Ok` gives the new state.
   - A hardware fault gives `fault()`.
@@ -264,8 +272,9 @@ Steps:
 3. **Validate** (writes), per target in order:
    - `state.check_goal(id)` (`ActuatorIsOff`);
    - `scale.to_raw` for typed values;
-   - `cache.check_goal(raw)`;
-   - `Register::encode` into the stage.
+   - `cache.check_goal(raw)`, which follows the limit mode (R-9: `OutOfLimits`,
+     `NotPositionMode`, or size check only);
+   - `Register::encode` into the stage (`DoesNotFit`).
 
    The first failure refuses the call. Zero bytes are sent (FR-034, SC-002).
 4. **Group.** The distinct `(addr, size)` keys come in first-appearance order. Each key sends one
@@ -280,15 +289,14 @@ Steps:
    - Otherwise it returns the first hardware fault in target order, or else the first error.
      `out` stays unchanged (FR-036).
    - A transport error returned by `read_many` aborts at once.
-6. **Partial reads** (`partial-reads`, bus-5): the same staging, but each slot of `out` gets its
-   own `Result`.
-   - A group whose `read_many` returns `Err` (the instruction failed) gives that error to every
-     slot in the group.
-   - Per-ID errors inside a P2 sync read stay per slot. This narrows SRS FR-4.7 ("a failed sync
-     group fails all slots in that group", Decided) and is recorded as a deviation from the SRS
-     in plan.md (SRS deviation 1).
-   - Fallback if the architect keeps the strict reading: on P2, every slot of a group with any
-     per-ID error gets the group's first per-ID error. P1 stays per slot.
+6. **Partial reads** (`partial-reads`, bus-5; architect, 2026-10-28): the same staging, but
+   each slot of `out` gets its own `Result`.
+   - A group whose `read_many` returns `Err` (the instruction failed, e.g. a transport error)
+     gives that error to every slot in the group.
+   - Per-ID errors inside a P2 sync read (`Timeout`, `Protocol`, `Status`) stay in their own
+     slot; the other slots keep their values. P1 is per slot by construction.
+   - SRS FR-4.7 still reads "a failed sync group fails all slots in that group"; the human
+     patches it (plan.md, SRS deviation 1).
 
 On the wire, all-or-nothing holds for validation only. A transport failure between two groups
 leaves the earlier group sent (spec edge case). This is documented on every multi-write.
@@ -304,7 +312,7 @@ An empty target list returns `Ok(())` and sends nothing.
 - A buffer of `Option<T>` (SRS FR-4.5 [decision]). Rejected by the spec: plain values plus an
   unchanged buffer on failure.
 
-## R-9 Limits and the operating mode (e-Manual check)
+## R-9 Limits follow the operating mode (e-Manual check; architect, 2026-10-28)
 
 **Finding**:
 - XM430-W350, Min/Max Position Limit (48, 52): "These values are not used in Extended Position
@@ -314,17 +322,37 @@ An empty target list returns `Ok(())` and sends nothing.
   actuator answer with the Angle Limit error bit
   (<https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>). That is not a hardware fault in
   `is_hardware_fault`.
+- XL-320 Control Mode (1 wheel, 2 joint) and MX on P1 multi-turn (CW = CCW = 4095) are taken
+  from module-interfaces §2.4b; core cites them per family.
 
-**Decision**: Keep the unconditional limit check (SRS FR-3.7, Decided).
-- In Position Control mode (the X-series default) it matches the hardware.
-- In extended or current-based position modes, and in AX wheel mode (limits `0..=0`), it
-  refuses goals the hardware would accept. It never sends a goal outside what was read.
-- The rustdoc of `set_goal_position` says so.
-- Mode-aware limits need an Operating Mode read at Setup, which is a model-specific register
-  (OQ-2). That waits for the architect.
+**Decision**: The goal check follows the mode the firmware is in (module-interfaces §2.4b).
+- Setup reads the mode once, after the limits (R-6 step 4): one 1-byte read of Operating Mode
+  (X, MX(2.0), PRO, PRO+, Y) or Control Mode (XL-320); none for AX and MX on P1, whose mode
+  comes from the CW/CCW limits just read. Core maps the value to a `LimitMode`
+  (`ModeSource::limit_mode`, `LimitMode::from_angle_limits`) and the bus calls
+  `cache_mut().record_mode(mode)`.
+- An unlisted value fails Setup with `SetupError::UnknownOperatingMode { id, value }`. No
+  fallback mode (constitution III).
+- The goal path is unchanged: `cache.check_goal(raw)` applies the mode.
+  - `Bounded` (position, joint): the EEPROM limits, `OutOfLimits` outside.
+  - `Unbounded` (extended and current-based position, MX multi-turn): no limit check, as on the
+    firmware; `Register::encode` still refuses a value the register cannot hold (`DoesNotFit`).
+  - `NoPosition` (velocity, current, PWM, AX / XL-320 wheel): every goal gives
+    `ValidationError::NotPositionMode { id }`, zero bytes.
+- The same check runs in multi-actuator writes (R-8 step 3).
+- The mode is not re-read. A later change (a raw write, another tool) is unseen until the next
+  Setup. The rustdoc of `set_goal_position` and `write_raw` says so.
+- Cost: one 1-byte read per actuator at Init where the model has a mode register; no memory
+  (`mode` sits in `Cache` padding).
 
-**Alternatives considered**: read Operating Mode at Setup and skip the check in modes 4 and 5.
-Rejected for now: a register beyond OQ-2, and mode changes later go unseen.
+**Rationale**: The unconditional check refused goals the firmware accepts in extended modes, so
+multi-turn use was blocked, and let goals through in wheel or velocity mode where the firmware
+ignores them silently. Following the firmware fixes both and hides nothing.
+
+**Alternatives considered**:
+- The unconditional check (the earlier plan, SRS FR-3.7 as written). Rejected by the architect
+  for the reasons above.
+- Re-reading the mode before each goal. Rejected: one extra read per Cycle write.
 
 ## R-10 Clearing a fault (e-Manual check)
 
@@ -379,6 +407,11 @@ drop.
   - `write_goal_positions`, `read_positions`, `sync_write`, `sync_read`;
   - partial reads when that feature is on.
 
+  Who adds what: bus-4 creates the file with the `Bus` cases. bus-5 adds
+  `read_positions_partial` (`#[cfg(feature = "partial-reads")]`). bus-6 adds the `DynBus` cases.
+  The `DynBus` partial case comes with the `DynBus` partial wrappers, in whichever of bus-5 and
+  bus-6 merges second. Each of these PRs lists the file as a shared-file touch.
+
   CI must run `cargo test --features mock` (and with `partial-reads` for full coverage). That
   is noted for the ci module.
 
@@ -393,18 +426,25 @@ drop.
   test.
 - Asking protocol to expose its counter. Rejected: a protocol change outside §5.
 
-## R-13 Status packets in bus tests
+## R-13 Packet builders in bus tests
 
-**Decision**: `src/bus/testing.rs` (`#[cfg(test)]`) builds P1 status packets (checksum) and P2
-status packets (CRC-16, byte stuffing) from `(id, error, params)`. It also has helpers that
-script a declared or scanned bus on `MockTransport` with `reply_to(n, …)`. Its own tests check
-it against the e-Manual examples:
-- P2 Ping reply `FF FF FD 00 01 07 00 55 00 06 04 26 65 5D`;
-- P1 status examples from the Protocol 1.0 page.
+**Decision**: `src/bus/testing.rs` (`#[cfg(test)]`) builds both directions:
+- status packets, to script replies: P1 (checksum) and P2 (CRC-16, byte stuffing) from
+  `(id, error, params)`;
+- instruction packets, for byte-exact `sent()` checks of Ping, Read, Write, Sync Write and Sync
+  Read: P1 and P2 from `(id, instruction, params)`, with the same framing.
+
+It also has fixtures that script a declared or scanned bus on `MockTransport` with
+`reply_to(n, …)`: ping, P1 model read, limit reads and the mode read. Its own tests check the
+builders against the e-Manual examples:
+- P2 Ping reply `FF FF FD 00 01 07 00 55 00 06 04 26 65 5D` and P2 Ping instruction
+  `FF FF FD 00 01 03 00 01 19 4E`;
+- P1 status `FF FF 01 02 00 FC` and `FF FF 01 03 00 20 DB`, and P1 Ping instruction
+  `FF FF 01 02 01 FB`, from the Protocol 1.0 page.
 
 **Rationale**: Protocol's `packet()` helpers and `vectors.rs` sit in private `#[cfg(test)]`
-modules of `src/protocol/**`, and this module may not edit them. A tested builder keeps bus
-tests byte-exact (SC-004).
+modules of `src/protocol/**`, and this module may not edit them. Tested builders keep bus tests
+byte-exact (SC-004) without a hand-written packet in every test.
 
 ## R-14 Compile-fail checks
 
@@ -472,6 +512,8 @@ crate-internal (xtask clarification).
   `Slots` trait: `kinds`, `split_mut`, `clear`, `push`, `stages`. It is implemented by
   `FixedSlots<'_, N>` (borrowing `Bus`'s fields) and `DynSlots<'_>`.
 - `ActuatorRef` has no `N`, so both buses hand out the same handle type.
+- Its `partial-reads` wrappers need `partial.rs` (bus-5) and `DynBus` (bus-6). Whichever of the
+  two PRs merges second adds them, with their no-alloc case (plan, PR split).
 
 **Rationale**:
 - SRS FR-1.3 and spec conflict 10: a plain alias cannot swap the storage.
@@ -497,11 +539,12 @@ R-4: it happens at startup, outside any bus exchange.
 
 **Decision**: Every goal write follows module-interfaces §6:
 `state.check_goal` → `scale.to_raw` (rounds to nearest, `NotFinite`, `DoesNotFit`) →
-`cache.check_goal(raw)` → `Register::encode` → `wire.write`.
+`cache.check_goal(raw)` (follows the limit mode, R-9) → `Register::encode` → `wire.write`.
 - The raw form skips only `to_raw`.
 - Reads decode with `Register::decode`, then `scale.to_position`.
-- The limits a user sees (`Actuator::position_limits[_raw]`) are the ones `check_goal` uses, so
-  "rounds outside the limits" (US4 AS3) is refused in both forms.
+- In position mode the limits a user sees (`Actuator::position_limits[_raw]`) are the ones
+  `check_goal` uses, so "rounds outside the limits" (US4 AS3) is refused in both forms. In
+  extended position modes they are still the EEPROM values, but not applied (R-9).
 
 ## R-20 Tier 2 and `Actuator` on the handle
 
@@ -515,3 +558,24 @@ R-4: it happens at startup, outside any bus exchange.
 
 **Rationale**: This is module-interfaces §6 as written, and the trait stays the one place for
 model description.
+
+## R-21 Raw register access (`raw-registers`; architect, 2026-10-28)
+
+**Decision**:
+- `read_raw` and `write_raw` go through `Wire` (retried like any unicast) and pass their result
+  through `observe`. A hardware fault on a raw reply sets `Faulted`, like every other path. There
+  is no exception to constitution III.
+- What raw sends bypasses the torque guard, the limit check and the cache: a raw write goes out
+  while `Off`, outside the limits and in any mode.
+- A raw write never updates the bus's view. A write to Operating Mode leaves the recorded
+  `LimitMode` stale until the next Setup. A write to Torque Enable leaves `TorqueState` as it was
+  until the next `enable_torque` / `disable_torque`. `write_raw` documents both (FR-8.2).
+
+**Rationale**: SRS FR-8.1's "bypassing limits, torque guard and cache" is about what raw sends.
+Checking every reply for faults is a constitution guarantee (III) and SC-003.
+
+**Alternatives considered**:
+- Leave the state alone on a raw fault (the earlier plan, proposal Q5). Rejected by the
+  architect: it needed an exception to constitution III.
+- Update the cache when a raw write hits a known register. Rejected: that is the hidden repair
+  FR-8.2 rules out.

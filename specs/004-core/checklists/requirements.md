@@ -44,3 +44,8 @@
   address and size only (SRS 3.3 lists access, range, unit); AX `type_info` looks inconsistent
   (tables module); the trait extension needs a generated-code change (xtask sequencing).
 - All items pass; the spec is ready for `/speckit-plan`.
+- Update 2026-10-28: the three flags above are resolved. `Register` carries access and area
+  (architect, 2026-10-27); the AX `type_info` check stays with the tables module; the
+  generated-code sequencing is core-1 → X1 → core-2 (plan). The architect's decisions of
+  2026-10-28 (limits follow the operating mode, FR-021 to FR-023; `raw-registers` faults; partial
+  reads; conflict 19 accepted) are in the spec's Clarifications. The items above still pass.
