@@ -157,7 +157,8 @@ pub enum ProtocolError {
 
     /// A length field that no valid packet can have, or one longer than
     /// the expected reply can be (a corrupted length that would otherwise
-    /// swallow the packets after it).
+    /// swallow the packets after it). Also a scan reply carrying an ID no
+    /// actuator can have.
     #[error("malformed status packet")]
     Malformed,
 }

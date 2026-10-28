@@ -65,12 +65,14 @@ fn exchanges_never_allocate() {
         .reply_to(5, v2::READ_REPLY_1)
         .reply_to(5, v2::READ_REPLY_2)
         .reply_to(6, v2::PING_REPLY)
-        .reply_to(6, v2::BROADCAST_PING_REPLY_2);
+        .reply_to(6, v2::BROADCAST_PING_REPLY_2)
+        .reply_to(7, v2::PING_REPLY);
     let mut p1_line = MockTransport::new(&time);
     p1_line
         .reply_to(1, v1::OK_REPLY)
         .reply_to(2, v1::READ_REPLY)
-        .reply_to(3, v1::OK_REPLY);
+        .reply_to(3, v1::OK_REPLY)
+        .reply_to(5, v1::READ_REPLY);
     let data = [0u8; 4];
     let mut out = [0u8; 4];
     let mut scratch = [0u8; 4];
@@ -97,6 +99,7 @@ fn exchanges_never_allocate() {
         )
         .unwrap();
         P2::broadcast_ping(&mut link, |_| replies += 1).unwrap();
+        P2::scan(&mut link, |r| replies += usize::from(r.is_ok())).unwrap();
     }
     {
         let mut link = Link {
@@ -108,10 +111,19 @@ fn exchanges_never_allocate() {
         P1::read(&mut link, id(1), 43, &mut out[..1]).unwrap();
         P1::write(&mut link, id(1), 12, &data[..2]).unwrap();
         P1::sync_write(&mut link, 30, 4, [(id(1), &data[..])].into_iter()).unwrap();
+        P1::read_many(
+            &mut link,
+            43,
+            1,
+            [id(1)].into_iter(),
+            &mut scratch,
+            |_, r| replies += usize::from(r.is_ok()),
+        )
+        .unwrap();
     }
     let after = allocations();
 
-    assert_eq!(replies, 4);
+    assert_eq!(replies, 6);
     assert_eq!(after - before, 0, "exchanges allocated");
 }
 

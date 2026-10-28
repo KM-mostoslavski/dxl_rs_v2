@@ -34,7 +34,7 @@ pub use id::Id;
 pub use models::ActuatorKind;
 #[cfg(feature = "std")]
 pub use protocol::StdClock;
-pub use protocol::{Clock, P1, P2, Protocol};
+pub use protocol::{Clock, P1, P2, Protocol, ProtocolVersion};
 /// The `serialport` crate behind [`SerialTransport`], for its port and error
 /// types.
 #[cfg(feature = "std")]

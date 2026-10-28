@@ -16,6 +16,10 @@
 /// };
 /// assert_eq!(clock.now_us(), 10);
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a dxl_rs_v2 clock",
+    note = "pass a type implementing `Clock` (or a `FnMut() -> u64` closure) to the bus; under `std`, `StdClock` is provided"
+)]
 pub trait Clock {
     /// Microseconds since an arbitrary, fixed origin. Must never go
     /// backwards.

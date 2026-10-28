@@ -8,11 +8,13 @@
 use core::iter;
 
 use super::{
-    Clock, Exchange, Link, Parser, Pong, Protocol, Status, Transport, Writer, check, drain,
-    receive, sealed,
+    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Status, Transport, Writer,
+    check, drain, receive, sealed,
 };
 use crate::Id;
-use crate::error::{Error, P1Flags, ProtocolError, StatusReport, ValidationError};
+use crate::error::{
+    Error, P1Flags, ProtocolError, StatusError, StatusReport, TransportError, ValidationError,
+};
 
 /// Dynamixel Protocol 1.0.
 ///
@@ -24,7 +26,9 @@ pub struct P1;
 
 impl sealed::Sealed for P1 {}
 
-impl Protocol for P1 {}
+impl Protocol for P1 {
+    const VERSION: ProtocolVersion = ProtocolVersion::P1;
+}
 
 const BROADCAST: u8 = 0xFE;
 
@@ -279,6 +283,68 @@ impl Exchange for P1 {
         send(link.transport, BROADCAST, SYNC_WRITE, params)
     }
 
+    fn scan<T: Transport, C: Clock, F>(
+        link: &mut Link<'_, T, C>,
+        mut on_reply: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(Result<Pong, Error>),
+    {
+        for id in (0..=Id::MAX).filter_map(|raw| Id::new(raw).ok()) {
+            match Self::ping(link, id) {
+                Ok(pong) => on_reply(Ok(pong)),
+                Err(Error::Status(StatusError { id, report })) => on_reply(Ok(Pong {
+                    id,
+                    model_number: None,
+                    firmware: None,
+                    fault: Some(report),
+                })),
+                Err(Error::Transport(TransportError::Timeout { .. })) => {}
+                Err(err @ Error::Transport(_)) => return Err(err),
+                Err(err) => on_reply(Err(err)),
+            }
+        }
+        Ok(())
+    }
+
+    fn read_many<T: Transport, C: Clock, I, F>(
+        link: &mut Link<'_, T, C>,
+        addr: u16,
+        size: u16,
+        ids: I,
+        scratch: &mut [u8],
+        mut on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        short_addr(addr)?;
+        let size = usize::from(size);
+        if size > MAX_STATUS_DATA {
+            return Err(ValidationError::PacketTooLarge {
+                len: size,
+                max: MAX_STATUS_DATA,
+            }
+            .into());
+        }
+        let Some(buf) = scratch.get_mut(..size) else {
+            return Err(ValidationError::DataLength {
+                expected: size,
+                got: scratch.len(),
+            }
+            .into());
+        };
+        for id in ids {
+            match Self::read(link, id, addr, buf) {
+                Ok(()) => on_reply(id, Ok(&*buf)),
+                Err(err @ Error::Transport(TransportError::Io(_))) => return Err(err),
+                Err(err) => on_reply(id, Err(err)),
+            }
+        }
+        Ok(())
+    }
+
     fn report(error: u8) -> StatusReport {
         StatusReport::P1(P1Flags(error))
     }
@@ -507,5 +573,157 @@ mod tests {
             Err(Error::Validation(ValidationError::DataLength { .. }))
         ));
         assert!(line.sent().is_empty());
+    }
+
+    #[test]
+    fn scan_pings_every_id_and_reports_answers_faults_and_corruption() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(100);
+        let mut line = MockTransport::new(&time);
+        let mut corrupted = packet(5, 0, &[]);
+        *corrupted.last_mut().unwrap() ^= 0xFF;
+        line.reply_to(2, v::OK_REPLY)
+            .reply_to(4, &packet(3, 0x20, &[]))
+            .reply_to(6, &corrupted)
+            .reply_to(201, &packet(200, 0, &[]));
+        let mut got = Vec::new();
+        P1::scan(&mut link!(line, clock), |r| got.push(r)).unwrap();
+        let pong = |raw, fault| Pong {
+            id: id(raw),
+            model_number: None,
+            firmware: None,
+            fault,
+        };
+        assert_eq!(
+            got,
+            [
+                Ok(pong(1, None)),
+                Ok(pong(3, Some(StatusReport::P1(P1Flags(0x20))))),
+                Err(ProtocolError::Checksum { id: 5 }.into()),
+                Ok(pong(200, None)),
+            ]
+        );
+        assert_eq!(line.flushes(), usize::from(Id::MAX) + 1);
+        line.assert_done();
+    }
+
+    #[test]
+    fn scan_fails_only_when_the_transport_does() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let mut line = MockTransport::new(&time);
+        line.fail_with(embedded_io::ErrorKind::BrokenPipe);
+        let mut calls = 0;
+        assert_eq!(
+            P1::scan(&mut link!(line, clock), |_| calls += 1),
+            Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+        );
+        assert_eq!(calls, 0);
+    }
+
+    fn read_many_with(
+        line: &mut MockTransport<'_>,
+        ids: &[u8],
+    ) -> Vec<(u8, Result<Vec<u8>, Error>)> {
+        let time = MockTime::new();
+        let mut clock = time.ticker(100);
+        let mut got = Vec::new();
+        let mut scratch = [0; 4];
+        P1::read_many(
+            &mut link!(*line, clock),
+            43,
+            1,
+            ids.iter().map(|&raw| id(raw)),
+            &mut scratch,
+            |id, r| got.push((id.get(), r.map(<[u8]>::to_vec))),
+        )
+        .unwrap();
+        got
+    }
+
+    #[test]
+    fn read_many_reads_each_id_in_order_and_reports_each_error_to_its_id() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        line.reply_to(1, v::READ_REPLY)
+            .reply_to(3, &packet(3, 0, &[0x30]))
+            .reply_to(4, &packet(4, 0x20, &[0x40]));
+        let got = read_many_with(&mut line, &[1, 2, 3, 4]);
+        assert_eq!(
+            got,
+            [
+                (1, Ok(std::vec![0x20])),
+                (2, Err(TransportError::Timeout { id: Some(id(2)) }.into())),
+                (3, Ok(std::vec![0x30])),
+                (
+                    4,
+                    Err(StatusError {
+                        id: id(4),
+                        report: StatusReport::P1(P1Flags(0x20))
+                    }
+                    .into())
+                ),
+            ]
+        );
+        let mut expected = Vec::new();
+        for raw in 1..=4 {
+            expected.extend(packet(raw, READ, &[43, 1]));
+        }
+        line.assert_sent(&expected);
+    }
+
+    #[test]
+    fn read_many_refuses_bad_requests_and_fails_on_the_transport() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let mut line = MockTransport::new(&time);
+        let ids = [id(1)];
+        let mut small = [0; 1];
+        let mut calls = 0;
+        for (addr, size, expected) in [
+            (
+                43,
+                2,
+                ValidationError::DataLength {
+                    expected: 2,
+                    got: 1,
+                },
+            ),
+            (256, 1, ValidationError::AddressOutOfRange { addr: 256 }),
+            (
+                0,
+                MAX_STATUS_DATA as u16 + 1,
+                ValidationError::PacketTooLarge {
+                    len: MAX_STATUS_DATA + 1,
+                    max: MAX_STATUS_DATA,
+                },
+            ),
+        ] {
+            assert_eq!(
+                P1::read_many(
+                    &mut link!(line, clock),
+                    addr,
+                    size,
+                    ids.into_iter(),
+                    &mut small,
+                    |_, _| calls += 1
+                ),
+                Err(expected.into())
+            );
+        }
+        assert!(line.sent().is_empty());
+        line.fail_with(embedded_io::ErrorKind::BrokenPipe);
+        assert_eq!(
+            P1::read_many(
+                &mut link!(line, clock),
+                43,
+                1,
+                ids.into_iter(),
+                &mut small,
+                |_, _| calls += 1
+            ),
+            Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+        );
+        assert_eq!(calls, 0);
     }
 }

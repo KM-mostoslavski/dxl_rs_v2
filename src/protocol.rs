@@ -25,6 +25,7 @@ pub use clock::StdClock;
 pub use p1::P1;
 pub use p2::P2;
 
+use core::fmt;
 use core::time::Duration;
 
 use embedded_io::{ErrorKind, Write};
@@ -43,6 +44,36 @@ mod sealed {
 pub trait Protocol: sealed::Sealed + Exchange {
     /// The broadcast ID, which addresses every actuator at once.
     const BROADCAST: u8 = 0xFE;
+
+    /// Which protocol this is, as a value.
+    const VERSION: ProtocolVersion;
+}
+
+/// A Dynamixel protocol as a value, for messages and runtime checks.
+///
+/// [`Protocol::VERSION`] maps the compile-time [`P1`] / [`P2`] to it.
+///
+/// ```
+/// use dxl_rs_v2::{P2, Protocol, ProtocolVersion};
+///
+/// assert_eq!(P2::VERSION, ProtocolVersion::P2);
+/// assert_eq!(P2::VERSION.to_string(), "Protocol 2");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtocolVersion {
+    /// Dynamixel Protocol 1.0.
+    P1,
+    /// Dynamixel Protocol 2.0.
+    P2,
+}
+
+impl fmt::Display for ProtocolVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::P1 => "Protocol 1",
+            Self::P2 => "Protocol 2",
+        })
+    }
 }
 
 /// One wire, as seen by a single exchange.
@@ -73,9 +104,9 @@ pub struct Pong {
     pub(crate) model_number: Option<u16>,
     /// Protocol 2 only.
     pub(crate) firmware: Option<u8>,
-    /// The error byte of a broadcast ping reply that had one set. Unicast
-    /// ping reports a set error byte as [`Error::Status`] instead, so this
-    /// is always `None` there.
+    /// The error byte of a scan or broadcast ping reply that had one set.
+    /// Unicast ping reports a set error byte as [`Error::Status`] instead,
+    /// so this is always `None` there.
     pub(crate) fault: Option<StatusReport>,
 }
 
@@ -118,6 +149,43 @@ pub trait Exchange: sealed::Sealed {
     ) -> Result<(), Error>
     where
         I: Iterator<Item = (Id, &'d [u8])> + Clone;
+
+    /// Finds every actuator answering at this baud rate and calls
+    /// `on_reply` for each answer.
+    ///
+    /// P2 sends one broadcast Ping and collects replies for one
+    /// `link.timeout`. P1 pings IDs `0..=252` in turn, each bounded by
+    /// `link.timeout`; a silent ID is skipped, not reported. A reply whose
+    /// error byte is set is still a [`Pong`], with the error in
+    /// [`Pong::fault`]. A corrupted reply (bad checksum or CRC, malformed,
+    /// unexpected ID or length) is passed on as `Err`, not skipped.
+    /// Returns `Err` only when the transport fails.
+    fn scan<T: Transport, C: Clock, F>(link: &mut Link<'_, T, C>, on_reply: F) -> Result<(), Error>
+    where
+        F: FnMut(Result<Pong, Error>);
+
+    /// Reads `size` bytes at `addr` from every ID in `ids`.
+    ///
+    /// P2 sends one Sync Read (see `P2::sync_read`). P1 sends one Read per
+    /// ID, in order, each bounded by `link.timeout`. `on_reply` is called
+    /// exactly once per ID, in `ids` order, with that actuator's data or
+    /// its own error (timeout, status error, corrupted reply). `scratch`
+    /// holds one reply and must be at least `size` bytes.
+    ///
+    /// Returns `Err` when the request is invalid, before anything is sent
+    /// (`scratch` too small, `size` or, on P1, `addr` out of range), or
+    /// when the transport fails.
+    fn read_many<T: Transport, C: Clock, I, F>(
+        link: &mut Link<'_, T, C>,
+        addr: u16,
+        size: u16,
+        ids: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>);
 
     /// Decodes a non-zero error byte of this protocol.
     fn report(error: u8) -> StatusReport;
@@ -351,6 +419,14 @@ mod tests {
         let mut line = MockTransport::new(&time);
         line.reply(vectors::p2::PING_REPLY);
         assert_eq!(ping::<P2>(&mut line, &time).map(|pong| pong.id), Ok(id(1)));
+    }
+
+    #[test]
+    fn version_names_each_protocol() {
+        assert_eq!(P1::VERSION, ProtocolVersion::P1);
+        assert_eq!(P2::VERSION, ProtocolVersion::P2);
+        assert_eq!(std::format!("{}", P1::VERSION), "Protocol 1");
+        assert_eq!(std::format!("{}", P2::VERSION), "Protocol 2");
     }
 
     #[test]

@@ -7,11 +7,13 @@
 use core::iter;
 
 use super::{
-    Clock, Exchange, Link, Parser, Pong, Protocol, Status, Transport, Writer, check, crc, drain,
-    receive, sealed,
+    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Status, Transport, Writer,
+    check, crc, drain, receive, sealed,
 };
 use crate::Id;
-use crate::error::{Error, P2Code, ProtocolError, StatusReport, TransportError, ValidationError};
+use crate::error::{
+    Error, P2Code, ProtocolError, StatusError, StatusReport, TransportError, ValidationError,
+};
 
 /// Dynamixel Protocol 2.0.
 ///
@@ -21,7 +23,9 @@ pub struct P2;
 
 impl sealed::Sealed for P2 {}
 
-impl Protocol for P2 {}
+impl Protocol for P2 {
+    const VERSION: ProtocolVersion = ProtocolVersion::P2;
+}
 
 const HEADER: [u8; 4] = [0xFF, 0xFF, 0xFD, 0x00];
 const BROADCAST: u8 = 0xFE;
@@ -346,6 +350,21 @@ fn pong(id: Id, data: [u8; 3], fault: Option<StatusReport>) -> Pong {
     }
 }
 
+/// Turns one reply to a broadcast Ping into a [`Pong`], or into the error
+/// that says why it cannot be one. A set error byte wins over a wrong
+/// length, as in [`check`].
+fn scan_reply(status: Status, data: [u8; 3]) -> Result<Pong, Error> {
+    let Ok(id) = Id::new(status.id) else {
+        return Err(ProtocolError::Malformed.into());
+    };
+    let fault = (status.error != 0).then(|| P2::report(status.error));
+    match (status.len, fault) {
+        (3, fault) => Ok(pong(id, data, fault)),
+        (_, Some(report)) => Err(StatusError { id, report }.into()),
+        (got, None) => Err(ProtocolError::WrongLength { expected: 3, got }.into()),
+    }
+}
+
 impl Exchange for P2 {
     fn ping<T: Transport, C: Clock>(link: &mut Link<'_, T, C>, id: Id) -> Result<Pong, Error> {
         let mut data = [0; 3];
@@ -403,6 +422,42 @@ impl Exchange for P2 {
             .chain(entries.flat_map(|(id, data)| iter::once(id.get()).chain(data.iter().copied())));
         drain(link)?;
         send(link.transport, BROADCAST, SYNC_WRITE, params)
+    }
+
+    fn scan<T: Transport, C: Clock, F>(
+        link: &mut Link<'_, T, C>,
+        mut on_reply: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(Result<Pong, Error>),
+    {
+        drain(link)?;
+        send(link.transport, BROADCAST, PING, iter::empty())?;
+        let deadline = link.deadline();
+        loop {
+            let mut data = [0; 3];
+            match receive(link, &mut StatusParser::new(&mut data), deadline, None) {
+                Ok(status) => on_reply(scan_reply(status, data)),
+                Err(Error::Transport(TransportError::Timeout { .. })) => return Ok(()),
+                Err(err @ Error::Transport(_)) => return Err(err),
+                Err(err) => on_reply(Err(err)),
+            }
+        }
+    }
+
+    fn read_many<T: Transport, C: Clock, I, F>(
+        link: &mut Link<'_, T, C>,
+        addr: u16,
+        size: u16,
+        ids: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        Self::sync_read(link, addr, size, ids, scratch, on_reply)
     }
 
     fn report(error: u8) -> StatusReport {
@@ -502,7 +557,9 @@ impl P2 {
     /// The e-Manual does not specify reply order or timing (`#ping-0x01`),
     /// so all replies inside the window are collected. A reply whose error
     /// byte is set is still reported, since the actuator is present, with
-    /// the error in [`Pong::fault`]. Corrupted replies are skipped. Returns `Err` only when the transport fails.
+    /// the error in [`Pong::fault`]. Corrupted replies are skipped; use
+    /// [`Exchange::scan`] to see them. Returns `Err` only when the
+    /// transport fails.
     pub(crate) fn broadcast_ping<T: Transport, C: Clock, F>(
         link: &mut Link<'_, T, C>,
         mut on_reply: F,
@@ -510,23 +567,11 @@ impl P2 {
     where
         F: FnMut(Pong),
     {
-        drain(link)?;
-        send(link.transport, BROADCAST, PING, iter::empty())?;
-        let deadline = link.deadline();
-        loop {
-            let mut data = [0; 3];
-            match receive(link, &mut StatusParser::new(&mut data), deadline, None) {
-                Ok(status) => {
-                    if let (3, Ok(id)) = (status.len, Id::new(status.id)) {
-                        let fault = (status.error != 0).then(|| P2::report(status.error));
-                        on_reply(pong(id, data, fault));
-                    }
-                }
-                Err(Error::Transport(TransportError::Timeout { .. })) => return Ok(()),
-                Err(err @ Error::Transport(_)) => return Err(err),
-                Err(_) => {}
+        Self::scan(link, |reply| {
+            if let Ok(pong) = reply {
+                on_reply(pong);
             }
-        }
+        })
     }
 }
 
@@ -1129,5 +1174,135 @@ mod tests {
         let mut line = MockTransport::new(&time);
         line.fail_with(ErrorKind::BrokenPipe);
         assert!(P2::broadcast_ping(&mut link!(line, clock), |_| {}).is_err());
+    }
+
+    fn scan_with(replies: &[&[u8]]) -> Vec<Result<Pong, Error>> {
+        let time = MockTime::new();
+        let mut clock = time.ticker(10);
+        let mut line = MockTransport::new(&time);
+        for reply in replies {
+            line.reply(reply);
+        }
+        let mut got = Vec::new();
+        P2::scan(&mut link!(line, clock), |r| got.push(r)).unwrap();
+        assert_eq!(line.sent(), v::BROADCAST_PING);
+        got
+    }
+
+    #[test]
+    fn scan_sends_one_broadcast_ping_and_reports_every_reply() {
+        assert_eq!(
+            scan_with(&[v::PING_REPLY, v::BROADCAST_PING_REPLY_2]),
+            [
+                Ok(pong(id(1), [0x06, 0x04, 0x26], None)),
+                Ok(pong(id(2), [0x06, 0x04, 0x26], None))
+            ]
+        );
+        assert_eq!(scan_with(&[]), []);
+    }
+
+    #[test]
+    fn scan_reports_a_set_error_byte_as_a_fault() {
+        let alert = StatusReport::P2 {
+            alert: true,
+            code: None,
+        };
+        assert_eq!(
+            scan_with(&[
+                &packet(1, STATUS, &[0x80, 0x06, 0x04, 0x26]),
+                v::BROADCAST_PING_REPLY_2
+            ]),
+            [
+                Ok(pong(id(1), [0x06, 0x04, 0x26], Some(alert))),
+                Ok(pong(id(2), [0x06, 0x04, 0x26], None))
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_passes_corrupted_replies_on_and_carries_on() {
+        let mut corrupted = v::PING_REPLY.to_vec();
+        *corrupted.last_mut().unwrap() ^= 0xFF;
+        assert_eq!(
+            scan_with(&[&corrupted, v::BROADCAST_PING_REPLY_2]),
+            [
+                Err(ProtocolError::Crc { id: 1 }.into()),
+                Ok(pong(id(2), [0x06, 0x04, 0x26], None))
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_reports_replies_that_cannot_be_a_pong() {
+        assert_eq!(
+            scan_with(&[
+                &packet(3, STATUS, &[0x01]),
+                &packet(4, STATUS, &[0x00, 0x06]),
+                &packet(253, STATUS, &[0x00, 0x06, 0x04, 0x26]),
+                &[0xFF, 0xFF, 0xFD, 0x00, 0x05, 0x02, 0x00],
+            ]),
+            [
+                Err(StatusError {
+                    id: id(3),
+                    report: StatusReport::P2 {
+                        alert: false,
+                        code: Some(P2Code::ResultFail)
+                    }
+                }
+                .into()),
+                Err(ProtocolError::WrongLength {
+                    expected: 3,
+                    got: 1
+                }
+                .into()),
+                Err(ProtocolError::Malformed.into()),
+                Err(ProtocolError::Malformed.into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_many_is_one_sync_read() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(100);
+        let mut line = MockTransport::new(&time);
+        line.reply(v::READ_REPLY_1).reply(v::READ_REPLY_2);
+        let mut got = Vec::new();
+        let mut scratch = [0; 4];
+        P2::read_many(
+            &mut link!(line, clock),
+            132,
+            4,
+            [id(1), id(3), id(2)].into_iter(),
+            &mut scratch,
+            |id, r| got.push((id.get(), r.map(<[u8]>::to_vec))),
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            [
+                (1, Ok(std::vec![0xA6, 0, 0, 0])),
+                (3, Err(TransportError::Timeout { id: Some(id(3)) }.into())),
+                (2, Ok(std::vec![0x1F, 0x08, 0, 0]))
+            ]
+        );
+        assert_eq!(
+            line.sent(),
+            packet(BROADCAST, SYNC_READ, &[0x84, 0, 4, 0, 1, 3, 2])
+        );
+
+        let mut line = MockTransport::new(&time);
+        line.fail_with(ErrorKind::BrokenPipe);
+        assert_eq!(
+            P2::read_many(
+                &mut link!(line, clock),
+                132,
+                4,
+                [id(1)].into_iter(),
+                &mut scratch,
+                |_, _| panic!("no reply expected")
+            ),
+            Err(TransportError::Io(ErrorKind::BrokenPipe).into())
+        );
     }
 }
