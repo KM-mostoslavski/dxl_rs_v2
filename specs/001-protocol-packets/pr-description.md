@@ -34,6 +34,20 @@ delivery order and unblocks the `bus` module. Spec: `specs/001-protocol-packets/
   single-byte corruption rejected; 1M random/mutated inputs; a counting global allocator
   proving zero allocations.
 
+### Additions for the bus
+From `specs/ideas/module-interfaces.md` §5 (tasks T054–T057):
+- `ProtocolVersion { P1, P2 }` (Display "Protocol 1" / "Protocol 2"), re-exported at the crate
+  root, and `Protocol::VERSION` on `P1` and `P2`.
+- `Exchange::scan`: P2 sends one broadcast ping; P1 pings IDs 0..=252 in turn, each bounded by
+  the link timeout. A set error byte gives a `Pong` with `fault` (on P1 the `Status` error of the
+  ping becomes that `Pong`). Corrupted replies reach the callback as `Err` instead of being
+  skipped; `P2::broadcast_ping` now delegates to `scan` and keeps skipping them. `Err` only on
+  transport failure.
+- `Exchange::read_many`: P2 delegates to `P2::sync_read` (kept as the P2-only explicit entry);
+  P1 sends one Read per ID. One callback per ID, in order; per-ID errors go to that ID; `Err`
+  only for an invalid request (before sending) or a transport failure.
+- `#[diagnostic::on_unimplemented]` on `Clock`.
+
 ## Architecture
 Follows docs/ARCHITECTURE.md and the SRS, with these deviations:
 - **Transport bound is `Read + Write + ReadReady` plus a `Clock`**: a plain `embedded_io::Read`
@@ -57,7 +71,7 @@ Follows docs/ARCHITECTURE.md and the SRS, with these deviations:
 
 ## Checklist
 - [x] `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass
-- [x] `cargo test` passes; line coverage ≥ 70 % (`cargo llvm-cov`): 96.1 %
+- [x] `cargo test` passes; line coverage ≥ 70 % (`cargo llvm-cov`): 96.4 %
 - [x] `no_std` build passes (`--no-default-features --features ax,mx,x-series,y-series,pro --target thumbv7em-none-eabihf`)
 - [x] `cargo xtask codegen` leaves `src/models.rs` and `src/models/` unchanged
 - [x] Public methods documented

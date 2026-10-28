@@ -8,7 +8,8 @@ Facts and constants come from the e-Manual pages listed in `research.md`.
 |---|---|---|
 | `P1` | zero-sized, `pub` | Header `FF FF`; 1-byte length = params + 2; checksum `!(ID + LEN + INST/ERR + params) as u8`. Addresses and data lengths are 1 byte. |
 | `P2` | zero-sized, `pub` | Header `FF FF FD 00`; 2-byte LE length = params + 3 (instruction) / + 4 (status), counting stuffed bytes; CRC-16 LE over header..params. Addresses and lengths 2 bytes LE. |
-| `Protocol` | sealed `pub` trait | Implemented by `P1`, `P2` only. `BROADCAST: u8 = 0xFE`. |
+| `Protocol` | sealed `pub` trait | Implemented by `P1`, `P2` only. `BROADCAST: u8 = 0xFE`; `VERSION: ProtocolVersion`. |
+| `ProtocolVersion` | `pub enum { P1, P2 }` | `Debug, Clone, Copy, PartialEq, Eq, Hash`; Display "Protocol 1" / "Protocol 2". The runtime value of a `Protocol`, for messages and checks. |
 
 ## Instruction codes in scope
 
@@ -31,17 +32,20 @@ Fast Sync Read 0x8A, Fast Bulk Read 0x9A.
 |---|---|---|
 | transport | `&mut T`, `T: crate::Transport` (`Read + Write + ReadReady`) | RX drained (`read_ready` + `read` until not ready) before every TX (FR-006). |
 | clock | `&mut C`, `C: Clock` | `now_us()` monotonic microseconds. |
-| timeout | `core::time::Duration` | Per reply. Unicast: one deadline. Sync read: one deadline per expected reply. Broadcast ping: one window, all replies inside it collected. Broadcast writes: no read at all (FR-008). |
+| timeout | `core::time::Duration` | Per reply. Unicast: one deadline. Sync read: one deadline per expected reply. Broadcast ping and P2 scan: one window, all replies inside it collected. P1 scan: one deadline per ID pinged. Broadcast writes: no read at all (FR-008). |
 
 ## Values returned
 
 - **`Pong`**: `id: Id`, `model_number: Option<u16>`, `firmware: Option<u8>` (`None` on P1, R-11),
-  `fault: Option<StatusReport>` (a set error byte on a broadcast ping reply; always `None` on unicast
-  ping, which returns `Error::Status` instead).
+  `fault: Option<StatusReport>` (a set error byte on a scan or broadcast ping reply; always `None`
+  on unicast ping, which returns `Error::Status` instead).
+- **Scan replies**: delivered one at a time to a caller callback as `Result<Pong, Error>`: one `Ok`
+  per actuator found (P1 in ID order), one `Err` per corrupted reply. Silent IDs produce nothing.
 - **Read data**: written into the caller's `&mut [u8]`; its length is the requested length. After
   `Error::Status` it still holds the reply's data when the reply had that length, else zeroes.
-- **Sync read replies**: delivered one at a time to a caller callback as `(Id, Result<&[u8], Error>)`,
-  in request order. Strict/partial policy belongs to the `bus` module.
+- **Sync read and `read_many` replies**: delivered one at a time to a caller callback as
+  `(Id, Result<&[u8], Error>)`, once per ID, in request order. Strict/partial policy belongs to
+  the `bus` module.
 
 ## Errors (all `thiserror`, no_std, `Copy`, `#[non_exhaustive]`)
 
@@ -63,7 +67,8 @@ Error
 │     ├── Crc { id: u8 }               P2 CRC mismatch
 │     ├── WrongId { expected: Id, got: u8 }
 │     ├── WrongLength { expected: usize, got: usize }  reply payload ≠ requested
-│     └── Malformed                    only impossible headers seen before the deadline
+│     └── Malformed                    only impossible headers seen before the deadline;
+│                                      also a P2 scan reply from an ID above 252
 └── Status(StatusError)                new
       StatusError { id: Id, report: StatusReport }
       StatusReport

@@ -16,9 +16,15 @@ impl<F: FnMut() -> u64> Clock for F { /* calls self() */ }
 #[cfg(feature = "std")]
 pub struct StdClock { /* Instant origin */ }   // Default + Clock
 
-pub trait Protocol: sealed::Sealed + Exchange { const BROADCAST: u8 = 0xFE; }
+pub trait Protocol: sealed::Sealed + Exchange {
+    const BROADCAST: u8 = 0xFE;
+    const VERSION: ProtocolVersion;            // P1::VERSION == ProtocolVersion::P1, P2 likewise
+}
 pub struct P1;
 pub struct P2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtocolVersion { P1, P2 }            // Display: "Protocol 1" / "Protocol 2"
 
 pub use error::{TransportError, ProtocolError, StatusError, StatusReport, P1Flags, P2Code};
 ```
@@ -26,6 +32,8 @@ pub use error::{TransportError, ProtocolError, StatusError, StatusReport, P1Flag
 DX notes:
 - MCU: `let clock = || timer.now().ticks();` is a valid `Clock`.
 - std: `StdClock::default()`.
+- `Clock` carries `#[diagnostic::on_unimplemented]`: passing a non-clock names the trait and
+  points at closures and `StdClock`.
 - No new type parameter is visible to users in this feature; `Bus` wiring is the `bus` feature.
 
 ## Crate-internal exchange API
@@ -51,6 +59,12 @@ pub trait Exchange: sealed::Sealed {            // implemented for P1 and P2
     fn sync_write<'d, T, C, I>(link: &mut Link<T, C>, addr: u16, size: u16, entries: I)
         -> Result<(), Error>
     where I: Iterator<Item = (Id, &'d [u8])> + Clone;
+    fn scan<T, C, F>(link: &mut Link<T, C>, on_reply: F) -> Result<(), Error>
+    where F: FnMut(Result<Pong, Error>);
+    fn read_many<T, C, I, F>(link: &mut Link<T, C>, addr: u16, size: u16,
+        ids: I, scratch: &mut [u8], on_reply: F) -> Result<(), Error>
+    where I: Iterator<Item = Id> + Clone, F: FnMut(Id, Result<&[u8], Error>);
+    fn report(error: u8) -> StatusReport;
 }
 
 impl P2 {
@@ -63,6 +77,8 @@ impl P2 {
     where F: FnMut(Pong);
 }
 // P1 has no sync_read and no broadcast_ping: they do not exist (FR-004, SC-005).
+// `read_many` and `scan` are the protocol-neutral forms the bus uses; `sync_read` stays the
+// explicit P2-only entry (`impl Bus<P2, ..>`).
 ```
 
 ## Guarantees
@@ -80,3 +96,5 @@ impl P2 {
 | G9 | No allocation, no panic, for any bytes received. A header with an impossible length, or a P2 status LEN longer than the expected reply can be with worst-case stuffing, is skipped (resync), so one corrupted LEN never swallows the replies after it; if no valid packet follows before the deadline the error is `Protocol(Malformed)` instead of `Timeout`. A `read` of 0 bytes (end of stream) is `Transport(Io(NotConnected))`. | FR-011 |
 | G10 | Status Return Level is never touched. | FR-012 |
 | G11 | Encoded bytes equal the e-Manual examples exactly; decoded fields equal them. | FR-001..003, SC-001 |
+| G12 | `scan` finds every actuator at this baud. P2: one broadcast ping, replies collected for one `timeout` (the logic of `broadcast_ping`). P1: Ping to IDs 0..=252 in turn, each bounded by `timeout`; a silent ID is skipped. A reply with its error byte set is `Ok(Pong)` with `fault` set (P1: the `Status` error a unicast ping returns is turned into that `Pong`). A corrupted reply is passed to `on_reply` as `Err`, never skipped: bad checksum/CRC, `Malformed`, P1 `WrongId`; on P2 also a reply of the wrong length (`WrongLength`, or `Status` when its error byte is set, as in G6) or from an ID above 252 (`Malformed`). Returns `Err` only on transport I/O failure. | bus autoscan |
+| G13 | `read_many` reads `size` bytes at `addr` from each ID. P2 delegates to `sync_read` (G4). P1 sends one Read per ID, in order. `on_reply` is called exactly once per ID, in iterator order; timeout, status error and corruption go to that ID's callback. Invalid requests (`scratch` shorter than `size`, `size` too large, P1 `addr > 0xFF`) return `Validation` before anything is sent; otherwise returns `Err` only on transport I/O failure. | bus Easy-tier reads |

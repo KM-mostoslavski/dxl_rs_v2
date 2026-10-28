@@ -179,6 +179,13 @@ From [review-2026-10-27.md](review-2026-10-27.md), after the transport module (s
 - [X] T052 `P1Flags` Display names error bits outside the seven known flags instead of "no error"; test
 - [X] T053 Document every public error field and enable `#![warn(missing_docs)]` in src/lib.rs
 
+## Phase 9: Additions for the bus (specs/ideas/module-interfaces.md §5)
+
+- [X] T054 Add `pub enum ProtocolVersion { P1, P2 }` (Display "Protocol 1" / "Protocol 2") and `const VERSION: ProtocolVersion` on `Protocol`, set on `P1` and `P2`; re-export from src/lib.rs; test values and Display
+- [X] T055 Add `Exchange::scan`: P2 is the broadcast ping loop, now passing corrupted replies (CRC, malformed, wrong length, ID above 252) on as `Err` (`P2::broadcast_ping` delegates and keeps skipping them); P1 pings IDs 0..=252 in turn, skips silent IDs and turns a `Status` error into a `Pong` with `fault`; tests for two replies, a faulted reply, a corrupted reply among valid ones, P1 IDs found among silent ones, transport failure
+- [X] T056 Add `Exchange::read_many`: P2 delegates to `P2::sync_read` (kept as the explicit P2-only entry); P1 validates `addr`, `size` and `scratch` before sending, then one Read per ID, each result to that ID's callback; tests for a silent ID among answering ones, a status error, invalid requests and transport failure; zero-allocation test covers `P2::scan` and `P1::read_many`
+- [X] T057 Put `#[diagnostic::on_unimplemented]` on `Clock` so passing a non-clock names the trait and the closure / `StdClock` options
+
 Not applied: the P1 status parser keeps trusting LEN (one byte, at most 253 bytes swallowed, and P1 has
 no multi-reply instruction); sync read still drops the data of an error reply (the callback type is the
 architect's call, review "status-error-discards-valid-data"); where the bus keeps its clock is decided in

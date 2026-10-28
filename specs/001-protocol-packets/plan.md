@@ -80,13 +80,16 @@ specs/001-protocol-packets/
 src/
 ├── lib.rs               # + mod protocol; re-exports (core, cross-module)
 ├── error.rs             # + Transport/Protocol/Status errors, new Validation variants (core)
-├── protocol.rs          # Protocol (sealed), Exchange, Link, Pong, drain + receive loop
+├── protocol.rs          # Protocol (sealed, VERSION), ProtocolVersion, Exchange (incl. scan,
+│                        # read_many), Link, Pong, drain + receive loop
 └── protocol/
     ├── clock.rs         # Clock trait, closure impl, StdClock (std)
     ├── crc.rs           # const-fn CRC-16 table + update (P2)
-    ├── p1.rs            # P1 encode, checksum, status parser, Exchange impl
-    ├── p2.rs            # P2 encode + stuffing, status parser + unstuffing, Exchange impl,
-    │                    # inherent sync_read / broadcast_ping
+    ├── p1.rs            # P1 encode, checksum, status parser, Exchange impl (scan = ID sweep,
+    │                    # read_many = one Read per ID)
+    ├── p2.rs            # P2 encode + stuffing, status parser + unstuffing, Exchange impl
+    │                    # (scan = broadcast ping, read_many = sync_read), inherent
+    │                    # sync_read / broadcast_ping
     ├── no_alloc.rs      # #[cfg(test)] counting #[global_allocator], zero allocations
     └── vectors.rs       # #[cfg(test)] vendored e-Manual packets, each with URL + anchor
 Cargo.toml               # + embedded-io, std feature forwarding, proptest dev-dep (ci)
