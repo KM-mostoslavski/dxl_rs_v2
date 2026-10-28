@@ -14,10 +14,6 @@ mod actuator;
 mod error;
 mod id;
 pub mod models;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "exchanges are called by the bus module")
-)]
 mod protocol;
 mod register;
 mod transport;
