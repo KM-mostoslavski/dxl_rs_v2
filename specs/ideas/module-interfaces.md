@@ -176,6 +176,60 @@ impl Cache {
 
 No constructor fills limits from a control table (FR-007 core).
 
+### 2.4b Limit mode (architect, 2026-10-28: limits follow the operating mode)
+
+The firmware applies position limits only in position mode. The e-Manual (XM430-W350, Min/Max
+Position Limit): "These values are not used in Extended Position Control Mode and Current-based
+Position Control Mode". The goal check follows the firmware.
+
+```rust
+// src/actuator.rs, crate-internal
+/// How a goal position is checked, decided at Setup from the operating mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub(crate) enum LimitMode {
+    /// Position (joint) mode: goal must lie in the EEPROM limits read at Setup.
+    #[default]
+    Bounded = 0,
+    /// Extended / current-based position, MX multi-turn: the EEPROM limits are not used by the
+    /// firmware; only the register size check applies until the model's range is verified.
+    Unbounded = 1,
+    /// Velocity, current, PWM, AX/XL-320 wheel mode: the firmware ignores Goal Position.
+    /// A goal write returns `ValidationError::NotPositionMode { id }` and sends nothing.
+    NoPosition = 2,
+}
+
+pub struct Cache { id: Id, mode: LimitMode, limits: Option<Limits> } // mode sits in the padding
+                                                                    // after `id`: still 16 bytes
+impl Cache {
+    pub(crate) fn record_mode(&mut self, mode: LimitMode);
+    /// Bounded: as before (`LimitsUnknown`, `OutOfLimits`). Unbounded: `Ok(raw)`.
+    /// NoPosition: `NotPositionMode { id }`.
+    pub(crate) fn check_goal(&self, raw: i32) -> Result<i32, ValidationError>;
+}
+
+// generated per model (xtask), in ModelData
+pub(crate) enum ModeSource {
+    /// "Operating Mode" (X, MX(2.0), PRO, PRO+, Y): 1 byte read at Setup.
+    OperatingMode(Register),
+    /// XL-320 "Control Mode": 1 = wheel → NoPosition, 2 = joint → Bounded.
+    ControlMode(Register),
+    /// AX, MX on P1: no register; derived from the CW/CCW limits already read.
+    /// CW = CCW = 0 → NoPosition (wheel). MX P1 CW = CCW = 4095 → Unbounded (multi-turn).
+    AngleLimits,
+}
+```
+
+- Operating Mode values → `LimitMode` per family, each cited from that family's e-Manual page
+  (X: 3 → Bounded; 4, 5 → Unbounded; 0, 1, 16 → NoPosition; PRO/PRO+/Y checked by core).
+- An Operating Mode or Control Mode value not listed for the family fails Setup with
+  `SetupError::UnknownOperatingMode { id, value }` (constitution III: no fallback).
+- Setup cost: P2 and XL-320, one 1-byte read per actuator; AX and MX P1, none.
+- Memory cost: zero. `mode` fits in the 3 padding bytes after `id` in `Cache`.
+- The mode is read once at Setup. It is EEPROM and changes only with torque off. A
+  `raw-registers` write to it leaves the cache stale until the next Setup; documented on
+  `write_raw`. A typed `set_operating_mode` waits for OQ-2.
+
 ### 2.5 Torque state (one byte, held by the bus)
 
 ```rust
@@ -236,6 +290,7 @@ pub struct ModelData {
     pub(crate) present_position: Register,
     pub(crate) limits: LimitRegisters,
     pub(crate) hardware_error: Option<Register>, // "Hardware Error Status", else None
+    pub(crate) mode: ModeSource,                 // section 2.4b
     pub(crate) scale: PositionScale,
 }
 
@@ -710,6 +765,7 @@ Core, tables and bus each ship as more than one PR. That needs the architect's a
   from the patched SRS).
 - Constitution IV already has the deferred-verification amendment (v1.2.0). Principle VI still
   lists four error categories and needs `Setup` added (core plan).
-- Limits that may hold only in position mode (bus R3, conflict 8 in the bus spec) and AX
-  wheel mode (CW = CCW = 0) stay open for the bus plan. They are checked against the e-Manual
-  before the limit check ships.
+- Decided 2026-10-28: limits follow the operating mode (section 2.4b, SRS FR-3.7);
+  `raw-registers` replies run `observe`, so a fault on a raw reply sets `Faulted` (SRS FR-8.1,
+  no exception to constitution III); `partial-reads` keeps a result per actuator inside a P2
+  sync group, and only a failed instruction fails the whole group (SRS FR-4.7).
