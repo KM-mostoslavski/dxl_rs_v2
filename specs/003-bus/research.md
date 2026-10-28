@@ -13,9 +13,9 @@ Sources:
 - A scratch crate (`/tmp/claude-1000/bus-proto`, heapless 0.9.3, rustc 1.97.1) that checked the
   type shapes below on the host and on `thumbv7em-none-eabihf`.
 
-## R-1 The clock is the fourth type parameter
+## R-1 The clock is the third type parameter
 
-**Decision**: `Bus<P, T, const N: usize = 32, C = DefaultClock>`. `DefaultClock` is `StdClock`
+**Decision**: `Bus<P, T, C = DefaultClock, const N: usize = 32>`. `DefaultClock` is `StdClock`
 under `std` and `NoClock` (an empty enum, not a `Clock`) without it. `new` takes the clock by
 value. `ActuatorRef<'b, P, T, C>` carries `C` but not `N`.
 
@@ -30,6 +30,26 @@ works. The scratch crate confirms:
 `NoClock` keeps features additive (module-interfaces conflict 15). Without `std`, `Bus::new`
 needs a named clock. Enabling `std` only makes more code compile.
 
+The clock comes before `N` (architect, 2026-10-28). A no_std bus always names its clock and
+rarely changes `N`, so it writes `Bus<P2, Uart, Mono>` instead of `Bus<P2, Uart, 32, Mono>`. A
+std bus that changes `N` uses `SerialBus<P, N>`.
+
+This is the usual pattern for no_std drivers that need a time source, and the clock stays set
+through the library API, per bus:
+- embedded-hal drivers take the delay or timer as a type parameter passed to the constructor
+  (`Driver<I2C, D: DelayNs>`), and so do RTIC's `Monotonic` and embedded-time's `Clock`.
+- Global time drivers (embassy-time's `time_driver_impl!`, `critical-section::set_impl!`) are
+  set once per binary at link time. A backend library cannot choose the clock per bus that way,
+  and tests cannot swap it.
+- The common no_std time sources are static functions (`embassy_time::Instant::now()`,
+  `Mono::now()` in RTIC, a SysTick counter in an atomic). A 4-line zero-sized `Clock` impl wraps
+  any of them and gives a type a library can store in a struct field. A closure works too but
+  cannot be named in a field. `fn() -> u64` can be named, at the cost of an indirect call.
+- `Clock` carries `#[diagnostic::on_unimplemented]` (added in PR #7), so `Bus::<P2, Uart>::new`
+  without a clock reports "not a dxl_rs_v2 clock" with a note, not a bare E0277.
+- Feature-gated impls for popular time sources (`embassy-time`, `rtic-monotonics`) only add API
+  and can come later if users ask.
+
 **Alternatives considered**:
 - `C = fn() -> u64` (proposal). Rejected: an indirect call, and a no_std default that silently
   changes type when `std` turns on.
@@ -38,7 +58,7 @@ needs a named clock. Enabling `std` only makes more code compile.
 
 ## R-2 No `Clock` bound on the struct itself
 
-**Decision**: The struct is `pub struct Bus<P: Protocol, T: Transport, const N: usize = 32, C = DefaultClock>`.
+**Decision**: The struct is `pub struct Bus<P: Protocol, T: Transport, C = DefaultClock, const N: usize = 32>`.
 Every `impl` block bounds `C: Clock`. This deviates from module-interfaces §6 (see plan.md).
 
 **Rationale**: In the scratch crate, `pub struct Bus<…, C: Clock = DefaultClock>` with
@@ -465,7 +485,7 @@ shape and error messages.
 
 ## R-18 `SerialBus`
 
-**Decision**: `pub type SerialBus<P, const N: usize = 32> = Bus<P, SerialTransport, N, StdClock>;`
+**Decision**: `pub type SerialBus<P, const N: usize = 32> = Bus<P, SerialTransport, StdClock, N>;`
 with `open(path, baud) -> Result<Self, serialport::Error>`. It wraps `SerialTransport::open`,
 `StdClock::default()` and `Config::new()`. A user who needs another config calls `Bus::new`
 with those three parts.

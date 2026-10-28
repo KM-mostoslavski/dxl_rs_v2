@@ -397,7 +397,7 @@ adds that line if PR #7 does not.
                p2: [(from_fw: 0, file: "xl330_m077_fw52"), (from_fw: 53, file: "xl330_m077")], ...),
     },
     not_mapped: [
-        (file: "xw430_t200", reason: NoModelNumber),
+        (file: "xw430_t200", reason: SameNumberAs(1270)),
         (file: "ax_12_plus", reason: SameNumberAs(12)),
     ],
 )
@@ -562,7 +562,7 @@ pub trait Exchange: sealed::Sealed {
 /// Always present. Implements no `Clock`, so a no_std bus must name its clock.
 pub enum NoClock {}
 
-pub struct Bus<P: Protocol, T: Transport, const N: usize = 32, C: Clock = DefaultClock> {
+pub struct Bus<P: Protocol, T: Transport, C: Clock = DefaultClock, const N: usize = 32> {
     transport: T,
     clock: C,
     config: Config,
@@ -581,7 +581,7 @@ impl Config {
     pub const fn retries(self, n: u8) -> Self;
 }
 
-impl<P: Protocol, T: Transport, const N: usize, C: Clock> Bus<P, T, N, C> {
+impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     pub fn new(transport: T, clock: C, config: Config) -> Self;            // no I/O
     pub fn into_parts(self) -> (T, C);
     pub fn autoscan(&mut self) -> Result<&[ActuatorKind], Error>;          // no_std too
@@ -591,10 +591,10 @@ impl<P: Protocol, T: Transport, const N: usize, C: Clock> Bus<P, T, N, C> {
     pub fn actuator(&mut self, id: Id) -> Option<ActuatorRef<'_, P, T, C>>;
     // Easy and Explicit tiers: names and buffers per the bus plan (FR-4)
 }
-impl<T: Transport, const N: usize, C: Clock> Bus<P2, T, N, C> { /* sync_read */ }
+impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> { /* sync_read */ }
 
 #[cfg(feature = "std")]
-pub type SerialBus<P, const N: usize = 32> = Bus<P, SerialTransport, N, StdClock>;
+pub type SerialBus<P, const N: usize = 32> = Bus<P, SerialTransport, StdClock, N>;
 #[cfg(feature = "std")]
 impl<P: Protocol, const N: usize> SerialBus<P, N> {
     pub fn open(path: &str, baud: u32) -> Result<Self, serialport::Error>;

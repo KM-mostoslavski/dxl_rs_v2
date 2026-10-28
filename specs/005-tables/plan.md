@@ -153,8 +153,9 @@ protocols, then `access`/`area` per family, then the map, then verification, the
 1. **XW430-T200 is `SameNumberAs(1270)`, not `NoModelNumber`.** The contract's example in 3.2 shows
    `(file: "xw430_t200", reason: NoModelNumber)`. The e-Manual page for XW430-T200 gives Model
    Number 1,270, the same as XW430-T333 (raw page checked 2026-10-27), and both tables are
-   identical. US5 AS4 then requires recording it under the existing entry. The shared number looks
-   like an e-Manual copy error; raised to the architect (research R-10). If a real XW430-T200
+   identical. US5 AS4 then requires recording it under the existing entry. Architect asked for an
+   e-Manual check: both pages give 1,270 (re-checked 2026-10-28), so it stays `SameNumberAs(1270)`
+   (research R-10). If a real XW430-T200
    reports another number, the bus fails Setup with `UnsupportedModel`, which is safe.
 2. **AX-18F is `SameNumberAs(18)`.** The contract's example does not list it. The AX-18A page
    covers "AX-18F, AX-18A" and gives Model Number 18. Same layout. Not a contract change, data
@@ -190,7 +191,7 @@ the contract.
   `python3 control_tables/check_tables.py` and
   `python3 -m unittest discover -s control_tables -p 'test_*.py'`. It is guarded by
   `if [ -f control_tables/check_tables.py ]` until T1 merges (research R-12).
-- **Architect**: XW430-T200 / T333 share number 1270 on the e-Manual. AX-12+ has no page of its
+- **Architect**: XW430-T200 / T333 share number 1270 on the e-Manual (confirmed 2026-10-28). AX-12+ has no page of its
   own; its record cites the AX-12A page, which names AX-12+ (research R-9). RH-P12-RN entry 35074 is
   "RH-P12-RN(A)" on the e-Manual (35073 is the older RH-P12-RN, not in this repo).
   `docs/srs/modules/tables.md` is stale. CLAUDE.md's command list could add the check (not

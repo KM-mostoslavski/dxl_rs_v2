@@ -8,7 +8,7 @@
 
 Build the `bus` module: the public entry point of the crate.
 
-- **`Bus<P, T, N = 32, C = DefaultClock>`** owns one wire: the transport, the clock, a `Config`
+- **`Bus<P, T, C = DefaultClock, N = 32>`** owns one wire: the transport, the clock, a `Config`
   (reply timeout, scan wait, retries), up to `N` actuators sorted by `Id`, and one
   `TorqueState` byte per slot in an array beside them. Creating it sends nothing.
 - **Setup** fills the list. `declare` pings only the listed IDs. `autoscan` uses the protocol's
@@ -123,7 +123,7 @@ failures.
    `NoClock` is not a `Clock`. rustc checks defaults against struct bounds: a scratch crate
    fails with `E0277: the trait bound NoClock: Clock is not satisfied` at the struct definition,
    in every no_std build (research R-2). The plan declares
-   `pub struct Bus<P: Protocol, T: Transport, const N: usize = 32, C = DefaultClock>`, with
+   `pub struct Bus<P: Protocol, T: Transport, C = DefaultClock, const N: usize = 32>`, with
    `C: Clock` on every `impl`. The intent is unchanged: a no_std user who does not name a clock
    cannot call `Bus::new`. `ActuatorRef` keeps `C: Clock`, because it has no default.
 2. **Six bus PRs, not seven (§7, "bus 1–7").** Fault observation and the retry loop move into

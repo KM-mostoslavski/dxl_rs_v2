@@ -38,9 +38,9 @@ impl Default for Config;   // = new()
 ## Bus (`src/bus.rs`)
 
 ```rust
-pub struct Bus<P: Protocol, T: Transport, const N: usize = 32, C = DefaultClock> { /* private */ } // [dev-1]
+pub struct Bus<P: Protocol, T: Transport, C = DefaultClock, const N: usize = 32> { /* private */ } // [dev-1]
 
-impl<P: Protocol, T: Transport, const N: usize, C: Clock> Bus<P, T, N, C> {
+impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// No I/O. Compile error if `N > 253`.
     pub fn new(transport: T, clock: C, config: Config) -> Self;
     pub fn into_parts(self) -> (T, C);
@@ -72,7 +72,7 @@ torque state, limits. A refusal sends nothing to anyone. An empty target list se
 returns `Ok`.
 
 ```rust
-impl<P: Protocol, T: Transport, const N: usize, C: Clock> Bus<P, T, N, C> {
+impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Acknowledged unicast writes, in target order. Refused (nothing sent) if any target is
     /// faulted. Stops at the first error.
     pub fn enable_torque<I: IntoIterator<Item = Id>>(&mut self, ids: I) -> Result<(), Error>;
@@ -100,14 +100,14 @@ impl<P: Protocol, T: Transport, const N: usize, C: Clock> Bus<P, T, N, C> {
 ### Explicit tier (`src/bus/multi.rs`)
 
 ```rust
-impl<P: Protocol, T: Transport, const N: usize, C: Clock> Bus<P, T, N, C> {
+impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Sync Write of field `F`, same validation as the Easy tier. Both protocols.
     pub fn sync_write<F: WriteField, I: IntoIterator<Item = Id>>(
         &mut self, field: F, ids: I, values: &[F::Value],
     ) -> Result<(), Error>;
 }
 
-impl<T: Transport, const N: usize, C: Clock> Bus<P2, T, N, C> {
+impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
     /// Sync Read of field `F`. Protocol 2 only: absent on `Bus<P1, …>` (compile error E0599).
     pub fn sync_read<F: ReadField, I: IntoIterator<Item = Id>>(
         &mut self, field: F, ids: I, out: &mut [F::Value],
@@ -119,7 +119,7 @@ impl<T: Transport, const N: usize, C: Clock> Bus<P2, T, N, C> {
 
 ```rust
 #[cfg(feature = "partial-reads")]
-impl<P: Protocol, T: Transport, const N: usize, C: Clock> Bus<P, T, N, C> {
+impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// One result per slot. Validation errors still fail the call (nothing sent).
     /// P1: each slot is independent. P2: a group whose instruction fails gives that error to
     /// all its slots; per-ID errors stay per slot (narrows SRS FR-4.7, plan SRS deviation 1).
@@ -230,8 +230,8 @@ pub struct IdSetIter { /* private */ }   // Iterator<Item = Id> + Clone
 
 ```rust
 // src/bus/serial.rs
-pub type SerialBus<P, const N: usize = 32> = Bus<P, SerialTransport, N, StdClock>;
-impl<P: Protocol, const N: usize> Bus<P, SerialTransport, N, StdClock> {
+pub type SerialBus<P, const N: usize = 32> = Bus<P, SerialTransport, StdClock, N>;
+impl<P: Protocol, const N: usize> Bus<P, SerialTransport, StdClock, N> {
     /// `SerialTransport::open(path, baud)`, `StdClock::default()`, `Config::new()`. No I/O.
     pub fn open(path: &str, baud: u32) -> Result<Self, serialport::Error>;
 }

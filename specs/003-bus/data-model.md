@@ -7,7 +7,7 @@ Types owned by other modules (`Id`, `ModelNumber`, `Position`, `PositionScale`, 
 defined in `specs/ideas/module-interfaces.md` §2 to §5. This file only says how the bus uses
 them.
 
-## Bus<P, T, N = 32, C = DefaultClock>
+## Bus<P, T, C = DefaultClock, N = 32>
 
 | Field | Type | Notes |
 |---|---|---|
