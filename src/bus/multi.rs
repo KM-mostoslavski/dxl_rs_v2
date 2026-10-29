@@ -19,7 +19,7 @@ use super::wire::{AnyProtocol, ReadMany, SyncRead, Wire};
 
 /// Enables torque on every target, in target order, after checking that
 /// none is faulted. Stops at the first error.
-fn torque_on<P, T, C, S, I>(
+pub(super) fn torque_on<P, T, C, S, I>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     stages: &mut [Stage],
@@ -49,7 +49,7 @@ where
 
 /// Disables torque on every target, in target order, even after an error.
 /// Returns the first hardware fault, else the first error.
-fn torque_off<P, T, C, S, I>(
+pub(super) fn torque_off<P, T, C, S, I>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     stages: &mut [Stage],
@@ -77,7 +77,7 @@ where
 
 /// Validates every target, then sends one Sync Write of field `F` per
 /// register layout.
-fn write_field<P, T, C, S, F, I>(
+pub(super) fn write_field<P, T, C, S, F, I>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     stages: &mut [Stage],
@@ -104,7 +104,7 @@ where
 
 /// Reads field `F` of every target into `out[..targets]`, one `R::run` per
 /// register layout. `out` changes only when every target answered.
-fn read_field<P, T, C, S, F, R, I>(
+pub(super) fn read_field<P, T, C, S, F, R, I>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     stages: &mut [Stage],

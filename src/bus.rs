@@ -65,6 +65,8 @@ assert!((present.radians() - 0.5).abs() < 0.01);
 )]
 
 mod actuator_ref;
+#[cfg(feature = "std")]
+mod dyn_bus;
 pub mod field;
 mod group;
 mod id_set;
@@ -88,6 +90,8 @@ use crate::protocol::{Clock, Protocol};
 use crate::{Id, Transport};
 
 pub use actuator_ref::ActuatorRef;
+#[cfg(feature = "std")]
+pub use dyn_bus::DynBus;
 pub use id_set::{IdSet, IdSetIter};
 #[cfg(feature = "std")]
 pub use serial::SerialBus;
@@ -238,6 +242,19 @@ let present = bus.actuator(ID).ok_or("ID 1 not found")?.present_position()?;
 #[cfg_attr(
     not(feature = "std"),
     doc = r#"
+`DynBus`, the bus with no capacity limit, needs `std`:
+
+```compile_fail,E0433
+use dxl_rs_v2::{Config, P2, Transport};
+
+fn open<T: Transport>(uart: T, clock: fn() -> u64) {
+    let bus = dxl_rs_v2::DynBus::<P2, T, _>::new(uart, clock, Config::new());
+    drop(bus);
+}
+```
+
+Without `std`, a bus must name its clock:
+
 ```compile_fail,E0277
 use dxl_rs_v2::{Bus, Config, DefaultClock, P2, Transport};
 
