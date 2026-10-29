@@ -21984,8 +21984,10 @@
    }
   },
   "h42_20_s300_ra": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 51201,
    "n_regs": 67,
    "regs": {
@@ -22260,8 +22262,10 @@
    }
   },
   "h54_100_s500_ra": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 53769,
    "n_regs": 67,
    "regs": {
@@ -22536,8 +22540,10 @@
    }
   },
   "h54_200_s500_ra": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 54025,
    "n_regs": 67,
    "regs": {
@@ -22812,8 +22818,10 @@
    }
   },
   "m42_10_s260_ra": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 43289,
    "n_regs": 67,
    "regs": {
@@ -23088,8 +23096,10 @@
    }
   },
   "m54_40_s250_ra": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 46097,
    "n_regs": 67,
    "regs": {
@@ -23364,8 +23374,10 @@
    }
   },
   "m54_60_s250_ra": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 46353,
    "n_regs": 67,
    "regs": {
@@ -24361,8 +24373,10 @@
    }
   },
   "ph42_020_s300": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 2000,
    "n_regs": 70,
    "regs": {
@@ -24649,8 +24663,10 @@
    }
   },
   "ph54_100_s500": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 2010,
    "n_regs": 70,
    "regs": {
@@ -24937,8 +24953,10 @@
    }
   },
   "ph54_200_s500": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 2020,
    "n_regs": 70,
    "regs": {
@@ -25225,8 +25243,10 @@
    }
   },
   "pm42_010_s260": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 2100,
    "n_regs": 70,
    "regs": {
@@ -25513,8 +25533,10 @@
    }
   },
   "pm54_040_s250": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 2110,
    "n_regs": 70,
    "regs": {
@@ -25801,8 +25823,10 @@
    }
   },
   "pm54_060_s250": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 2120,
    "n_regs": 70,
    "regs": {
@@ -26089,8 +26113,10 @@
    }
   },
   "rh_p12_rn": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 35074,
    "n_regs": 63,
    "regs": {
@@ -35409,8 +35435,10 @@
    }
   },
   "ym070_210_a051": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4040,
    "n_regs": 98,
    "regs": {
@@ -35809,8 +35837,10 @@
    }
   },
   "ym070_210_a099": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4050,
    "n_regs": 98,
    "regs": {
@@ -36209,8 +36239,10 @@
    }
   },
   "ym070_210_b001": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4010,
    "n_regs": 98,
    "regs": {
@@ -36609,8 +36641,10 @@
    }
   },
   "ym070_210_m001": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4000,
    "n_regs": 98,
    "regs": {
@@ -37009,8 +37043,10 @@
    }
   },
   "ym070_210_r051": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4020,
    "n_regs": 98,
    "regs": {
@@ -37409,8 +37445,10 @@
    }
   },
   "ym070_210_r099": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4030,
    "n_regs": 98,
    "regs": {
@@ -37809,8 +37847,10 @@
    }
   },
   "ym080_230_a051": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4160,
    "n_regs": 98,
    "regs": {
@@ -38209,8 +38249,10 @@
    }
   },
   "ym080_230_a099": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4170,
    "n_regs": 98,
    "regs": {
@@ -38609,8 +38651,10 @@
    }
   },
   "ym080_230_b001": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4130,
    "n_regs": 98,
    "regs": {
@@ -39009,8 +39053,10 @@
    }
   },
   "ym080_230_m001": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4120,
    "n_regs": 98,
    "regs": {
@@ -39409,8 +39455,10 @@
    }
   },
   "ym080_230_r051": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4140,
    "n_regs": 98,
    "regs": {
@@ -39809,8 +39857,10 @@
    }
   },
   "ym080_230_r099": {
-   "proto": "?",
-   "protocols": [],
+   "proto": "P2",
+   "protocols": [
+    "P2"
+   ],
    "model_number": 4150,
    "n_regs": 98,
    "regs": {

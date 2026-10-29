@@ -3,11 +3,11 @@
 Generated from `control_tables/*.ron` — **73 models** (excludes `dynamixel.ron` model-number map).
 
 - Protocol 1 only (`protocols: [P1]`): **6**
-- Protocol 2 only (`protocols: [P2]`): **13**
+- Protocol 2 only (`protocols: [P2]`): **38**
 - Both protocols (`protocols: [P1, P2]`): **29**
-- No `protocols` yet: **25**
+- No `protocols` yet: **0**
   - P1 only: ax_12_plus, ax_12a, ax_12w, ax_18a, ax_18f, rx_28
-  - P2 only: xc330_m181, xc330_m181_fw52, xc330_m288, xc330_m288_fw52, xc330_t181, xc330_t181_fw52, xc330_t288, xc330_t288_fw52, xl320, xl330_m077, xl330_m077_fw52, xl330_m288, xl330_m288_fw52
+  - P2 only: h42_20_s300_ra, h54_100_s500_ra, h54_200_s500_ra, m42_10_s260_ra, m54_40_s250_ra, m54_60_s250_ra, ph42_020_s300, ph54_100_s500, ph54_200_s500, pm42_010_s260, pm54_040_s250, pm54_060_s250, rh_p12_rn, xc330_m181, xc330_m181_fw52, xc330_m288, xc330_m288_fw52, xc330_t181, xc330_t181_fw52, xc330_t288, xc330_t288_fw52, xl320, xl330_m077, xl330_m077_fw52, xl330_m288, xl330_m288_fw52, ym070_210_a051, ym070_210_a099, ym070_210_b001, ym070_210_m001, ym070_210_r051, ym070_210_r099, ym080_230_a051, ym080_230_a099, ym080_230_b001, ym080_230_m001, ym080_230_r051, ym080_230_r099
   - P1 and P2: 2xc430_w250, 2xl430_w250, mx_106, mx_28, mx_64, xc430_w150, xc430_w240, xd430_t210, xd430_t350, xd540_t150, xd540_t270, xh430_v210, xh430_v350, xh430_w210, xh430_w350, xh540_v150, xh540_v270, xh540_w150, xh540_w270, xl430_w250, xm430_w210, xm430_w350, xm540_w150, xm540_w270, xw430_t200, xw430_t333, xw540_h260, xw540_t140, xw540_t260
 - Distinct register names across all models: **140**
 - Distinct control-table layouts (exact signatures): **14**
@@ -18,19 +18,19 @@ Models with **byte-identical control tables** (same register set, same address, 
 
 | # | Proto | Members | Regs | Model #s |
 |---|-------|---------|------|----------|
-| 1 | ? | ym070_210_a051, ym070_210_a099, ym070_210_b001, ym070_210_m001, ym070_210_r051, ym070_210_r099, ym080_230_a051, ym080_230_a099, ym080_230_b001, ym080_230_m001, ym080_230_r051, ym080_230_r099 | 98 | 4040, 4050, 4010, 4000, 4020, 4030, 4160, 4170, 4130, 4120, 4140, 4150 |
+| 1 | P2 | ym070_210_a051, ym070_210_a099, ym070_210_b001, ym070_210_m001, ym070_210_r051, ym070_210_r099, ym080_230_a051, ym080_230_a099, ym080_230_b001, ym080_230_m001, ym080_230_r051, ym080_230_r099 | 98 | 4040, 4050, 4010, 4000, 4020, 4030, 4160, 4170, 4130, 4120, 4140, 4150 |
 | 2 | P1, P2 | xd430_t210, xd430_t350, xh430_v210, xh430_v350, xh430_w210, xh430_w350, xm430_w210, xm430_w350 | 57 | 1011, 1001, 1050, 1040, 1010, 1000, 1030, 1020 |
 | 3 | P1, P2 | xd540_t150, xd540_t270, xh540_v150, xh540_v270, xh540_w150, xh540_w270, xm540_w150, xm540_w270 | 63 | 1111, 1101, 1150, 1140, 1110, 1100, 1130, 1120 |
 | 4 | P1 | ax_12_plus, ax_12a, ax_12w, ax_18a, ax_18f, rx_28 | 32 | 12, 300, 18, 28 |
-| 5 | ? | h42_20_s300_ra, h54_100_s500_ra, h54_200_s500_ra, m42_10_s260_ra, m54_40_s250_ra, m54_60_s250_ra | 67 | 51201, 53769, 54025, 43289, 46097, 46353 |
-| 6 | ? | ph42_020_s300, ph54_100_s500, ph54_200_s500, pm42_010_s260, pm54_040_s250, pm54_060_s250 | 70 | 2000, 2010, 2020, 2100, 2110, 2120 |
+| 5 | P2 | h42_20_s300_ra, h54_100_s500_ra, h54_200_s500_ra, m42_10_s260_ra, m54_40_s250_ra, m54_60_s250_ra | 67 | 51201, 53769, 54025, 43289, 46097, 46353 |
+| 6 | P2 | ph42_020_s300, ph54_100_s500, ph54_200_s500, pm42_010_s260, pm54_040_s250, pm54_060_s250 | 70 | 2000, 2010, 2020, 2100, 2110, 2120 |
 | 7 | P2 | xc330_m181, xc330_m288, xc330_t181, xc330_t288, xl330_m077, xl330_m288 | 58 | 1230, 1240, 1210, 1220, 1190, 1200 |
 | 8 | P2 | xc330_m181_fw52, xc330_m288_fw52, xc330_t181_fw52, xc330_t288_fw52, xl330_m077_fw52, xl330_m288_fw52 | 58 | 1230, 1240, 1210, 1220, 1190, 1200 |
 | 9 | P1, P2 | 2xc430_w250, 2xl430_w250, xc430_w150, xc430_w240, xl430_w250 | 55 | 1160, 1090, 1070, 1080, 1060 |
 | 10 | P1, P2 | xw430_t200, xw430_t333, xw540_h260, xw540_t140, xw540_t260 | 56 | 1270, 1310, 1180, 1170 |
 | 11 | P1, P2 | mx_106, mx_64 | 58 | 321, 311 |
 | 12 | P1, P2 | mx_28 | 56 | 30 |
-| 13 | ? | rh_p12_rn | 63 | 35074 |
+| 13 | P2 | rh_p12_rn | 63 | 35074 |
 | 14 | P2 | xl320 | 31 | 350 |
 
 ## 2. Architectural tiers — the 4 RAM-layout generations
@@ -68,7 +68,7 @@ The 14 exact layouts collapse into **4 tiers** keyed by where `Goal Position` li
 
 Upper cell = **register-name overlap** (Jaccard %). Lower cell = **address-identical overlap** — of the registers two layouts share by name, the % that also match on `(addr,size)`. High name-overlap with LOW address-overlap (e.g. X-series vs Pro) means: same concepts, different memory map → a trait can unify the API but not the constants.
 
-Legend: **L1**=ax_12_plus(6m,P1) · **L2**=xl320(1m,P2) · **L3**=xd430_t210(8m,P1, P2) · **L4**=xd540_t150(8m,P1, P2) · **L5**=xc330_m181(6m,P2) · **L6**=xc330_m181_fw52(6m,P2) · **L7**=2xc430_w250(5m,P1, P2) · **L8**=xw430_t200(5m,P1, P2) · **L9**=mx_106(2m,P1, P2) · **L10**=mx_28(1m,P1, P2) · **L11**=ym070_210_a051(12m,?) · **L12**=h42_20_s300_ra(6m,?) · **L13**=ph42_020_s300(6m,?) · **L14**=rh_p12_rn(1m,?)
+Legend: **L1**=ax_12_plus(6m,P1) · **L2**=xl320(1m,P2) · **L3**=xd430_t210(8m,P1, P2) · **L4**=xd540_t150(8m,P1, P2) · **L5**=xc330_m181(6m,P2) · **L6**=xc330_m181_fw52(6m,P2) · **L7**=2xc430_w250(5m,P1, P2) · **L8**=xw430_t200(5m,P1, P2) · **L9**=mx_106(2m,P1, P2) · **L10**=mx_28(1m,P1, P2) · **L11**=ym070_210_a051(12m,P2) · **L12**=h42_20_s300_ra(6m,P2) · **L13**=ph42_020_s300(6m,P2) · **L14**=rh_p12_rn(1m,P2)
 
 | name\addr | L1 | L2 | L3 | L4 | L5 | L6 | L7 | L8 | L9 | L10 | L11 | L12 | L13 | L14 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
