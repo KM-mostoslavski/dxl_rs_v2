@@ -5,16 +5,27 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  COMPILE_FAIL_TOOLCHAIN: "1.97.1"
 
 jobs:
   check:
-    name: fmt, clippy, test
+    name: fmt, clippy, test (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -26,24 +37,45 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features mock
       - run: cargo test --workspace
       - run: cargo test --features mock --doc
+      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo test --workspace --all-features
 
   no-std:
-    name: no_std build
+    name: no_std build (thumbv7em-none-eabihf)
+    needs: feature-sets
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HEAP_FREE: ${{ needs.feature-sets.outputs.heap_free }}
+      NO_STD: ${{ needs.feature-sets.outputs.no_std }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabihf
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --no-default-features --features ax,mx,x-series,y-series,pro,mock --target thumbv7em-none-eabihf
+      - name: clippy (heap-free, all)
+        run: cargo clippy --no-default-features --features "$HEAP_FREE" --target thumbv7em-none-eabihf
+      - name: "build: no features"
+        run: cargo build --lib --no-default-features --target thumbv7em-none-eabihf
+      - name: "build: alloc alone"
+        run: cargo build --lib --no-default-features --target thumbv7em-none-eabihf --features alloc
+      - name: "build: heap-free, all"
+        run: cargo build --lib --no-default-features --target thumbv7em-none-eabihf --features "$HEAP_FREE"
+      - name: "build: no_std, all"
+        run: cargo build --lib --no-default-features --target thumbv7em-none-eabihf --features "$NO_STD"
 
   coverage:
     name: coverage (>= 70 % lines)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -51,13 +83,42 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Install libudev (serialport)
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      - run: cargo llvm-cov --workspace --ignore-filename-regex 'src/models(\.rs|/)' --fail-under-lines 70
+      - name: Run tests with coverage
+        run: cargo llvm-cov --workspace --no-report
+      - name: Publish line coverage to the run summary
+        env:
+          THRESHOLD: 70
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo llvm-cov report --workspace --json --summary-only --ignore-filename-regex 'src/models(\.rs|/)' > "$RUNNER_TEMP/cov.json"
+          lines=$(jq -c '.data[0].totals.lines' "$RUNNER_TEMP/cov.json")
+          raw=$(jq -r '.percent' <<< "$lines")
+          covered=$(jq -r '.covered' <<< "$lines")
+          count=$(jq -r '.count' <<< "$lines")
+          printf -v percent '%.2f' "$raw"
+          result=$(awk -v p="$raw" -v t="$THRESHOLD" 'BEGIN { print (p >= t) ? "pass" : "fail" }')
+          {
+            echo "### Line coverage"
+            echo
+            echo "| Lines covered | Threshold | Result |"
+            echo "|---|---|---|"
+            echo "| ${percent} % (${covered} / ${count}) | ${THRESHOLD} % | ${result} |"
+            echo
+            echo 'Generated models (`src/models.rs`, `src/models/`) excluded.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Line coverage::${percent} % (threshold ${THRESHOLD} %)"
+      - name: "Gate: line coverage >= 70 %"
+        run: cargo llvm-cov report --workspace --ignore-filename-regex 'src/models(\.rs|/)' --fail-under-lines 70
 
   codegen:
     name: generated models up to date
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -67,3 +128,211 @@ jobs:
         run: |
           git add --intent-to-add src/models.rs src/models
           git diff --exit-code -- src/models.rs src/models
+
+  feature-sets:
+    name: "feature sets: list"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+      tests: ${{ steps.list.outputs.tests }}
+      heap_free: ${{ steps.list.outputs.heap_free }}
+      no_std: ${{ steps.list.outputs.no_std }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: List the feature sets from Cargo.toml
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --format-version 1 | jq -ce --arg pkg dxl_rs_v2 '
+            def closure($f): . as $n
+              | [$n] + [ ($f[$n] // [])[] | select(test("[:/]") | not) | closure($f)[] ];
+            .packages[] | select(.name == $pkg) | .features as $f
+            | [ $f | keys[] | select(. != "default") ] as $all
+            | def needs($x): closure($f) | any(.[]; . == $x);
+            def leg($w; $n; $a; $s): {name: $n, where: $w, args: $a, needs_std: $s};
+            { matrix: ( [ leg("host"; "no features"; "--no-default-features"; false) ]
+                      + [ $all[] | leg("host"; "\(.) alone"; "--no-default-features --features \(.)"; needs("std")) ]
+                      + [ leg("host"; "defaults"; ""; ("default" | needs("std"))),
+                          leg("host"; "all features"; "--all-features"; any($all[]; needs("std"))) ]
+                      + [ $all[] | select(needs("std") | not)
+                        | leg("thumbv7em"; "\(.) alone"; "--no-default-features --features \(.) --target thumbv7em-none-eabihf"; false) ] ),
+              tests:     ( [ {name: "std", args: "--no-default-features --features std"} ]
+                         + [ $all[] | select((needs("std") or needs("alloc")) | not)
+                           | {name: ., args: "--no-default-features --features std,\(.)"} ] ),
+              heap_free: ( [ $all[] | select((needs("std") or needs("alloc")) | not) ] | join(",") ),
+              no_std:    ( [ $all[] | select(needs("std") | not) ] | join(",") ) }
+          ' > "$RUNNER_TEMP/sets.json"
+          jq -e '([.matrix[] | select(.where == "host")] | length) >= 3
+                 and (.tests | length) >= 1
+                 and (.no_std | length) > 0' "$RUNNER_TEMP/sets.json"
+          jq -r '.matrix[] | "\(.where): \(.name)  [\(.args)]"' "$RUNNER_TEMP/sets.json"
+          {
+            echo "matrix=$(jq -c .matrix "$RUNNER_TEMP/sets.json")"
+            echo "tests=$(jq -c .tests "$RUNNER_TEMP/sets.json")"
+            echo "heap_free=$(jq -r .heap_free "$RUNNER_TEMP/sets.json")"
+            echo "no_std=$(jq -r .no_std "$RUNNER_TEMP/sets.json")"
+          } >> "$GITHUB_OUTPUT"
+
+  feature-set:
+    name: "feature set (${{ matrix.where }}): ${{ matrix.name }}"
+    needs: feature-sets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.feature-sets.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: feature-set-${{ matrix.where }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install libudev (serialport)
+        if: matrix.needs_std
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: cargo build --lib
+        env:
+          ARGS: ${{ matrix.args }}
+        # $ARGS is unquoted on purpose: it holds several flags.
+        run: cargo build --lib $ARGS
+
+  feature-test:
+    name: "feature tests (host): ${{ matrix.name }}"
+    needs: feature-sets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.feature-sets.outputs.tests) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: feature-test-host
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install libudev (serialport)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: cargo test --lib
+        env:
+          ARGS: ${{ matrix.args }}
+        # $ARGS is unquoted on purpose: it holds several flags.
+        run: cargo test --lib $ARGS
+
+  features:
+    name: feature sets
+    if: always()
+    needs: [feature-sets, feature-set, feature-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fail unless the list and every feature-set leg succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=true
+          for r in $RESULTS; do
+            echo "$r"
+            [ "$r" = success ] || ok=false
+          done
+          [ -n "$RESULTS" ] && $ok
+
+  docs:
+    name: "docs: complete, no warnings"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install libudev (serialport)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - run: cargo doc --no-deps --all-features
+      - run: cargo doc --no-deps --no-default-features
+
+  compile-fail:
+    name: "doc examples: compile-fail error codes"
+    needs: feature-sets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NO_STD: ${{ needs.feature-sets.outputs.no_std }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain (COMPILE_FAIL_TOOLCHAIN)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.COMPILE_FAIL_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install libudev (serialport)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: "doc tests: all features"
+        env:
+          RUSTC_BOOTSTRAP: 1
+        run: cargo +"$COMPILE_FAIL_TOOLCHAIN" test --doc --all-features
+      - name: "doc tests: defaults"
+        env:
+          RUSTC_BOOTSTRAP: 1
+        run: cargo +"$COMPILE_FAIL_TOOLCHAIN" test --doc
+      - name: "doc tests: std off"
+        env:
+          RUSTC_BOOTSTRAP: 1
+        run: cargo +"$COMPILE_FAIL_TOOLCHAIN" test --doc --no-default-features --features "$NO_STD"
+
+  os:
+    name: "std build and tests (${{ matrix.label }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-latest
+            label: macOS
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p dxl_rs_v2
+      - run: cargo test -p dxl_rs_v2
+
+  control-tables:
+    name: "control tables: schema check"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check the control tables and test the checker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 control_tables/check_tables.py
+          python3 -m unittest discover -s control_tables -p 'test_*.py'
