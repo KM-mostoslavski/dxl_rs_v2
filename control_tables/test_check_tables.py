@@ -667,6 +667,14 @@ class RowTests(FixtureCase):
         self.assertFails(self.check_with(x=table(replaced(X_ROWS, "Present Position", access="W"))), "x.ron", "W")
         self.assertFails(self.check_with(x=table(replaced(X_ROWS, "Present Position", area="ROM"))), "x.ron", "ROM")
 
+    def test_hybrid_area_is_allowed(self) -> None:
+        rows = X_ROWS + [(212, 4, "Velocity I Gain", "RW", "Hybrid")]
+        self.assertPasses(self.check_with(x=table(rows)))
+
+    def test_hybrid_is_not_a_valid_area_for_a_role(self) -> None:
+        rows = replaced(X_ROWS, "Goal Position", area="Hybrid")
+        self.assertFails(self.check_with(x=table(rows)), "x.ron", "Goal Position")
+
     def test_rows_are_checked_in_unmapped_tables_too(self) -> None:
         rows = replaced(X_ROWS, "Goal Position", area=None)
         result = self.check_with(

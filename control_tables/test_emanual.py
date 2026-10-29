@@ -241,6 +241,55 @@ class ParsePageTests(unittest.TestCase):
             emanual.parse_page(ax_page(heading="Control Table Description"))
 
 
+Y_HEAD = th(
+    "Address", "Size(Byte)", "Modbus<br />Address", "Area", "Data Name", "Access", "Initial<br />Value", "Range", "Unit"
+)
+
+Y_PAGE = (
+    "<h2>Control Table Configuration</h2>\n<table>"
+    + Y_HEAD
+    + "<tbody>"
+    + tr("0", "2", "40001", "EEPROM", "Model Number", "R", "4,000", "-", "-")
+    + tr("33", "1", "40017", "EEPROM", "Operating Mode", "RW", "3", "0 ~ 3", "-")
+    + tr("212", "4", "40107", "Hybrid", "Velocity I Gain", "RW", "-", "-", "-")
+    + tr("…", "…", "…", "…", "…", "…", "-", "-", "-")
+    + tr("512", "1", "40257", "RAM", "Torque Enable", "RW", "0", "0 ~ 1", "-")
+    + tr("N/A", "2", "41001", "RAM", "Factory Reset Instruction", "W", "-", "-", "-")
+    + "</tbody></table>\n"
+)
+
+
+class AreaColumnAndAccessMappingTests(unittest.TestCase):
+    """Architect 2026-10-29 (provisional): Area column with Hybrid; page `R/RW` recorded as RW."""
+
+    def test_area_column_wins_over_headings(self) -> None:
+        self.assertEqual(
+            emanual.parse_page(Y_PAGE),
+            [
+                (0, 2, "Model Number", "R", "EEPROM"),
+                (33, 1, "Operating Mode", "RW", "EEPROM"),
+                (212, 4, "Velocity I Gain", "RW", "Hybrid"),
+                (512, 1, "Torque Enable", "RW", "RAM"),
+            ],
+        )
+
+    def test_unknown_area_value_is_an_error(self) -> None:
+        with self.assertRaises(emanual.PageError):
+            emanual.parse_page(Y_PAGE.replace(">Hybrid<", ">Flash<"))
+
+    def test_r_slash_rw_is_recorded_as_rw(self) -> None:
+        page = PRO_PAGE.replace(
+            tr("512", "1", "40257", "Torque Enable", "RW", "0", "0 ~ 1", "-"),
+            tr("512", "1", "40257", "Torque Enable", "RW", "0", "0 ~ 1", "-")
+            + tr("600", "2", "40301", "External Port Data 1", "R/RW", "0", "-", "-"),
+        )
+        self.assertIn((600, 2, "External Port Data 1", "RW", "RAM"), emanual.parse_page(page))
+
+    def test_other_access_still_stops(self) -> None:
+        with self.assertRaises(emanual.PageError):
+            emanual.parse_page(PRO_PAGE.replace(">RW<", ">W<", 1))
+
+
 class CommandTests(TableDirCase):
     def test_rows_prints_ron_rows_in_page_order(self) -> None:
         code, out, _err = run(["rows", AX_URL], {AX_URL: ax_page()})

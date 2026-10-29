@@ -557,7 +557,8 @@ def check_instructions(stem: str, table: dict, report: Report) -> None:
 
 
 ACCESS_VALUES = ("R", "RW")
-AREA_VALUES = ("EEPROM", "RAM")
+# `Hybrid` (Y series): architect 2026-10-29 (provisional), data-model "Register row".
+AREA_VALUES = ("EEPROM", "RAM", "Hybrid")
 MODE_NAMES = ("Operating Mode", "Control Mode")
 MODE_LISTS = ("bounded", "unbounded", "no_position")
 # Role rows (contract 4.3): name -> (access, area); None means any.
