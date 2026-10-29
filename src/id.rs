@@ -20,11 +20,6 @@ impl Id {
     /// <https://emanual.robotis.com/docs/en/dxl/protocol1/>
     pub const MAX: u8 = 252;
 
-    /// Creates an `Id`, or returns [`ValidationError::InvalidId`] if `id` is
-    /// above [`Id::MAX`].
-    ///
-    /// Usable in `const` context, so IDs known at compile time are checked
-    /// at compile time.
     pub const fn new(id: u8) -> Result<Self, Error> {
         if id <= Self::MAX {
             Ok(Self(id))
