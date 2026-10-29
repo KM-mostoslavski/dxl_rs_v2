@@ -16,6 +16,10 @@ y-series = []
 pro = []
 # Scripted, allocation-free MockTransport for tests without hardware.
 mock = []
+# Opt-in: one result per slot for multi-actuator reads.
+partial-reads = []
+# Opt-in: read/write any register on one actuator, bypassing the bus's checks.
+raw-registers = []
 
 [dependencies]
 serialport = { version = "4.9.0", optional = true }
