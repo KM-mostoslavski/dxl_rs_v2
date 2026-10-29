@@ -101,7 +101,7 @@ use embedded_io::{Read, ReadReady, Write};
 /// Without [`ReadReady`] the bus could not bound its waits, so such a type is
 /// rejected at compile time:
 ///
-/// ```compile_fail,E0277
+/// ```compile_fail,E0308
 /// use dxl_rs_v2::Transport;
 /// use dxl_rs_v2::embedded_io::{ErrorKind, ErrorType, Read, Write};
 ///
