@@ -335,9 +335,8 @@ impl<T: Transport, C: Clock> DynBus<P2, T, C> {
 mod tests {
     extern crate std;
 
-    use std::format;
-    use std::string::String;
-    use std::vec::Vec;
+    #[cfg(any(feature = "ax", feature = "x-series"))]
+    use std::{format, string::String, vec::Vec};
 
     use super::*;
     use crate::bus::testing::*;
@@ -353,6 +352,7 @@ mod tests {
     /// Runs `$body` on a `Bus` and on a `DynBus`, each on a line scripted
     /// by `$script`, and checks that both return the same and send the same
     /// bytes.
+    #[cfg(any(feature = "ax", feature = "x-series"))]
     macro_rules! on_both {
         ($p:ty, $script:expr, |$bus:ident| $body:block) => {{
             let script: fn(&mut MockTransport<'_>) = $script;
@@ -378,6 +378,7 @@ mod tests {
         }};
     }
 
+    #[cfg(any(feature = "ax", feature = "x-series"))]
     fn show<V: core::fmt::Debug>(value: V) -> String {
         format!("{value:?}")
     }
