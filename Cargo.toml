@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["std", "ax", "mx", "x-series", "y-series", "pro"]
+default = ["std", "ax", "mx", "rx", "x-series", "y-series", "pro"]
 std = ["alloc", "dep:serialport", "thiserror/std", "embedded-io/std"]
 alloc = []
 # Model families: each compiles in the actuator models of one product line.
 ax = []
 mx = []
+rx = []
 x-series = []
 y-series = []
 pro = []
@@ -20,6 +21,7 @@ mock = []
 serialport = { version = "4.9.0", optional = true }
 thiserror = { version = "2.0.18", default-features = false }
 embedded-io = { version = "0.7", default-features = false }
+heapless = { version = "0.9", default-features = false }
 
 [dev-dependencies]
 proptest = "1"

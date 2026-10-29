@@ -4,10 +4,15 @@
 #![allow(
     dead_code,
     unused_variables,
-    reason = "every register is generated but only some are wrapped; feature-gated arms can leave parameters unused"
+    clippy::approx_constant,
+    reason = "every register is generated but only some are used; with no family enabled some parameters are unused; type_info angles are table data, not uses of π"
 )]
 
-use crate::{Actuator, Error, Id};
+use crate::actuator::{Actuator, Cache, Describe, ModelData, ModelNumber};
+use crate::error::SetupError;
+use crate::id::Id;
+use crate::protocol::ProtocolVersion;
+use crate::register::{Access, Area, Register};
 
 #[cfg(feature = "ax")]
 mod ax_12a;
@@ -17,6 +22,10 @@ pub use ax_12a::Ax12a;
 mod ax_18a;
 #[cfg(feature = "ax")]
 pub use ax_18a::Ax18a;
+#[cfg(feature = "rx")]
+mod rx_28;
+#[cfg(feature = "rx")]
+pub use rx_28::Rx28;
 #[cfg(feature = "mx")]
 mod mx_28;
 #[cfg(feature = "mx")]
@@ -286,687 +295,1582 @@ mod h54_200_s500_ra;
 #[cfg(feature = "pro")]
 pub use h54_200_s500_ra::H54200S500Ra;
 
+#[cfg(test)]
+mod tests;
+
+/// Builds one register row. Private to `models`; model files call `super::reg`.
+const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {
+    Register {
+        addr,
+        size,
+        access,
+        area,
+    }
+}
+
+/// Model Number location, the same in every table (codegen checks it). Read on P1 Setup.
+pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);
+
 /// Any supported actuator, one variant per model type.
 ///
-/// Match on it to reach a model's specific features; use the
-/// [`Actuator`] trait for what every model has in common.
+/// Match on it to reach a model's own features; use the [`Actuator`] trait for what every
+/// model has in common.
+///
+/// The enum is `#[non_exhaustive]`: models are added without a breaking change, so a
+/// `match` outside this crate needs a wildcard arm.
+///
+/// ```compile_fail,E0004
+/// fn f(kind: dxl_rs_v2::ActuatorKind) {
+///     match kind {}
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ActuatorKind {
-    /// AX-12A.
+    /// AX-12A (model number 12). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax12a(Ax12a),
-    /// AX-18A.
+    /// AX-18A (model number 18). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax18a(Ax18a),
-    /// MX-28(2.0).
+    /// RX-28 (model number 28). Protocol 1, all firmware.
+    #[cfg(feature = "rx")]
+    Rx28(Rx28),
+    /// MX-28(2.0) (model number 30). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx28(Mx28),
-    /// AX-12W.
+    /// AX-12W (model number 300). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax12w(Ax12w),
-    /// MX-64(2.0).
+    /// MX-64(2.0) (model number 311). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx64(Mx64),
-    /// MX-106(2.0).
+    /// MX-106(2.0) (model number 321). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx106(Mx106),
-    /// XL-320.
+    /// XL-320 (model number 350). Protocol 2, all firmware.
     #[cfg(feature = "x-series")]
     Xl320(Xl320),
-    /// XH430-W350.
+    /// XH430-W350 (model number 1000). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430W350(Xh430W350),
-    /// XD430-T350.
+    /// XD430-T350 (model number 1001). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd430T350(Xd430T350),
-    /// XH430-W210.
+    /// XH430-W210 (model number 1010). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430W210(Xh430W210),
-    /// XD430-T210.
+    /// XD430-T210 (model number 1011). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd430T210(Xd430T210),
-    /// XM430-W350.
+    /// XM430-W350 (model number 1020). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm430W350(Xm430W350),
-    /// XM430-W210.
+    /// XM430-W210 (model number 1030). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm430W210(Xm430W210),
-    /// XH430-V350.
+    /// XH430-V350 (model number 1040). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430V350(Xh430V350),
-    /// XH430-V210.
+    /// XH430-V210 (model number 1050). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430V210(Xh430V210),
-    /// XL430-W250.
+    /// XL430-W250 (model number 1060). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xl430W250(Xl430W250),
-    /// XC430-W150.
+    /// XC430-W150 (model number 1070). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xc430W150(Xc430W150),
-    /// XC430-W240.
+    /// XC430-W240 (model number 1080). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xc430W240(Xc430W240),
-    /// 2XL430-W250.
+    /// 2XL430-W250 (model number 1090). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     TwoXl430W250(TwoXl430W250),
-    /// XH540-W270.
+    /// XH540-W270 (model number 1100). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540W270(Xh540W270),
-    /// XD540-T270.
+    /// XD540-T270 (model number 1101). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd540T270(Xd540T270),
-    /// XH540-W150.
+    /// XH540-W150 (model number 1110). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540W150(Xh540W150),
-    /// XD540-T150.
+    /// XD540-T150 (model number 1111). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd540T150(Xd540T150),
-    /// XM540-W270.
+    /// XM540-W270 (model number 1120). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm540W270(Xm540W270),
-    /// XM540-W150.
+    /// XM540-W150 (model number 1130). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm540W150(Xm540W150),
-    /// XH540-V270.
+    /// XH540-V270 (model number 1140). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540V270(Xh540V270),
-    /// XH540-V150.
+    /// XH540-V150 (model number 1150). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540V150(Xh540V150),
-    /// 2XC430-W250.
+    /// 2XC430-W250 (model number 1160). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     TwoXc430W250(TwoXc430W250),
-    /// XW540-T260.
+    /// XW540-T260 (model number 1170). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw540T260(Xw540T260),
-    /// XW540-T140.
+    /// XW540-T140 (model number 1180). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw540T140(Xw540T140),
-    /// XL330-M077, firmware up to v52.
+    /// XL330-M077 (model number 1190). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xl330M077Fw52(Xl330M077Fw52),
-    /// XL330-M077, firmware v53 and later.
+    /// XL330-M077 (model number 1190). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xl330M077(Xl330M077),
-    /// XL330-M288, firmware up to v52.
+    /// XL330-M288 (model number 1200). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xl330M288Fw52(Xl330M288Fw52),
-    /// XL330-M288, firmware v53 and later.
+    /// XL330-M288 (model number 1200). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xl330M288(Xl330M288),
-    /// XC330-T181, firmware up to v52.
+    /// XC330-T181 (model number 1210). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330T181Fw52(Xc330T181Fw52),
-    /// XC330-T181, firmware v53 and later.
+    /// XC330-T181 (model number 1210). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330T181(Xc330T181),
-    /// XC330-T288, firmware up to v52.
+    /// XC330-T288 (model number 1220). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330T288Fw52(Xc330T288Fw52),
-    /// XC330-T288, firmware v53 and later.
+    /// XC330-T288 (model number 1220). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330T288(Xc330T288),
-    /// XC330-M181, firmware up to v52.
+    /// XC330-M181 (model number 1230). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330M181Fw52(Xc330M181Fw52),
-    /// XC330-M181, firmware v53 and later.
+    /// XC330-M181 (model number 1230). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330M181(Xc330M181),
-    /// XC330-M288, firmware up to v52.
+    /// XC330-M288 (model number 1240). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330M288Fw52(Xc330M288Fw52),
-    /// XC330-M288, firmware v53 and later.
+    /// XC330-M288 (model number 1240). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330M288(Xc330M288),
-    /// XW430-T333.
+    /// XW430-T333 (model number 1270). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw430T333(Xw430T333),
-    /// XW540-H260.
+    /// XW540-H260 (model number 1310). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw540H260(Xw540H260),
-    /// PH42-020-S300.
+    /// PH42-020-S300 (model number 2000). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Ph42020S300(Ph42020S300),
-    /// PH54-100-S500.
+    /// PH54-100-S500 (model number 2010). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Ph54100S500(Ph54100S500),
-    /// PH54-200-S500.
+    /// PH54-200-S500 (model number 2020). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Ph54200S500(Ph54200S500),
-    /// PM42-010-S260.
+    /// PM42-010-S260 (model number 2100). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Pm42010S260(Pm42010S260),
-    /// PM54-040-S250.
+    /// PM54-040-S250 (model number 2110). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Pm54040S250(Pm54040S250),
-    /// PM54-060-S250.
+    /// PM54-060-S250 (model number 2120). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Pm54060S250(Pm54060S250),
-    /// YM070-210-M001.
+    /// YM070-210-M001 (model number 4000). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210M001(Ym070210M001),
-    /// YM070-210-B001.
+    /// YM070-210-B001 (model number 4010). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210B001(Ym070210B001),
-    /// YM070-210-R051.
+    /// YM070-210-R051 (model number 4020). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210R051(Ym070210R051),
-    /// YM070-210-R099.
+    /// YM070-210-R099 (model number 4030). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210R099(Ym070210R099),
-    /// YM070-210-A051.
+    /// YM070-210-A051 (model number 4040). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210A051(Ym070210A051),
-    /// YM070-210-A099.
+    /// YM070-210-A099 (model number 4050). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210A099(Ym070210A099),
-    /// YM080-230-M001.
+    /// YM080-230-M001 (model number 4120). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230M001(Ym080230M001),
-    /// YM080-230-B001.
+    /// YM080-230-B001 (model number 4130). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230B001(Ym080230B001),
-    /// YM080-230-R051.
+    /// YM080-230-R051 (model number 4140). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230R051(Ym080230R051),
-    /// YM080-230-R099.
+    /// YM080-230-R099 (model number 4150). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230R099(Ym080230R099),
-    /// YM080-230-A051.
+    /// YM080-230-A051 (model number 4160). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230A051(Ym080230A051),
-    /// YM080-230-A099.
+    /// YM080-230-A099 (model number 4170). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230A099(Ym080230A099),
-    /// RH-P12-RN.
+    /// RH-P12-RN (model number 35074). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     RhP12Rn(RhP12Rn),
-    /// M42-10-S260-RA.
+    /// M42-10-S260-RA (model number 43289). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     M4210S260Ra(M4210S260Ra),
-    /// M54-40-S250-RA.
+    /// M54-40-S250-RA (model number 46097). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     M5440S250Ra(M5440S250Ra),
-    /// M54-60-S250-RA.
+    /// M54-60-S250-RA (model number 46353). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     M5460S250Ra(M5460S250Ra),
-    /// H42-20-S300-RA.
+    /// H42-20-S300-RA (model number 51201). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     H4220S300Ra(H4220S300Ra),
-    /// H54-100-S500-RA.
+    /// H54-100-S500-RA (model number 53769). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     H54100S500Ra(H54100S500Ra),
-    /// H54-200-S500-RA.
+    /// H54-200-S500-RA (model number 54025). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     H54200S500Ra(H54200S500Ra),
 }
 
 impl ActuatorKind {
-    /// Builds the model type for `model_number`, picking the control table
-    /// that matches `firmware`.
+    /// The variant for `model_number` on `protocol`, using the table whose `from_fw` is the
+    /// highest not above `firmware`.
     ///
-    /// Fails with [`Error::UnsupportedModel`] if the model is unknown or its
-    /// family's Cargo feature is off.
-    pub(crate) fn new(model_number: u16, firmware: u8, id: Id) -> Result<Self, Error> {
-        match model_number {
+    /// Fails with [`SetupError::UnsupportedModel`]: `feature` is the family to enable when the
+    /// model has tables on this protocol but its family is off, and `None` otherwise.
+    pub(crate) fn new(
+        protocol: ProtocolVersion,
+        model_number: ModelNumber,
+        firmware: u8,
+        id: Id,
+    ) -> Result<Self, SetupError> {
+        match (protocol, model_number.get()) {
             #[cfg(feature = "ax")]
-            12 => Ok(Self::Ax12a(Ax12a::new(id))),
+            (ProtocolVersion::P1, 12) => Ok(Self::Ax12a(Ax12a::new(id))),
             #[cfg(not(feature = "ax"))]
-            12 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 12) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 12,
+                protocol,
                 feature: Some("ax"),
             }),
             #[cfg(feature = "ax")]
-            18 => Ok(Self::Ax18a(Ax18a::new(id))),
+            (ProtocolVersion::P1, 18) => Ok(Self::Ax18a(Ax18a::new(id))),
             #[cfg(not(feature = "ax"))]
-            18 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 18) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 18,
+                protocol,
                 feature: Some("ax"),
             }),
+            #[cfg(feature = "rx")]
+            (ProtocolVersion::P1, 28) => Ok(Self::Rx28(Rx28::new(id))),
+            #[cfg(not(feature = "rx"))]
+            (ProtocolVersion::P1, 28) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 28,
+                protocol,
+                feature: Some("rx"),
+            }),
             #[cfg(feature = "mx")]
-            30 => Ok(Self::Mx28(Mx28::new(id))),
+            (ProtocolVersion::P1, 30) => Ok(Self::Mx28(Mx28::new(id))),
             #[cfg(not(feature = "mx"))]
-            30 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 30) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 30,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P2, 30) => Ok(Self::Mx28(Mx28::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P2, 30) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 30,
+                protocol,
                 feature: Some("mx"),
             }),
             #[cfg(feature = "ax")]
-            300 => Ok(Self::Ax12w(Ax12w::new(id))),
+            (ProtocolVersion::P1, 300) => Ok(Self::Ax12w(Ax12w::new(id))),
             #[cfg(not(feature = "ax"))]
-            300 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 300) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 300,
+                protocol,
                 feature: Some("ax"),
             }),
             #[cfg(feature = "mx")]
-            311 => Ok(Self::Mx64(Mx64::new(id))),
+            (ProtocolVersion::P1, 311) => Ok(Self::Mx64(Mx64::new(id))),
             #[cfg(not(feature = "mx"))]
-            311 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 311) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 311,
+                protocol,
                 feature: Some("mx"),
             }),
             #[cfg(feature = "mx")]
-            321 => Ok(Self::Mx106(Mx106::new(id))),
+            (ProtocolVersion::P2, 311) => Ok(Self::Mx64(Mx64::new(id))),
             #[cfg(not(feature = "mx"))]
-            321 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 311) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 311,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 321) => Ok(Self::Mx106(Mx106::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P1, 321) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 321,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P2, 321) => Ok(Self::Mx106(Mx106::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P2, 321) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 321,
+                protocol,
                 feature: Some("mx"),
             }),
             #[cfg(feature = "x-series")]
-            350 => Ok(Self::Xl320(Xl320::new(id))),
+            (ProtocolVersion::P2, 350) => Ok(Self::Xl320(Xl320::new(id))),
             #[cfg(not(feature = "x-series"))]
-            350 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 350) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 350,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1000 => Ok(Self::Xh430W350(Xh430W350::new(id))),
+            (ProtocolVersion::P1, 1000) => Ok(Self::Xh430W350(Xh430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1000 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1000,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1001 => Ok(Self::Xd430T350(Xd430T350::new(id))),
+            (ProtocolVersion::P2, 1000) => Ok(Self::Xh430W350(Xh430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1001 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1000,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1010 => Ok(Self::Xh430W210(Xh430W210::new(id))),
+            (ProtocolVersion::P1, 1001) => Ok(Self::Xd430T350(Xd430T350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1010 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1001) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1001,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1011 => Ok(Self::Xd430T210(Xd430T210::new(id))),
+            (ProtocolVersion::P2, 1001) => Ok(Self::Xd430T350(Xd430T350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1011 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1001) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1001,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1020 => Ok(Self::Xm430W350(Xm430W350::new(id))),
+            (ProtocolVersion::P1, 1010) => Ok(Self::Xh430W210(Xh430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1020 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1010,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1030 => Ok(Self::Xm430W210(Xm430W210::new(id))),
+            (ProtocolVersion::P2, 1010) => Ok(Self::Xh430W210(Xh430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1030 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1010,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1040 => Ok(Self::Xh430V350(Xh430V350::new(id))),
+            (ProtocolVersion::P1, 1011) => Ok(Self::Xd430T210(Xd430T210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1040 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1011) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1011,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1050 => Ok(Self::Xh430V210(Xh430V210::new(id))),
+            (ProtocolVersion::P2, 1011) => Ok(Self::Xd430T210(Xd430T210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1050 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1011) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1011,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1060 => Ok(Self::Xl430W250(Xl430W250::new(id))),
+            (ProtocolVersion::P1, 1020) => Ok(Self::Xm430W350(Xm430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1060 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1020,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1070 => Ok(Self::Xc430W150(Xc430W150::new(id))),
+            (ProtocolVersion::P2, 1020) => Ok(Self::Xm430W350(Xm430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1070 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1020,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1080 => Ok(Self::Xc430W240(Xc430W240::new(id))),
+            (ProtocolVersion::P1, 1030) => Ok(Self::Xm430W210(Xm430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1080 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1030) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1030,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1090 => Ok(Self::TwoXl430W250(TwoXl430W250::new(id))),
+            (ProtocolVersion::P2, 1030) => Ok(Self::Xm430W210(Xm430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1090 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1030) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1030,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1100 => Ok(Self::Xh540W270(Xh540W270::new(id))),
+            (ProtocolVersion::P1, 1040) => Ok(Self::Xh430V350(Xh430V350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1100 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1040) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1040,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1101 => Ok(Self::Xd540T270(Xd540T270::new(id))),
+            (ProtocolVersion::P2, 1040) => Ok(Self::Xh430V350(Xh430V350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1101 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1040) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1040,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1110 => Ok(Self::Xh540W150(Xh540W150::new(id))),
+            (ProtocolVersion::P1, 1050) => Ok(Self::Xh430V210(Xh430V210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1110 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1050) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1050,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1111 => Ok(Self::Xd540T150(Xd540T150::new(id))),
+            (ProtocolVersion::P2, 1050) => Ok(Self::Xh430V210(Xh430V210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1111 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1050) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1050,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1120 => Ok(Self::Xm540W270(Xm540W270::new(id))),
+            (ProtocolVersion::P1, 1060) => Ok(Self::Xl430W250(Xl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1120 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1060) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1060,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1130 => Ok(Self::Xm540W150(Xm540W150::new(id))),
+            (ProtocolVersion::P2, 1060) => Ok(Self::Xl430W250(Xl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1130 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1060) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1060,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1140 => Ok(Self::Xh540V270(Xh540V270::new(id))),
+            (ProtocolVersion::P1, 1070) => Ok(Self::Xc430W150(Xc430W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1140 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1070) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1070,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1150 => Ok(Self::Xh540V150(Xh540V150::new(id))),
+            (ProtocolVersion::P2, 1070) => Ok(Self::Xc430W150(Xc430W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1150 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1070) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1070,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1160 => Ok(Self::TwoXc430W250(TwoXc430W250::new(id))),
+            (ProtocolVersion::P1, 1080) => Ok(Self::Xc430W240(Xc430W240::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1160 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1080) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1080,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1170 => Ok(Self::Xw540T260(Xw540T260::new(id))),
+            (ProtocolVersion::P2, 1080) => Ok(Self::Xc430W240(Xc430W240::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1170 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1080) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1080,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1180 => Ok(Self::Xw540T140(Xw540T140::new(id))),
+            (ProtocolVersion::P1, 1090) => Ok(Self::TwoXl430W250(TwoXl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1180 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1090) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1090,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1190 if firmware < 53 => Ok(Self::Xl330M077Fw52(Xl330M077Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1190 => Ok(Self::Xl330M077(Xl330M077::new(id))),
+            (ProtocolVersion::P2, 1090) => Ok(Self::TwoXl430W250(TwoXl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1190 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1090) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1090,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1200 if firmware < 53 => Ok(Self::Xl330M288Fw52(Xl330M288Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1200 => Ok(Self::Xl330M288(Xl330M288::new(id))),
+            (ProtocolVersion::P1, 1100) => Ok(Self::Xh540W270(Xh540W270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1200 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1100) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1100,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1210 if firmware < 53 => Ok(Self::Xc330T181Fw52(Xc330T181Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1210 => Ok(Self::Xc330T181(Xc330T181::new(id))),
+            (ProtocolVersion::P2, 1100) => Ok(Self::Xh540W270(Xh540W270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1210 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1100) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1100,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1220 if firmware < 53 => Ok(Self::Xc330T288Fw52(Xc330T288Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1220 => Ok(Self::Xc330T288(Xc330T288::new(id))),
+            (ProtocolVersion::P1, 1101) => Ok(Self::Xd540T270(Xd540T270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1220 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1101) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1101,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1230 if firmware < 53 => Ok(Self::Xc330M181Fw52(Xc330M181Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1230 => Ok(Self::Xc330M181(Xc330M181::new(id))),
+            (ProtocolVersion::P2, 1101) => Ok(Self::Xd540T270(Xd540T270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1230 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1101) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1101,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1240 if firmware < 53 => Ok(Self::Xc330M288Fw52(Xc330M288Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1240 => Ok(Self::Xc330M288(Xc330M288::new(id))),
+            (ProtocolVersion::P1, 1110) => Ok(Self::Xh540W150(Xh540W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1240 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1110) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1110,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1270 => Ok(Self::Xw430T333(Xw430T333::new(id))),
+            (ProtocolVersion::P2, 1110) => Ok(Self::Xh540W150(Xh540W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1270 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1110) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1110,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1310 => Ok(Self::Xw540H260(Xw540H260::new(id))),
+            (ProtocolVersion::P1, 1111) => Ok(Self::Xd540T150(Xd540T150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1310 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1111) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1111,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1111) => Ok(Self::Xd540T150(Xd540T150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1111) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1111,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1120) => Ok(Self::Xm540W270(Xm540W270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1120,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1120) => Ok(Self::Xm540W270(Xm540W270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1120,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1130) => Ok(Self::Xm540W150(Xm540W150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1130) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1130,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1130) => Ok(Self::Xm540W150(Xm540W150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1130) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1130,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1140) => Ok(Self::Xh540V270(Xh540V270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1140) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1140,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1140) => Ok(Self::Xh540V270(Xh540V270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1140) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1140,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1150) => Ok(Self::Xh540V150(Xh540V150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1150) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1150,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1150) => Ok(Self::Xh540V150(Xh540V150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1150) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1150,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1160) => Ok(Self::TwoXc430W250(TwoXc430W250::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1160) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1160,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1160) => Ok(Self::TwoXc430W250(TwoXc430W250::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1160) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1160,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1170) => Ok(Self::Xw540T260(Xw540T260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1170) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1170,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1170) => Ok(Self::Xw540T260(Xw540T260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1170) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1170,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1180) => Ok(Self::Xw540T140(Xw540T140::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1180) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1180,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1180) => Ok(Self::Xw540T140(Xw540T140::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1180) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1180,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1190) if firmware < 53 => {
+                Ok(Self::Xl330M077Fw52(Xl330M077Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1190) => Ok(Self::Xl330M077(Xl330M077::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1190) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1190,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1200) if firmware < 53 => {
+                Ok(Self::Xl330M288Fw52(Xl330M288Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1200) => Ok(Self::Xl330M288(Xl330M288::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1200) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1200,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1210) if firmware < 53 => {
+                Ok(Self::Xc330T181Fw52(Xc330T181Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1210) => Ok(Self::Xc330T181(Xc330T181::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1210) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1210,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1220) if firmware < 53 => {
+                Ok(Self::Xc330T288Fw52(Xc330T288Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1220) => Ok(Self::Xc330T288(Xc330T288::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1220) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1220,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1230) if firmware < 53 => {
+                Ok(Self::Xc330M181Fw52(Xc330M181Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1230) => Ok(Self::Xc330M181(Xc330M181::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1230) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1230,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1240) if firmware < 53 => {
+                Ok(Self::Xc330M288Fw52(Xc330M288Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1240) => Ok(Self::Xc330M288(Xc330M288::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1240) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1240,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1270) => Ok(Self::Xw430T333(Xw430T333::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1270) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1270,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1270) => Ok(Self::Xw430T333(Xw430T333::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1270) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1270,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1310) => Ok(Self::Xw540H260(Xw540H260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1310) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1310,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1310) => Ok(Self::Xw540H260(Xw540H260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1310) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1310,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "pro")]
-            2000 => Ok(Self::Ph42020S300(Ph42020S300::new(id))),
+            (ProtocolVersion::P2, 2000) => Ok(Self::Ph42020S300(Ph42020S300::new(id))),
             #[cfg(not(feature = "pro"))]
-            2000 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2000,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2010 => Ok(Self::Ph54100S500(Ph54100S500::new(id))),
+            (ProtocolVersion::P2, 2010) => Ok(Self::Ph54100S500(Ph54100S500::new(id))),
             #[cfg(not(feature = "pro"))]
-            2010 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2010,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2020 => Ok(Self::Ph54200S500(Ph54200S500::new(id))),
+            (ProtocolVersion::P2, 2020) => Ok(Self::Ph54200S500(Ph54200S500::new(id))),
             #[cfg(not(feature = "pro"))]
-            2020 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2020,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2100 => Ok(Self::Pm42010S260(Pm42010S260::new(id))),
+            (ProtocolVersion::P2, 2100) => Ok(Self::Pm42010S260(Pm42010S260::new(id))),
             #[cfg(not(feature = "pro"))]
-            2100 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2100) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2100,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2110 => Ok(Self::Pm54040S250(Pm54040S250::new(id))),
+            (ProtocolVersion::P2, 2110) => Ok(Self::Pm54040S250(Pm54040S250::new(id))),
             #[cfg(not(feature = "pro"))]
-            2110 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2110) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2110,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2120 => Ok(Self::Pm54060S250(Pm54060S250::new(id))),
+            (ProtocolVersion::P2, 2120) => Ok(Self::Pm54060S250(Pm54060S250::new(id))),
             #[cfg(not(feature = "pro"))]
-            2120 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2120,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "y-series")]
-            4000 => Ok(Self::Ym070210M001(Ym070210M001::new(id))),
+            (ProtocolVersion::P2, 4000) => Ok(Self::Ym070210M001(Ym070210M001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4000 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4000,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4010 => Ok(Self::Ym070210B001(Ym070210B001::new(id))),
+            (ProtocolVersion::P2, 4010) => Ok(Self::Ym070210B001(Ym070210B001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4010 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4010,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4020 => Ok(Self::Ym070210R051(Ym070210R051::new(id))),
+            (ProtocolVersion::P2, 4020) => Ok(Self::Ym070210R051(Ym070210R051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4020 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4020,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4030 => Ok(Self::Ym070210R099(Ym070210R099::new(id))),
+            (ProtocolVersion::P2, 4030) => Ok(Self::Ym070210R099(Ym070210R099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4030 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4030) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4030,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4040 => Ok(Self::Ym070210A051(Ym070210A051::new(id))),
+            (ProtocolVersion::P2, 4040) => Ok(Self::Ym070210A051(Ym070210A051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4040 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4040) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4040,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4050 => Ok(Self::Ym070210A099(Ym070210A099::new(id))),
+            (ProtocolVersion::P2, 4050) => Ok(Self::Ym070210A099(Ym070210A099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4050 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4050) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4050,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4120 => Ok(Self::Ym080230M001(Ym080230M001::new(id))),
+            (ProtocolVersion::P2, 4120) => Ok(Self::Ym080230M001(Ym080230M001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4120 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4120,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4130 => Ok(Self::Ym080230B001(Ym080230B001::new(id))),
+            (ProtocolVersion::P2, 4130) => Ok(Self::Ym080230B001(Ym080230B001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4130 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4130) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4130,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4140 => Ok(Self::Ym080230R051(Ym080230R051::new(id))),
+            (ProtocolVersion::P2, 4140) => Ok(Self::Ym080230R051(Ym080230R051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4140 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4140) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4140,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4150 => Ok(Self::Ym080230R099(Ym080230R099::new(id))),
+            (ProtocolVersion::P2, 4150) => Ok(Self::Ym080230R099(Ym080230R099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4150 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4150) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4150,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4160 => Ok(Self::Ym080230A051(Ym080230A051::new(id))),
+            (ProtocolVersion::P2, 4160) => Ok(Self::Ym080230A051(Ym080230A051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4160 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4160) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4160,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4170 => Ok(Self::Ym080230A099(Ym080230A099::new(id))),
+            (ProtocolVersion::P2, 4170) => Ok(Self::Ym080230A099(Ym080230A099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4170 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4170) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4170,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "pro")]
-            35074 => Ok(Self::RhP12Rn(RhP12Rn::new(id))),
+            (ProtocolVersion::P2, 35074) => Ok(Self::RhP12Rn(RhP12Rn::new(id))),
             #[cfg(not(feature = "pro"))]
-            35074 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 35074) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 35074,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            43289 => Ok(Self::M4210S260Ra(M4210S260Ra::new(id))),
+            (ProtocolVersion::P2, 43289) => Ok(Self::M4210S260Ra(M4210S260Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            43289 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 43289) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 43289,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            46097 => Ok(Self::M5440S250Ra(M5440S250Ra::new(id))),
+            (ProtocolVersion::P2, 46097) => Ok(Self::M5440S250Ra(M5440S250Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            46097 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 46097) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 46097,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            46353 => Ok(Self::M5460S250Ra(M5460S250Ra::new(id))),
+            (ProtocolVersion::P2, 46353) => Ok(Self::M5460S250Ra(M5460S250Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            46353 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 46353) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 46353,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            51201 => Ok(Self::H4220S300Ra(H4220S300Ra::new(id))),
+            (ProtocolVersion::P2, 51201) => Ok(Self::H4220S300Ra(H4220S300Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            51201 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 51201) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 51201,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            53769 => Ok(Self::H54100S500Ra(H54100S500Ra::new(id))),
+            (ProtocolVersion::P2, 53769) => Ok(Self::H54100S500Ra(H54100S500Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            53769 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 53769) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 53769,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            54025 => Ok(Self::H54200S500Ra(H54200S500Ra::new(id))),
+            (ProtocolVersion::P2, 54025) => Ok(Self::H54200S500Ra(H54200S500Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            54025 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 54025) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 54025,
+                protocol,
                 feature: Some("pro"),
             }),
-            _ => Err(Error::UnsupportedModel {
-                model_number,
+            _ => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: model_number.get(),
+                protocol,
                 feature: None,
             }),
+        }
+    }
+
+    /// `Some` when this model's table depends on firmware on this protocol: the Firmware
+    /// Version register to read before calling [`ActuatorKind::new`]. `None` otherwise,
+    /// including when the model's family is off.
+    pub(crate) fn firmware_register(
+        protocol: ProtocolVersion,
+        model_number: ModelNumber,
+    ) -> Option<Register> {
+        match (protocol, model_number.get()) {
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1190) => Some(Xl330M077Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1200) => Some(Xl330M288Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1210) => Some(Xc330T181Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1220) => Some(Xc330T288Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1230) => Some(Xc330M181Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1240) => Some(Xc330M288Fw52::FIRMWARE_VERSION),
+            _ => None,
+        }
+    }
+}
+
+impl Describe for ActuatorKind {
+    fn data(&self) -> &'static ModelData {
+        match *self {
+            #[cfg(feature = "ax")]
+            Self::Ax12a(ref m) => m.data(),
+            #[cfg(feature = "ax")]
+            Self::Ax18a(ref m) => m.data(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref m) => m.data(),
+            #[cfg(feature = "mx")]
+            Self::Mx28(ref m) => m.data(),
+            #[cfg(feature = "ax")]
+            Self::Ax12w(ref m) => m.data(),
+            #[cfg(feature = "mx")]
+            Self::Mx64(ref m) => m.data(),
+            #[cfg(feature = "mx")]
+            Self::Mx106(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xl320(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430W350(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xd430T350(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430W210(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xd430T210(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xm430W350(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xm430W210(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430V350(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430V210(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xl430W250(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc430W150(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc430W240(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::TwoXl430W250(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540W270(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xd540T270(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540W150(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xd540T150(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xm540W270(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xm540W150(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540V270(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540V150(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::TwoXc430W250(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540T260(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540T140(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M077Fw52(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M077(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M288Fw52(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M288(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T181Fw52(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T181(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T288Fw52(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T288(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M181Fw52(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M181(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M288Fw52(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M288(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xw430T333(ref m) => m.data(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540H260(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::Ph42020S300(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::Ph54100S500(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::Ph54200S500(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::Pm42010S260(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::Pm54040S250(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::Pm54060S250(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210M001(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210B001(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210R051(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210R099(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210A051(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210A099(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230M001(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230B001(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230R051(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230R099(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230A051(ref m) => m.data(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230A099(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::RhP12Rn(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::M4210S260Ra(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::M5440S250Ra(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::M5460S250Ra(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::H4220S300Ra(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::H54100S500Ra(ref m) => m.data(),
+            #[cfg(feature = "pro")]
+            Self::H54200S500Ra(ref m) => m.data(),
+        }
+    }
+
+    fn cache(&self) -> &Cache {
+        match *self {
+            #[cfg(feature = "ax")]
+            Self::Ax12a(ref m) => m.cache(),
+            #[cfg(feature = "ax")]
+            Self::Ax18a(ref m) => m.cache(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref m) => m.cache(),
+            #[cfg(feature = "mx")]
+            Self::Mx28(ref m) => m.cache(),
+            #[cfg(feature = "ax")]
+            Self::Ax12w(ref m) => m.cache(),
+            #[cfg(feature = "mx")]
+            Self::Mx64(ref m) => m.cache(),
+            #[cfg(feature = "mx")]
+            Self::Mx106(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xl320(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430W350(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xd430T350(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430W210(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xd430T210(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xm430W350(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xm430W210(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430V350(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430V210(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xl430W250(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc430W150(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc430W240(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::TwoXl430W250(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540W270(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xd540T270(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540W150(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xd540T150(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xm540W270(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xm540W150(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540V270(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540V150(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::TwoXc430W250(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540T260(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540T140(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M077Fw52(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M077(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M288Fw52(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M288(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T181Fw52(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T181(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T288Fw52(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T288(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M181Fw52(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M181(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M288Fw52(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M288(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xw430T333(ref m) => m.cache(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540H260(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::Ph42020S300(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::Ph54100S500(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::Ph54200S500(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::Pm42010S260(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::Pm54040S250(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::Pm54060S250(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210M001(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210B001(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210R051(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210R099(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210A051(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210A099(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230M001(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230B001(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230R051(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230R099(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230A051(ref m) => m.cache(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230A099(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::RhP12Rn(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::M4210S260Ra(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::M5440S250Ra(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::M5460S250Ra(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::H4220S300Ra(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::H54100S500Ra(ref m) => m.cache(),
+            #[cfg(feature = "pro")]
+            Self::H54200S500Ra(ref m) => m.cache(),
+        }
+    }
+
+    fn cache_mut(&mut self) -> &mut Cache {
+        match *self {
+            #[cfg(feature = "ax")]
+            Self::Ax12a(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "ax")]
+            Self::Ax18a(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "mx")]
+            Self::Mx28(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "ax")]
+            Self::Ax12w(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "mx")]
+            Self::Mx64(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "mx")]
+            Self::Mx106(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xl320(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430W350(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xd430T350(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430W210(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xd430T210(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xm430W350(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xm430W210(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430V350(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh430V210(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xl430W250(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc430W150(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc430W240(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::TwoXl430W250(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540W270(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xd540T270(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540W150(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xd540T150(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xm540W270(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xm540W150(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540V270(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xh540V150(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::TwoXc430W250(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540T260(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540T140(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M077Fw52(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M077(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M288Fw52(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xl330M288(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T181Fw52(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T181(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T288Fw52(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330T288(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M181Fw52(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M181(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M288Fw52(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xc330M288(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xw430T333(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "x-series")]
+            Self::Xw540H260(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::Ph42020S300(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::Ph54100S500(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::Ph54200S500(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::Pm42010S260(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::Pm54040S250(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::Pm54060S250(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210M001(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210B001(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210R051(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210R099(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210A051(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym070210A099(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230M001(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230B001(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230R051(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230R099(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230A051(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "y-series")]
+            Self::Ym080230A099(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::RhP12Rn(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::M4210S260Ra(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::M5440S250Ra(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::M5460S250Ra(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::H4220S300Ra(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::H54100S500Ra(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "pro")]
+            Self::H54200S500Ra(ref mut m) => m.cache_mut(),
         }
     }
 }
@@ -975,429 +1879,435 @@ impl Actuator for ActuatorKind {
     fn id(&self) -> Id {
         match *self {
             #[cfg(feature = "ax")]
-            Self::Ax12a(ref a) => a.id(),
+            Self::Ax12a(ref m) => m.id(),
             #[cfg(feature = "ax")]
-            Self::Ax18a(ref a) => a.id(),
+            Self::Ax18a(ref m) => m.id(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref m) => m.id(),
             #[cfg(feature = "mx")]
-            Self::Mx28(ref a) => a.id(),
+            Self::Mx28(ref m) => m.id(),
             #[cfg(feature = "ax")]
-            Self::Ax12w(ref a) => a.id(),
+            Self::Ax12w(ref m) => m.id(),
             #[cfg(feature = "mx")]
-            Self::Mx64(ref a) => a.id(),
+            Self::Mx64(ref m) => m.id(),
             #[cfg(feature = "mx")]
-            Self::Mx106(ref a) => a.id(),
+            Self::Mx106(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xl320(ref a) => a.id(),
+            Self::Xl320(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh430W350(ref a) => a.id(),
+            Self::Xh430W350(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xd430T350(ref a) => a.id(),
+            Self::Xd430T350(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh430W210(ref a) => a.id(),
+            Self::Xh430W210(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xd430T210(ref a) => a.id(),
+            Self::Xd430T210(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xm430W350(ref a) => a.id(),
+            Self::Xm430W350(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xm430W210(ref a) => a.id(),
+            Self::Xm430W210(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh430V350(ref a) => a.id(),
+            Self::Xh430V350(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh430V210(ref a) => a.id(),
+            Self::Xh430V210(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xl430W250(ref a) => a.id(),
+            Self::Xl430W250(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc430W150(ref a) => a.id(),
+            Self::Xc430W150(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc430W240(ref a) => a.id(),
+            Self::Xc430W240(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::TwoXl430W250(ref a) => a.id(),
+            Self::TwoXl430W250(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh540W270(ref a) => a.id(),
+            Self::Xh540W270(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xd540T270(ref a) => a.id(),
+            Self::Xd540T270(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh540W150(ref a) => a.id(),
+            Self::Xh540W150(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xd540T150(ref a) => a.id(),
+            Self::Xd540T150(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xm540W270(ref a) => a.id(),
+            Self::Xm540W270(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xm540W150(ref a) => a.id(),
+            Self::Xm540W150(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh540V270(ref a) => a.id(),
+            Self::Xh540V270(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xh540V150(ref a) => a.id(),
+            Self::Xh540V150(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::TwoXc430W250(ref a) => a.id(),
+            Self::TwoXc430W250(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xw540T260(ref a) => a.id(),
+            Self::Xw540T260(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xw540T140(ref a) => a.id(),
+            Self::Xw540T140(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M077Fw52(ref a) => a.id(),
+            Self::Xl330M077Fw52(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M077(ref a) => a.id(),
+            Self::Xl330M077(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M288Fw52(ref a) => a.id(),
+            Self::Xl330M288Fw52(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M288(ref a) => a.id(),
+            Self::Xl330M288(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T181Fw52(ref a) => a.id(),
+            Self::Xc330T181Fw52(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T181(ref a) => a.id(),
+            Self::Xc330T181(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T288Fw52(ref a) => a.id(),
+            Self::Xc330T288Fw52(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T288(ref a) => a.id(),
+            Self::Xc330T288(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M181Fw52(ref a) => a.id(),
+            Self::Xc330M181Fw52(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M181(ref a) => a.id(),
+            Self::Xc330M181(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M288Fw52(ref a) => a.id(),
+            Self::Xc330M288Fw52(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M288(ref a) => a.id(),
+            Self::Xc330M288(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xw430T333(ref a) => a.id(),
+            Self::Xw430T333(ref m) => m.id(),
             #[cfg(feature = "x-series")]
-            Self::Xw540H260(ref a) => a.id(),
+            Self::Xw540H260(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::Ph42020S300(ref a) => a.id(),
+            Self::Ph42020S300(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::Ph54100S500(ref a) => a.id(),
+            Self::Ph54100S500(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::Ph54200S500(ref a) => a.id(),
+            Self::Ph54200S500(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::Pm42010S260(ref a) => a.id(),
+            Self::Pm42010S260(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::Pm54040S250(ref a) => a.id(),
+            Self::Pm54040S250(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::Pm54060S250(ref a) => a.id(),
+            Self::Pm54060S250(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210M001(ref a) => a.id(),
+            Self::Ym070210M001(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210B001(ref a) => a.id(),
+            Self::Ym070210B001(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210R051(ref a) => a.id(),
+            Self::Ym070210R051(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210R099(ref a) => a.id(),
+            Self::Ym070210R099(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210A051(ref a) => a.id(),
+            Self::Ym070210A051(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210A099(ref a) => a.id(),
+            Self::Ym070210A099(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230M001(ref a) => a.id(),
+            Self::Ym080230M001(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230B001(ref a) => a.id(),
+            Self::Ym080230B001(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230R051(ref a) => a.id(),
+            Self::Ym080230R051(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230R099(ref a) => a.id(),
+            Self::Ym080230R099(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230A051(ref a) => a.id(),
+            Self::Ym080230A051(ref m) => m.id(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230A099(ref a) => a.id(),
+            Self::Ym080230A099(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::RhP12Rn(ref a) => a.id(),
+            Self::RhP12Rn(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::M4210S260Ra(ref a) => a.id(),
+            Self::M4210S260Ra(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::M5440S250Ra(ref a) => a.id(),
+            Self::M5440S250Ra(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::M5460S250Ra(ref a) => a.id(),
+            Self::M5460S250Ra(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::H4220S300Ra(ref a) => a.id(),
+            Self::H4220S300Ra(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::H54100S500Ra(ref a) => a.id(),
+            Self::H54100S500Ra(ref m) => m.id(),
             #[cfg(feature = "pro")]
-            Self::H54200S500Ra(ref a) => a.id(),
+            Self::H54200S500Ra(ref m) => m.id(),
         }
     }
 
     fn model_number(&self) -> u16 {
         match *self {
             #[cfg(feature = "ax")]
-            Self::Ax12a(ref a) => a.model_number(),
+            Self::Ax12a(ref m) => m.model_number(),
             #[cfg(feature = "ax")]
-            Self::Ax18a(ref a) => a.model_number(),
+            Self::Ax18a(ref m) => m.model_number(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref m) => m.model_number(),
             #[cfg(feature = "mx")]
-            Self::Mx28(ref a) => a.model_number(),
+            Self::Mx28(ref m) => m.model_number(),
             #[cfg(feature = "ax")]
-            Self::Ax12w(ref a) => a.model_number(),
+            Self::Ax12w(ref m) => m.model_number(),
             #[cfg(feature = "mx")]
-            Self::Mx64(ref a) => a.model_number(),
+            Self::Mx64(ref m) => m.model_number(),
             #[cfg(feature = "mx")]
-            Self::Mx106(ref a) => a.model_number(),
+            Self::Mx106(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xl320(ref a) => a.model_number(),
+            Self::Xl320(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh430W350(ref a) => a.model_number(),
+            Self::Xh430W350(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xd430T350(ref a) => a.model_number(),
+            Self::Xd430T350(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh430W210(ref a) => a.model_number(),
+            Self::Xh430W210(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xd430T210(ref a) => a.model_number(),
+            Self::Xd430T210(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xm430W350(ref a) => a.model_number(),
+            Self::Xm430W350(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xm430W210(ref a) => a.model_number(),
+            Self::Xm430W210(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh430V350(ref a) => a.model_number(),
+            Self::Xh430V350(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh430V210(ref a) => a.model_number(),
+            Self::Xh430V210(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xl430W250(ref a) => a.model_number(),
+            Self::Xl430W250(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc430W150(ref a) => a.model_number(),
+            Self::Xc430W150(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc430W240(ref a) => a.model_number(),
+            Self::Xc430W240(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::TwoXl430W250(ref a) => a.model_number(),
+            Self::TwoXl430W250(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh540W270(ref a) => a.model_number(),
+            Self::Xh540W270(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xd540T270(ref a) => a.model_number(),
+            Self::Xd540T270(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh540W150(ref a) => a.model_number(),
+            Self::Xh540W150(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xd540T150(ref a) => a.model_number(),
+            Self::Xd540T150(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xm540W270(ref a) => a.model_number(),
+            Self::Xm540W270(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xm540W150(ref a) => a.model_number(),
+            Self::Xm540W150(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh540V270(ref a) => a.model_number(),
+            Self::Xh540V270(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xh540V150(ref a) => a.model_number(),
+            Self::Xh540V150(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::TwoXc430W250(ref a) => a.model_number(),
+            Self::TwoXc430W250(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xw540T260(ref a) => a.model_number(),
+            Self::Xw540T260(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xw540T140(ref a) => a.model_number(),
+            Self::Xw540T140(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M077Fw52(ref a) => a.model_number(),
+            Self::Xl330M077Fw52(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M077(ref a) => a.model_number(),
+            Self::Xl330M077(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M288Fw52(ref a) => a.model_number(),
+            Self::Xl330M288Fw52(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M288(ref a) => a.model_number(),
+            Self::Xl330M288(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T181Fw52(ref a) => a.model_number(),
+            Self::Xc330T181Fw52(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T181(ref a) => a.model_number(),
+            Self::Xc330T181(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T288Fw52(ref a) => a.model_number(),
+            Self::Xc330T288Fw52(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T288(ref a) => a.model_number(),
+            Self::Xc330T288(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M181Fw52(ref a) => a.model_number(),
+            Self::Xc330M181Fw52(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M181(ref a) => a.model_number(),
+            Self::Xc330M181(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M288Fw52(ref a) => a.model_number(),
+            Self::Xc330M288Fw52(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M288(ref a) => a.model_number(),
+            Self::Xc330M288(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xw430T333(ref a) => a.model_number(),
+            Self::Xw430T333(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
-            Self::Xw540H260(ref a) => a.model_number(),
+            Self::Xw540H260(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::Ph42020S300(ref a) => a.model_number(),
+            Self::Ph42020S300(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::Ph54100S500(ref a) => a.model_number(),
+            Self::Ph54100S500(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::Ph54200S500(ref a) => a.model_number(),
+            Self::Ph54200S500(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::Pm42010S260(ref a) => a.model_number(),
+            Self::Pm42010S260(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::Pm54040S250(ref a) => a.model_number(),
+            Self::Pm54040S250(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::Pm54060S250(ref a) => a.model_number(),
+            Self::Pm54060S250(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210M001(ref a) => a.model_number(),
+            Self::Ym070210M001(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210B001(ref a) => a.model_number(),
+            Self::Ym070210B001(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210R051(ref a) => a.model_number(),
+            Self::Ym070210R051(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210R099(ref a) => a.model_number(),
+            Self::Ym070210R099(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210A051(ref a) => a.model_number(),
+            Self::Ym070210A051(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210A099(ref a) => a.model_number(),
+            Self::Ym070210A099(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230M001(ref a) => a.model_number(),
+            Self::Ym080230M001(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230B001(ref a) => a.model_number(),
+            Self::Ym080230B001(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230R051(ref a) => a.model_number(),
+            Self::Ym080230R051(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230R099(ref a) => a.model_number(),
+            Self::Ym080230R099(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230A051(ref a) => a.model_number(),
+            Self::Ym080230A051(ref m) => m.model_number(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230A099(ref a) => a.model_number(),
+            Self::Ym080230A099(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::RhP12Rn(ref a) => a.model_number(),
+            Self::RhP12Rn(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::M4210S260Ra(ref a) => a.model_number(),
+            Self::M4210S260Ra(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::M5440S250Ra(ref a) => a.model_number(),
+            Self::M5440S250Ra(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::M5460S250Ra(ref a) => a.model_number(),
+            Self::M5460S250Ra(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::H4220S300Ra(ref a) => a.model_number(),
+            Self::H4220S300Ra(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::H54100S500Ra(ref a) => a.model_number(),
+            Self::H54100S500Ra(ref m) => m.model_number(),
             #[cfg(feature = "pro")]
-            Self::H54200S500Ra(ref a) => a.model_number(),
+            Self::H54200S500Ra(ref m) => m.model_number(),
         }
     }
 
     fn name(&self) -> &'static str {
         match *self {
             #[cfg(feature = "ax")]
-            Self::Ax12a(ref a) => a.name(),
+            Self::Ax12a(ref m) => m.name(),
             #[cfg(feature = "ax")]
-            Self::Ax18a(ref a) => a.name(),
+            Self::Ax18a(ref m) => m.name(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref m) => m.name(),
             #[cfg(feature = "mx")]
-            Self::Mx28(ref a) => a.name(),
+            Self::Mx28(ref m) => m.name(),
             #[cfg(feature = "ax")]
-            Self::Ax12w(ref a) => a.name(),
+            Self::Ax12w(ref m) => m.name(),
             #[cfg(feature = "mx")]
-            Self::Mx64(ref a) => a.name(),
+            Self::Mx64(ref m) => m.name(),
             #[cfg(feature = "mx")]
-            Self::Mx106(ref a) => a.name(),
+            Self::Mx106(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xl320(ref a) => a.name(),
+            Self::Xl320(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh430W350(ref a) => a.name(),
+            Self::Xh430W350(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xd430T350(ref a) => a.name(),
+            Self::Xd430T350(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh430W210(ref a) => a.name(),
+            Self::Xh430W210(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xd430T210(ref a) => a.name(),
+            Self::Xd430T210(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xm430W350(ref a) => a.name(),
+            Self::Xm430W350(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xm430W210(ref a) => a.name(),
+            Self::Xm430W210(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh430V350(ref a) => a.name(),
+            Self::Xh430V350(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh430V210(ref a) => a.name(),
+            Self::Xh430V210(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xl430W250(ref a) => a.name(),
+            Self::Xl430W250(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc430W150(ref a) => a.name(),
+            Self::Xc430W150(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc430W240(ref a) => a.name(),
+            Self::Xc430W240(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::TwoXl430W250(ref a) => a.name(),
+            Self::TwoXl430W250(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh540W270(ref a) => a.name(),
+            Self::Xh540W270(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xd540T270(ref a) => a.name(),
+            Self::Xd540T270(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh540W150(ref a) => a.name(),
+            Self::Xh540W150(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xd540T150(ref a) => a.name(),
+            Self::Xd540T150(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xm540W270(ref a) => a.name(),
+            Self::Xm540W270(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xm540W150(ref a) => a.name(),
+            Self::Xm540W150(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh540V270(ref a) => a.name(),
+            Self::Xh540V270(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xh540V150(ref a) => a.name(),
+            Self::Xh540V150(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::TwoXc430W250(ref a) => a.name(),
+            Self::TwoXc430W250(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xw540T260(ref a) => a.name(),
+            Self::Xw540T260(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xw540T140(ref a) => a.name(),
+            Self::Xw540T140(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M077Fw52(ref a) => a.name(),
+            Self::Xl330M077Fw52(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M077(ref a) => a.name(),
+            Self::Xl330M077(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M288Fw52(ref a) => a.name(),
+            Self::Xl330M288Fw52(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xl330M288(ref a) => a.name(),
+            Self::Xl330M288(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T181Fw52(ref a) => a.name(),
+            Self::Xc330T181Fw52(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T181(ref a) => a.name(),
+            Self::Xc330T181(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T288Fw52(ref a) => a.name(),
+            Self::Xc330T288Fw52(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330T288(ref a) => a.name(),
+            Self::Xc330T288(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M181Fw52(ref a) => a.name(),
+            Self::Xc330M181Fw52(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M181(ref a) => a.name(),
+            Self::Xc330M181(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M288Fw52(ref a) => a.name(),
+            Self::Xc330M288Fw52(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xc330M288(ref a) => a.name(),
+            Self::Xc330M288(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xw430T333(ref a) => a.name(),
+            Self::Xw430T333(ref m) => m.name(),
             #[cfg(feature = "x-series")]
-            Self::Xw540H260(ref a) => a.name(),
+            Self::Xw540H260(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::Ph42020S300(ref a) => a.name(),
+            Self::Ph42020S300(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::Ph54100S500(ref a) => a.name(),
+            Self::Ph54100S500(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::Ph54200S500(ref a) => a.name(),
+            Self::Ph54200S500(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::Pm42010S260(ref a) => a.name(),
+            Self::Pm42010S260(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::Pm54040S250(ref a) => a.name(),
+            Self::Pm54040S250(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::Pm54060S250(ref a) => a.name(),
+            Self::Pm54060S250(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210M001(ref a) => a.name(),
+            Self::Ym070210M001(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210B001(ref a) => a.name(),
+            Self::Ym070210B001(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210R051(ref a) => a.name(),
+            Self::Ym070210R051(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210R099(ref a) => a.name(),
+            Self::Ym070210R099(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210A051(ref a) => a.name(),
+            Self::Ym070210A051(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym070210A099(ref a) => a.name(),
+            Self::Ym070210A099(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230M001(ref a) => a.name(),
+            Self::Ym080230M001(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230B001(ref a) => a.name(),
+            Self::Ym080230B001(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230R051(ref a) => a.name(),
+            Self::Ym080230R051(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230R099(ref a) => a.name(),
+            Self::Ym080230R099(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230A051(ref a) => a.name(),
+            Self::Ym080230A051(ref m) => m.name(),
             #[cfg(feature = "y-series")]
-            Self::Ym080230A099(ref a) => a.name(),
+            Self::Ym080230A099(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::RhP12Rn(ref a) => a.name(),
+            Self::RhP12Rn(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::M4210S260Ra(ref a) => a.name(),
+            Self::M4210S260Ra(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::M5440S250Ra(ref a) => a.name(),
+            Self::M5440S250Ra(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::M5460S250Ra(ref a) => a.name(),
+            Self::M5460S250Ra(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::H4220S300Ra(ref a) => a.name(),
+            Self::H4220S300Ra(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::H54100S500Ra(ref a) => a.name(),
+            Self::H54100S500Ra(ref m) => m.name(),
             #[cfg(feature = "pro")]
-            Self::H54200S500Ra(ref a) => a.name(),
+            Self::H54200S500Ra(ref m) => m.name(),
         }
     }
 }
