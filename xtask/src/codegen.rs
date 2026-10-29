@@ -318,4 +318,219 @@ mod tests {
         let errors = checks(generate(&root.control_tables()));
         assert!(errors.iter().any(|d| d.file == "gone"), "{errors:?}");
     }
+
+    /// The real `control_tables/`, resolved and rendered, with an
+    /// independent row lookup per table.
+    struct Real {
+        map: schema::ModelMap,
+        tables: BTreeMap<String, schema::ControlTable>,
+        resolved: resolve::Resolved,
+        files: Vec<(String, String)>,
+    }
+
+    fn real() -> Real {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("control_tables");
+        let map = schema::parse_map(&dir.join("dynamixel.ron")).unwrap();
+        let tables: BTreeMap<String, schema::ControlTable> = mapped_files(&map)
+            .into_iter()
+            .map(|f| {
+                let table = schema::parse_table(&dir.join(format!("{f}.ron")), &f).unwrap();
+                (f, table)
+            })
+            .collect();
+        let outcome = resolve::resolve(&map, &tables, &table_stems(&dir).unwrap());
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        let files = render::render(&outcome.resolved);
+        Real {
+            map,
+            tables,
+            resolved: outcome.resolved,
+            files,
+        }
+    }
+
+    fn mapped_files(map: &schema::ModelMap) -> BTreeSet<String> {
+        map.models
+            .values()
+            .flat_map(|e| e.p1.iter().chain(e.p2.iter()).flatten())
+            .map(|t| t.file.clone())
+            .collect()
+    }
+
+    fn compact(text: &str) -> String {
+        text.split_whitespace().collect()
+    }
+
+    fn find<'a>(table: &'a schema::ControlTable, name: &str) -> Option<&'a schema::Row> {
+        table.control_table.iter().find(|r| r.data_name == name)
+    }
+
+    fn reg_line(row: &schema::Row) -> String {
+        format!(
+            "pub(crate) const {}: Register = super::reg({}, {}, Access::{:?}, Area::{:?});",
+            names::const_ident(&row.data_name),
+            row.address,
+            row.size,
+            row.access,
+            row.area
+        )
+    }
+
+    impl Real {
+        fn model(&self, file: &str) -> &resolve::GenModel {
+            self.resolved
+                .models
+                .iter()
+                .find(|m| m.file == file)
+                .unwrap_or_else(|| panic!("no model {file}"))
+        }
+
+        fn text(&self, stem: &str) -> &str {
+            let module = &self.model(stem).module_ident;
+            file(&self.files, &format!("models/{module}.rs"))
+        }
+    }
+
+    #[test]
+    fn real_tables_roles_match_oracle() {
+        use resolve::{Limits, ModeRole};
+        let real = real();
+        let mut checked = 0;
+        for model in &real.resolved.models {
+            let table = &real.tables[&model.file];
+            let row = |name| find(table, name);
+            let text = real.text(&model.file);
+            let c = compact(text);
+            let roles = &model.roles;
+            for (name, resolved) in [
+                ("Model Number", &roles.model_number),
+                ("Firmware Version", &roles.firmware_version),
+                ("Torque Enable", &roles.torque_enable),
+                ("Goal Position", &roles.goal_position),
+                ("Present Position", &roles.present_position),
+            ] {
+                let oracle = row(name).unwrap_or_else(|| panic!("{}: no {name}", model.file));
+                assert_eq!(resolved, oracle, "{}: {name}", model.file);
+                assert!(text.contains(&reg_line(oracle)), "{}: {name}", model.file);
+            }
+            let limits = match (
+                row("Min Position Limit"),
+                row("Max Position Limit"),
+                row("CW Angle Limit"),
+                row("CCW Angle Limit"),
+            ) {
+                (Some(min), Some(max), None, None) => {
+                    assert!(c.contains("limits:LimitRegisters::MinMax{min:Self::MIN_POSITION_LIMIT,max:Self::MAX_POSITION_LIMIT}"));
+                    Limits::MinMax {
+                        min: min.clone(),
+                        max: max.clone(),
+                    }
+                }
+                (None, None, Some(cw), Some(ccw)) => {
+                    assert!(c.contains("limits:LimitRegisters::CwCcw{cw:Self::CW_ANGLE_LIMIT,ccw:Self::CCW_ANGLE_LIMIT}"));
+                    Limits::CwCcw {
+                        cw: cw.clone(),
+                        ccw: ccw.clone(),
+                    }
+                }
+                other => panic!("{}: limits {other:?}", model.file),
+            };
+            assert_eq!(roles.limits, limits, "{}", model.file);
+            match row("Hardware Error Status") {
+                Some(oracle) => {
+                    assert_eq!(roles.hardware_error.as_ref(), Some(oracle));
+                    assert!(c.contains("hardware_error:Some(Self::HARDWARE_ERROR_STATUS)"));
+                }
+                None => {
+                    assert_eq!(roles.hardware_error, None);
+                    assert!(c.contains("hardware_error:None"), "{}", model.file);
+                }
+            }
+            let mode_row = row("Operating Mode")
+                .map(|r| (r, "OPERATING_MODE"))
+                .or_else(|| row("Control Mode").map(|r| (r, "CONTROL_MODE")));
+            match (mode_row, &table.operating_modes) {
+                (Some((oracle, constant)), Some(values)) => {
+                    assert_eq!(
+                        roles.mode,
+                        ModeRole::Register {
+                            row: oracle.clone(),
+                            values: values.clone()
+                        }
+                    );
+                    assert!(text.contains(&reg_line(oracle)));
+                    let expected = compact(&format!(
+                        "mode:ModeSource::Register{{register:Self::{constant},values:ModeValues{{bounded:&{:?},unbounded:&{:?},no_position:&{:?}}}}}",
+                        values.bounded, values.unbounded, values.no_position
+                    ));
+                    assert!(c.contains(&expected), "{}: {expected}", model.file);
+                }
+                (None, None) => {
+                    assert_eq!(roles.mode, ModeRole::AngleLimits);
+                    assert!(c.contains("mode:ModeSource::AngleLimits"), "{}", model.file);
+                }
+                other => panic!("{}: mode {other:?}", model.file),
+            }
+            let t = &table.type_info;
+            let scale = compact(&format!(
+                "scale:PositionScale::new({},{},{},{:?},{:?})",
+                t.value_of_zero_radian_position,
+                t.value_of_min_radian_position,
+                t.value_of_max_radian_position,
+                t.min_radian,
+                t.max_radian
+            ));
+            assert!(c.contains(&scale), "{}: {scale}", model.file);
+            checked += 1;
+        }
+        assert_eq!(checked, mapped_files(&real.map).len());
+        assert_eq!(checked, real.tables.len());
+
+        let xm = real.text("xm430_w350");
+        assert!(xm.contains(
+            "pub(crate) const GOAL_POSITION: Register = super::reg(116, 4, Access::RW, Area::Ram);"
+        ));
+        assert!(xm.contains(
+            "pub(crate) const OPERATING_MODE: Register = super::reg(11, 1, Access::RW, Area::Eeprom);"
+        ));
+        assert!(compact(xm).contains("mode:ModeSource::Register{register:Self::OPERATING_MODE,"));
+
+        let ax = real.model("ax_12a");
+        let Limits::CwCcw { cw, ccw } = &ax.roles.limits else {
+            panic!("AX-12A: expected CW/CCW limits");
+        };
+        assert_eq!((cw.address, ccw.address), (6, 8));
+        assert_eq!(ax.roles.hardware_error, None);
+        assert_eq!(ax.roles.mode, ModeRole::AngleLimits);
+
+        let xl320 = real.model("xl320");
+        assert!(
+            matches!(&xl320.roles.limits, Limits::CwCcw { cw, ccw } if (cw.address, ccw.address) == (6, 8))
+        );
+        assert_eq!(
+            xl320.roles.hardware_error.as_ref().map(|r| r.address),
+            Some(50)
+        );
+        assert!(
+            matches!(&xl320.roles.mode, ModeRole::Register { row, .. } if row.data_name == "Control Mode" && row.address == 11)
+        );
+
+        let ph = real.model("ph54_200_s500");
+        assert_eq!(ph.roles.goal_position.address, 564);
+        assert_eq!(
+            ph.roles.hardware_error.as_ref().map(|r| r.address),
+            Some(518)
+        );
+        assert!(matches!(&ph.roles.mode, ModeRole::Register { row, .. } if row.address == 11));
+
+        let ym = real.model("ym070_210_m001");
+        assert!(find(&real.tables["ym070_210_m001"], "Error Code").is_some());
+        assert_eq!(ym.roles.hardware_error, None);
+        assert!(
+            matches!(&ym.roles.mode, ModeRole::Register { row, .. } if row.data_name == "Operating Mode" && row.address == 33)
+        );
+    }
 }

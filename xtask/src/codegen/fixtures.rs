@@ -8,10 +8,14 @@
     reason = "builders are used as the stories add tests; fixture angles copy table text"
 )]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
+
+use super::resolve::{Outcome, Resolved, resolve};
+use super::schema::{parse_map_str, parse_table_str};
 
 /// Minimal self-cleaning temp directory, to avoid a dependency for tests.
 pub(crate) struct Dir(PathBuf);
@@ -190,6 +194,12 @@ impl Table {
         self
     }
 
+    /// Whether `protocols` names P1, and P2.
+    pub(crate) fn lists(&self) -> (bool, bool) {
+        let text = self.protocols.as_deref().unwrap_or("");
+        (text.contains("P1"), text.contains("P2"))
+    }
+
     /// The fixture's radians, as the table gives them.
     pub(crate) fn radians(&self) -> (f32, f32) {
         (self.type_info.3, self.type_info.4)
@@ -257,6 +267,23 @@ impl Map {
     /// An empty map.
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// A map with one model whose lists name `stem` under each protocol
+    /// `table` has (`p2` alone when it has none).
+    pub(crate) fn single(number: u16, family: &str, name: &str, stem: &str, table: &Table) -> Self {
+        let mut map = Self::new().model(number, family, name);
+        let (p1, p2) = table.lists();
+        if p1 {
+            map = map.p1(&[(0, stem)]);
+        }
+        if p2 || !p1 {
+            map = map.p2(&[(0, stem)]);
+        }
+        if p1 && p2 {
+            map = map.default_p2();
+        }
+        map
     }
 
     /// Starts a model entry.
@@ -451,7 +478,68 @@ pub(crate) fn xm_map() -> Map {
         .default_p2()
 }
 
-/// One failing root per check; the stories add their checks.
+/// Resolves `map` and `tables` in memory; every table is on disk.
+pub(crate) fn outcome(map: &Map, tables: &[(&str, Table)]) -> Outcome {
+    let map = parse_map_str(&map.render()).unwrap();
+    let mut parsed = BTreeMap::new();
+    let mut on_disk = BTreeSet::new();
+    for (stem, table) in tables {
+        on_disk.insert((*stem).to_string());
+        parsed.insert(
+            (*stem).to_string(),
+            parse_table_str(&table.render(), stem).unwrap(),
+        );
+    }
+    resolve(&map, &parsed, &on_disk)
+}
+
+/// Resolves `map` and `tables`, which must pass every check.
+pub(crate) fn resolved(map: &Map, tables: &[(&str, Table)]) -> Resolved {
+    let out = outcome(map, tables);
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    out.resolved
+}
+
+/// A one-model root for `table`, saved as `xm`.
+fn xm_root(table: Table) -> Root {
+    Root::new(
+        &Map::single(1020, "x-series", "XM430-W350", "xm", &table),
+        &[("xm", table)],
+    )
+}
+
+/// One failing root per check of data-model §3.
 pub(crate) fn failing() -> Vec<Failing> {
-    Vec::new()
+    vec![
+        Failing {
+            check: 10,
+            root: xm_root(Table::xm().without("Goal Position")),
+            file: "xm",
+            keywords: &["missing role Goal Position"],
+        },
+        Failing {
+            check: 11,
+            root: xm_root(Table::xm().without("Torque Enable").with_row(
+                64,
+                1,
+                "Torque Enable",
+                "R",
+                "RAM",
+            )),
+            file: "xm",
+            keywords: &["Torque Enable", "must be RW/RAM, found R/RAM"],
+        },
+        Failing {
+            check: 15,
+            root: xm_root(Table::xm().type_info(2048, 4095, 0, -1.0, 1.0)),
+            file: "xm",
+            keywords: &["value_of_max_radian_position"],
+        },
+        Failing {
+            check: 17,
+            root: xm_root(Table::xm().omit_field("operating_modes")),
+            file: "xm",
+            keywords: &["\"Operating Mode\" row without operating_modes"],
+        },
+    ]
 }

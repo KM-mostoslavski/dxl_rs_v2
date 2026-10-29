@@ -96,7 +96,6 @@ pub(crate) struct ControlTable {
     /// Present exactly when the table has an `Operating Mode` or `Control
     /// Mode` row (check 17).
     #[serde(default)]
-    #[allow(dead_code, reason = "the mode source reads it from US1")]
     pub(crate) operating_modes: Option<OperatingModes>,
     /// Position scale.
     pub(crate) type_info: TypeInfo,
@@ -183,18 +182,26 @@ pub(crate) enum Area {
 
 /// Reads `dynamixel.ron`. The diagnostic names the file `dynamixel`.
 pub(crate) fn parse_map(path: &Path) -> Result<ModelMap, Diagnostic> {
-    let text = read(path, "dynamixel")?;
+    parse_map_str(&read(path, "dynamixel")?)
+}
+
+/// Parses the text of `dynamixel.ron`.
+pub(crate) fn parse_map_str(text: &str) -> Result<ModelMap, Diagnostic> {
     options()
-        .from_str(&text)
+        .from_str(text)
         .map_err(|e| Diagnostic::new("dynamixel", e.to_string()))
 }
 
-/// Reads one control table, named `stem` in the diagnostic. Records written
-/// with braces are read as structs; see [`braces_to_parens`].
+/// Reads one control table, named `stem` in the diagnostic.
 pub(crate) fn parse_table(path: &Path, stem: &str) -> Result<ControlTable, Diagnostic> {
-    let text = read(path, stem)?;
+    parse_table_str(&read(path, stem)?, stem)
+}
+
+/// Parses the text of one control table. Records written with braces are
+/// read as structs; see [`braces_to_parens`].
+pub(crate) fn parse_table_str(text: &str, stem: &str) -> Result<ControlTable, Diagnostic> {
     options()
-        .from_str(&braces_to_parens(&text))
+        .from_str(&braces_to_parens(text))
         .map_err(|e| Diagnostic::new(stem, e.to_string()))
 }
 
