@@ -129,11 +129,8 @@ impl Describe for ActuatorKind {
     fn cache_mut(&mut self) -> &mut Cache;     // match *self { Self::X(ref mut m) => .., .. }
 }
 
-impl Actuator for ActuatorKind {
-    fn id(&self) -> Id;                        // emitted while core-1's trait requires them;
-    fn model_number(&self) -> u16;             // a regeneration after core-2 may drop them
-    fn name(&self) -> &'static str;
-}
+impl Actuator for ActuatorKind {}            // X2 (2026-10-29): core-2's default bodies give
+                                             // id, model_number and name from Describe
 ```
 
 ### Lookup semantics
@@ -219,11 +216,7 @@ impl Describe for Xm430W350 {
     fn cache_mut(&mut self) -> &mut Cache;     // &mut self.cache
 }
 
-impl Actuator for Xm430W350 {
-    fn id(&self) -> Id;                        // self.cache.id()
-    fn model_number(&self) -> u16;             // 1020
-    fn name(&self) -> &'static str;            // "XM430-W350"
-}
+impl Actuator for Xm430W350 {}               // X2: id, model_number, name from the defaults
 ```
 
 Scale literals: the four integers are the table's `type_info` values. Each radian value is the
