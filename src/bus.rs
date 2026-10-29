@@ -2,7 +2,9 @@
 //!
 //! A [`Bus`] owns a transport, a clock and the actuators found at Setup.
 //! [`Bus::declare`] sets it up from a list; [`Bus::actuator`] lends a
-//! short-lived [`ActuatorRef`] to command one actuator.
+//! short-lived [`ActuatorRef`] to command one actuator, and
+//! [`Bus::enable_torque`], [`Bus::write_goal_positions`] and
+//! [`Bus::sync_write`] command many in one call.
 //!
 //! Rules that hold for every call:
 //!
@@ -19,6 +21,10 @@
 //!   clears.
 //! - Broadcast writes get no reply, so a loop that only writes sees a fault
 //!   on its next read.
+//! - A multi-actuator call validates every target before any byte, so a
+//!   refusal sends nothing to anyone. On the wire it is not atomic: targets
+//!   with different register layouts get one instruction each, and a
+//!   transport failure between two leaves the first sent.
 //! - Each unicast exchange waits at most [`Config::timeout`] for its reply
 //!   and is tried again at most [`Config::retries`] times; see [`Config`]
 //!   for the resulting time bounds.
@@ -59,6 +65,10 @@ assert!((present.radians() - 0.5).abs() < 0.01);
 )]
 
 mod actuator_ref;
+pub mod field;
+mod group;
+mod id_set;
+mod multi;
 mod observe;
 #[cfg(feature = "std")]
 mod serial;
@@ -71,13 +81,14 @@ mod wire;
 use core::marker::PhantomData;
 use core::time::Duration;
 
-use crate::actuator::{ModelNumber, TorqueState};
+use crate::actuator::{Actuator, ModelNumber, TorqueState};
 use crate::error::Error;
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, Protocol};
 use crate::{Id, Transport};
 
 pub use actuator_ref::ActuatorRef;
+pub use id_set::{IdSet, IdSetIter};
 #[cfg(feature = "std")]
 pub use serial::SerialBus;
 
@@ -202,6 +213,28 @@ impl Default for Config {
 /// returning microseconds is a [`Clock`]. With the `std` feature the clock
 /// defaults to `StdClock`; without it the bus must name one, so
 /// [`DefaultClock`] is [`NoClock`] and a bus without a clock cannot be built.
+#[cfg_attr(
+    feature = "std",
+    doc = r#"
+On a desktop, from a port name to a moving actuator:
+
+```no_run
+use dxl_rs_v2::{Id, P2, Position, SerialBus};
+
+const ID: Id = match Id::new(1) {
+    Ok(id) => id,
+    Err(_) => panic!("1 is a valid ID"),
+};
+let mut bus = SerialBus::<P2>::open("/dev/ttyUSB0", 1_000_000)?;
+bus.autoscan()?;
+bus.enable_torque([ID])?;
+bus.actuator(ID).ok_or("ID 1 not found")?.set_goal_position(Position::from_radians(0.5))?;
+let present = bus.actuator(ID).ok_or("ID 1 not found")?.present_position()?;
+# let _ = present;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
 #[cfg_attr(
     not(feature = "std"),
     doc = r#"
@@ -330,6 +363,14 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Held actuators, ascending by `Id`.
     pub fn actuators(&self) -> &[ActuatorKind] {
         &self.actuators
+    }
+
+    /// Held IDs, as an owned set (so `bus.enable_torque(bus.ids())`
+    /// compiles). Ascending, like [`actuators`](Bus::actuators), so
+    /// `out[i]` of a multi-actuator call over it belongs to
+    /// `actuators()[i]`.
+    pub fn ids(&self) -> IdSet {
+        self.actuators.iter().map(Actuator::id).collect()
     }
 
     /// A handle on the actuator with `id`; `None` for an `Id` the bus does

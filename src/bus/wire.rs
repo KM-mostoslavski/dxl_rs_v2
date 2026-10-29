@@ -4,7 +4,7 @@
 use core::marker::PhantomData;
 
 use crate::error::{Error, TransportError, ValidationError};
-use crate::protocol::{Clock, Link, Pong, Protocol};
+use crate::protocol::{Clock, Link, P2, Pong, Protocol};
 use crate::register::Register;
 use crate::{Id, Transport};
 
@@ -87,6 +87,46 @@ impl<'b, P: Protocol, T: Transport, C: Clock> Wire<'b, P, T, C> {
         P::scan(&mut link, on_reply)
     }
 
+    /// Writes `size` bytes at `addr` on every actuator in `entries` with one
+    /// Sync Write. No reply, so never retried; the timeout only bounds the
+    /// drain of stale input.
+    pub(crate) fn sync_write<'d, I>(&mut self, addr: u16, size: u8, entries: I) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, &'d [u8])> + Clone,
+    {
+        let mut link = self.link();
+        P::sync_write(&mut link, addr, u16::from(size), entries)
+    }
+
+    /// Reads `size` bytes at `addr` from every ID in `ids` (P2 one Sync
+    /// Read, P1 one Read per ID). `on_reply` gets each ID's data or error,
+    /// in `ids` order. Never retried; `Err` only for an invalid request or
+    /// a failing transport.
+    pub(crate) fn read_many<I, F>(
+        &mut self,
+        addr: u16,
+        size: u8,
+        ids: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        let mut link = self.link();
+        P::read_many(&mut link, addr, u16::from(size), ids, scratch, on_reply)
+    }
+
+    /// A `Link` with the unicast timeout.
+    fn link(&mut self) -> Link<'_, T, C> {
+        Link {
+            transport: &mut *self.transport,
+            clock: &mut *self.clock,
+            timeout: self.config.timeout,
+        }
+    }
+
     /// Reads register `reg` of `id` and decodes it.
     pub(crate) fn read_value(&mut self, id: Id, reg: Register) -> Result<i32, Error> {
         let mut buf = [0; 4];
@@ -108,6 +148,85 @@ impl<'b, P: Protocol, T: Transport, C: Clock> Wire<'b, P, T, C> {
     }
 }
 
+impl<T: Transport, C: Clock> Wire<'_, P2, T, C> {
+    /// One Sync Read of `size` bytes at `addr` from every ID in `ids`, as
+    /// [`read_many`](Wire::read_many) on Protocol 2. Never retried.
+    pub(crate) fn sync_read<I, F>(
+        &mut self,
+        addr: u16,
+        size: u8,
+        ids: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        let mut link = self.link();
+        P2::sync_read(&mut link, addr, u16::from(size), ids, scratch, on_reply)
+    }
+}
+
+/// How a multi-actuator read reaches the wire: [`AnyProtocol`] for the Easy
+/// tier, [`SyncRead`] for the Protocol 2 explicit tier.
+pub(crate) trait ReadMany<P, T, C> {
+    /// Reads `size` bytes at `addr` from every ID in `ids`, as
+    /// [`Wire::read_many`].
+    fn run<I, F>(
+        wire: &mut Wire<'_, P, T, C>,
+        addr: u16,
+        size: u8,
+        ids: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>);
+}
+
+/// [`Wire::read_many`]: one Sync Read on Protocol 2, one Read per ID on
+/// Protocol 1.
+pub(crate) struct AnyProtocol;
+
+impl<P: Protocol, T: Transport, C: Clock> ReadMany<P, T, C> for AnyProtocol {
+    fn run<I, F>(
+        wire: &mut Wire<'_, P, T, C>,
+        addr: u16,
+        size: u8,
+        ids: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        wire.read_many(addr, size, ids, scratch, on_reply)
+    }
+}
+
+/// [`Wire::sync_read`]: Protocol 2 only.
+pub(crate) struct SyncRead;
+
+impl<T: Transport, C: Clock> ReadMany<P2, T, C> for SyncRead {
+    fn run<I, F>(
+        wire: &mut Wire<'_, P2, T, C>,
+        addr: u16,
+        size: u8,
+        ids: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        wire.sync_read(addr, size, ids, scratch, on_reply)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::time::Duration;
@@ -117,7 +236,6 @@ mod tests {
     use super::*;
     use crate::bus::testing::*;
     use crate::error::StatusError;
-    use crate::protocol::P2;
     use crate::register::{Access, Area};
     use crate::transport::{MockTime, MockTransport};
 

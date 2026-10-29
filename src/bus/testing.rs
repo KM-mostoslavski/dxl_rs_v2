@@ -10,7 +10,26 @@ extern crate std;
 
 use std::vec::Vec;
 
-use crate::protocol::{Clock, Protocol};
+#[cfg(any(
+    feature = "ax",
+    feature = "mx",
+    feature = "rx",
+    feature = "x-series",
+    feature = "y-series",
+    feature = "pro"
+))]
+use crate::actuator::{Actuator, Describe, ModelNumber};
+use crate::actuator::{LimitMode, TorqueState};
+#[cfg(any(
+    feature = "ax",
+    feature = "mx",
+    feature = "rx",
+    feature = "x-series",
+    feature = "y-series",
+    feature = "pro"
+))]
+use crate::models::ActuatorKind;
+use crate::protocol::{Clock, Protocol, ProtocolVersion};
 use crate::transport::{MockTime, MockTransport};
 use crate::{Bus, Config, Id};
 
@@ -90,10 +109,58 @@ pub(crate) fn assert_done<P: Protocol, const N: usize>(bus: &TestBus<'_, P, N>) 
     bus.transport.assert_done();
 }
 
+/// Torque states and the position limit mode, short for slot fixtures.
+pub(crate) const ON: TorqueState = TorqueState::On;
+pub(crate) const OFF: TorqueState = TorqueState::Off;
+pub(crate) const FAULTED: TorqueState = TorqueState::Faulted;
+pub(crate) const BOUNDED: LimitMode = LimitMode::Bounded;
+
+/// Scripts an empty acknowledgement from `n` to the next packet `bus`
+/// sends.
+pub(crate) fn ack<P: Protocol, const N: usize>(bus: &mut TestBus<'_, P, N>, n: u8) {
+    let reply = match P::VERSION {
+        ProtocolVersion::P1 => p1_status(n, 0, &[]),
+        ProtocolVersion::P2 => p2_status(n, 0, &[]),
+    };
+    bus.transport.reply(&reply);
+}
+
+/// Puts an actuator of `model` at `n` straight into the slots of `bus`, as
+/// a Setup that read `limits` and `mode` would, with torque `state`. IDs
+/// must be added in ascending order.
+#[cfg(any(
+    feature = "ax",
+    feature = "mx",
+    feature = "rx",
+    feature = "x-series",
+    feature = "y-series",
+    feature = "pro"
+))]
+pub(crate) fn hold<P: Protocol, const N: usize>(
+    bus: &mut TestBus<'_, P, N>,
+    model: u16,
+    n: u8,
+    (min, max): (i32, i32),
+    mode: LimitMode,
+    state: TorqueState,
+) {
+    let mut kind = ActuatorKind::new(P::VERSION, ModelNumber(model), 52, id(n)).unwrap();
+    kind.cache_mut().record_limits(min, max).unwrap();
+    kind.cache_mut().record_mode(mode);
+    let slot = bus.actuators.len();
+    assert!(bus.actuators.last().is_none_or(|last| last.id() < id(n)));
+    bus.actuators.push(kind).unwrap();
+    bus.states[slot] = state;
+}
+
 /// Instruction codes of both protocols.
 pub(crate) const PING: u8 = 0x01;
 pub(crate) const READ: u8 = 0x02;
 pub(crate) const WRITE: u8 = 0x03;
+pub(crate) const SYNC_READ: u8 = 0x82;
+pub(crate) const SYNC_WRITE: u8 = 0x83;
+/// The broadcast ID of both protocols.
+pub(crate) const BROADCAST: u8 = 0xFE;
 
 /// `Id` from a raw byte that is known to be valid.
 pub(crate) fn id(n: u8) -> Id {
@@ -168,6 +235,26 @@ pub(crate) fn p2_write(id: u8, addr: u16, data: &[u8]) -> Vec<u8> {
     p2_instruction(id, WRITE, &params)
 }
 
+/// A Protocol 2 Sync Write of `size` bytes at `addr`, one `(id, data)` per
+/// target.
+pub(crate) fn p2_sync_write(addr: u16, size: u16, entries: &[(u8, &[u8])]) -> Vec<u8> {
+    let mut params = addr.to_le_bytes().to_vec();
+    params.extend_from_slice(&size.to_le_bytes());
+    for (id, data) in entries {
+        params.push(*id);
+        params.extend_from_slice(data);
+    }
+    p2_instruction(BROADCAST, SYNC_WRITE, &params)
+}
+
+/// A Protocol 2 Sync Read of `size` bytes at `addr` from `ids`, in order.
+pub(crate) fn p2_sync_read(addr: u16, size: u16, ids: &[u8]) -> Vec<u8> {
+    let mut params = addr.to_le_bytes().to_vec();
+    params.extend_from_slice(&size.to_le_bytes());
+    params.extend_from_slice(ids);
+    p2_instruction(BROADCAST, SYNC_READ, &params)
+}
+
 /// A Protocol 1 packet: `FF FF ID LEN <head> params CHECKSUM`.
 fn p1_packet(id: u8, head: u8, params: &[u8]) -> Vec<u8> {
     let len = u8::try_from(params.len() + 2).unwrap();
@@ -200,6 +287,17 @@ pub(crate) fn p1_write(id: u8, addr: u8, data: &[u8]) -> Vec<u8> {
     let mut params = std::vec![addr];
     params.extend_from_slice(data);
     p1_instruction(id, WRITE, &params)
+}
+
+/// A Protocol 1 Sync Write of `size` bytes at `addr`, one `(id, data)` per
+/// target.
+pub(crate) fn p1_sync_write(addr: u8, size: u8, entries: &[(u8, &[u8])]) -> Vec<u8> {
+    let mut params = std::vec![addr, size];
+    for (id, data) in entries {
+        params.push(*id);
+        params.extend_from_slice(data);
+    }
+    p1_instruction(BROADCAST, SYNC_WRITE, &params)
 }
 
 /// The concatenation of `packets`, for `assert_sent`.
@@ -383,6 +481,48 @@ mod tests {
         assert_eq!(
             p1_status(1, 0, &[0x20]),
             [0xFF, 0xFF, 0x01, 0x03, 0x00, 0x20, 0xDB]
+        );
+    }
+
+    #[test]
+    fn p2_sync_write_matches_the_e_manual() {
+        let a = 150u32.to_le_bytes();
+        let b = 170u32.to_le_bytes();
+        assert_eq!(
+            p2_sync_write(116, 4, &[(1, &a), (2, &b)]),
+            [
+                0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x11, 0x00, 0x83, 0x74, 0x00, 0x04, 0x00, 0x01, 0x96,
+                0x00, 0x00, 0x00, 0x02, 0xAA, 0x00, 0x00, 0x00, 0x82, 0x87
+            ]
+        );
+    }
+
+    #[test]
+    fn p2_sync_read_matches_the_e_manual() {
+        assert_eq!(
+            p2_sync_read(132, 4, &[1, 2]),
+            [
+                0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x09, 0x00, 0x82, 0x84, 0x00, 0x04, 0x00, 0x01, 0x02,
+                0xCE, 0xFA
+            ]
+        );
+    }
+
+    #[test]
+    fn p1_sync_write_matches_the_e_manual() {
+        assert_eq!(
+            p1_sync_write(
+                30,
+                4,
+                &[
+                    (0, &[0x10, 0x00, 0x50, 0x01]),
+                    (1, &[0x20, 0x02, 0x60, 0x03])
+                ]
+            ),
+            [
+                0xFF, 0xFF, 0xFE, 0x0E, 0x83, 0x1E, 0x04, 0x00, 0x10, 0x00, 0x50, 0x01, 0x01, 0x20,
+                0x02, 0x60, 0x03, 0x67
+            ]
         );
     }
 

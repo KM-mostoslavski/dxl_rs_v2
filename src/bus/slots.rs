@@ -12,6 +12,9 @@ pub(crate) trait Slots {
     /// The held actuators, ascending by `Id`.
     fn kinds(&self) -> &[ActuatorKind];
 
+    /// The held actuators and their states, same length and order.
+    fn split_mut(&mut self) -> (&mut [ActuatorKind], &mut [TorqueState]);
+
     /// Empties the list. States become `Off`.
     fn clear(&mut self);
 
@@ -47,6 +50,12 @@ impl<'a, const N: usize> FixedSlots<'a, N> {
 impl<const N: usize> Slots for FixedSlots<'_, N> {
     fn kinds(&self) -> &[ActuatorKind] {
         self.actuators
+    }
+
+    fn split_mut(&mut self) -> (&mut [ActuatorKind], &mut [TorqueState]) {
+        let len = self.actuators.len();
+        let states = self.states.get_mut(..len).unwrap_or_default();
+        (self.actuators, states)
     }
 
     fn clear(&mut self) {
@@ -113,6 +122,9 @@ mod tests {
             for n in [1, 4, 7] {
                 slots.push(xm430(n)).unwrap();
             }
+            let (kinds, held) = slots.split_mut();
+            assert_eq!((kinds.len(), held.len()), (3, 3));
+            assert_eq!(held, [TorqueState::Off; 3]);
             assert_eq!(find(slots.kinds(), id(4)), Some(1));
             assert_eq!(find(slots.kinds(), id(5)), None);
             let (kinds, held) = slots.into_split();
