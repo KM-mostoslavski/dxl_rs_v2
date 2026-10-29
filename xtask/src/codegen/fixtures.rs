@@ -547,6 +547,17 @@ pub(crate) fn failing() -> Vec<Failing> {
             keywords: &["model 1020", "default: P2 is required"],
         },
         Failing {
+            check: 5,
+            root: Root::new(
+                &Map::new()
+                    .model(1020, "x_series", "XM430-W350")
+                    .p2(&[(0, "xm")]),
+                &[("xm", Table::xm().protocols("[P2]"))],
+            ),
+            file: "dynamixel",
+            keywords: &["model 1020", "unknown family \"x_series\""],
+        },
+        Failing {
             check: 6,
             root: Root::new(
                 &Map::new()

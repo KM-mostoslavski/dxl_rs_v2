@@ -31,6 +31,7 @@ pub(crate) fn render_tests(resolved: &Resolved) -> Option<String> {
     for list in &resolved.lookups {
         render_lookup(&mut out, list);
     }
+    render_family_off(&mut out, resolved);
     for model in &resolved.models {
         let ty = &model.type_ident;
         let _ = writeln!(
@@ -109,6 +110,38 @@ fn render_unknown(out: &mut String, resolved: &Resolved) {
          }}\n",
         missing.join(", ")
     );
+}
+
+/// Per family, with the family off: every (protocol, number) with tables
+/// names the family, and needs no firmware read.
+fn render_family_off(out: &mut String, resolved: &Resolved) {
+    let mut families: Vec<&str> = resolved.lookups.iter().map(|l| l.family.as_str()).collect();
+    families.sort_unstable();
+    families.dedup();
+    for family in families {
+        let pairs: Vec<String> = resolved
+            .lookups
+            .iter()
+            .filter(|l| l.family == family)
+            .map(|l| format!("(ProtocolVersion::{}, {})", l.protocol.variant(), l.number))
+            .collect();
+        let _ = writeln!(
+            out,
+            "#[cfg(not(feature = \"{family}\"))]\n\
+             #[test]\n\
+             fn {name}_off() {{\n\
+             \x20   let id = id();\n\
+             \x20   for (protocol, number) in [{pairs}] {{\n\
+             \x20       let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);\n\
+             \x20       let error = SetupError::UnsupportedModel {{ id, model_number: number, protocol, feature: Some(\"{family}\") }};\n\
+             \x20       assert_eq!(found, Err(error));\n\
+             \x20       assert_eq!(ActuatorKind::firmware_register(protocol, ModelNumber(number)), None);\n\
+             \x20   }}\n\
+             }}\n",
+            name = family.replace('-', "_"),
+            pairs = pairs.join(", "),
+        );
+    }
 }
 
 /// The firmware values a lookup list is checked at: 0, each boundary and
@@ -304,5 +337,15 @@ mod tests {
                 "use crate::protocol::ProtocolVersion;",
             ]
         );
+    }
+
+    #[test]
+    fn family_off_names_the_family() {
+        let c = compact(&render_tests(&two_models()).unwrap());
+        assert!(c.contains(
+            "#[cfg(not(feature=\"x-series\"))]#[test]fnx_series_off(){letid=id();for(protocol,number)in[(ProtocolVersion::P1,1020),(ProtocolVersion::P2,1020)]{"
+        ));
+        assert!(c.contains("feature:Some(\"x-series\")};assert_eq!(found,Err(error));assert_eq!(ActuatorKind::firmware_register(protocol,ModelNumber(number)),None);"));
+        assert!(c.contains("#[cfg(not(feature=\"ax\"))]#[test]fnax_off(){letid=id();for(protocol,number)in[(ProtocolVersion::P1,12)]{"));
     }
 }

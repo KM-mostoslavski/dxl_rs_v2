@@ -1304,4 +1304,27 @@ mod tests {
         assert!(!lookups[0].firmware_dependent());
         assert_eq!(out.resolved.model_number, Some((Access::R, Area::Eeprom)));
     }
+
+    #[test]
+    fn check05_unknown_family() {
+        assert_map_fails(
+            &Map::new().model(1020, "x_series", "X").p2(&[(0, "xm")]),
+            &[("xm", p2(Table::xm()))],
+            "dynamixel",
+            &[
+                "model 1020",
+                "\"x_series\"",
+                "expected ax, mx, rx, x-series, y-series, pro",
+            ],
+        );
+    }
+
+    #[test]
+    fn rx_is_a_family() {
+        let out = outcome(
+            &Map::new().model(28, "rx", "RX-28").p1(&[(0, "rx_28")]),
+            &[("rx_28", Table::ax())],
+        );
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+    }
 }

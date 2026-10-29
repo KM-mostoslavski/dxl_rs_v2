@@ -2211,6 +2211,222 @@ fn p2_54025_lookup() {
     );
 }
 
+#[cfg(not(feature = "ax"))]
+#[test]
+fn ax_off() {
+    let id = id();
+    for (protocol, number) in [
+        (ProtocolVersion::P1, 12),
+        (ProtocolVersion::P1, 18),
+        (ProtocolVersion::P1, 300),
+    ] {
+        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: number,
+            protocol,
+            feature: Some("ax"),
+        };
+        assert_eq!(found, Err(error));
+        assert_eq!(
+            ActuatorKind::firmware_register(protocol, ModelNumber(number)),
+            None
+        );
+    }
+}
+
+#[cfg(not(feature = "mx"))]
+#[test]
+fn mx_off() {
+    let id = id();
+    for (protocol, number) in [
+        (ProtocolVersion::P1, 30),
+        (ProtocolVersion::P2, 30),
+        (ProtocolVersion::P1, 311),
+        (ProtocolVersion::P2, 311),
+        (ProtocolVersion::P1, 321),
+        (ProtocolVersion::P2, 321),
+    ] {
+        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: number,
+            protocol,
+            feature: Some("mx"),
+        };
+        assert_eq!(found, Err(error));
+        assert_eq!(
+            ActuatorKind::firmware_register(protocol, ModelNumber(number)),
+            None
+        );
+    }
+}
+
+#[cfg(not(feature = "pro"))]
+#[test]
+fn pro_off() {
+    let id = id();
+    for (protocol, number) in [
+        (ProtocolVersion::P2, 2000),
+        (ProtocolVersion::P2, 2010),
+        (ProtocolVersion::P2, 2020),
+        (ProtocolVersion::P2, 2100),
+        (ProtocolVersion::P2, 2110),
+        (ProtocolVersion::P2, 2120),
+        (ProtocolVersion::P2, 35074),
+        (ProtocolVersion::P2, 43289),
+        (ProtocolVersion::P2, 46097),
+        (ProtocolVersion::P2, 46353),
+        (ProtocolVersion::P2, 51201),
+        (ProtocolVersion::P2, 53769),
+        (ProtocolVersion::P2, 54025),
+    ] {
+        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: number,
+            protocol,
+            feature: Some("pro"),
+        };
+        assert_eq!(found, Err(error));
+        assert_eq!(
+            ActuatorKind::firmware_register(protocol, ModelNumber(number)),
+            None
+        );
+    }
+}
+
+#[cfg(not(feature = "rx"))]
+#[test]
+fn rx_off() {
+    let id = id();
+    for (protocol, number) in [(ProtocolVersion::P1, 28)] {
+        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: number,
+            protocol,
+            feature: Some("rx"),
+        };
+        assert_eq!(found, Err(error));
+        assert_eq!(
+            ActuatorKind::firmware_register(protocol, ModelNumber(number)),
+            None
+        );
+    }
+}
+
+#[cfg(not(feature = "x-series"))]
+#[test]
+fn x_series_off() {
+    let id = id();
+    for (protocol, number) in [
+        (ProtocolVersion::P2, 350),
+        (ProtocolVersion::P1, 1000),
+        (ProtocolVersion::P2, 1000),
+        (ProtocolVersion::P1, 1001),
+        (ProtocolVersion::P2, 1001),
+        (ProtocolVersion::P1, 1010),
+        (ProtocolVersion::P2, 1010),
+        (ProtocolVersion::P1, 1011),
+        (ProtocolVersion::P2, 1011),
+        (ProtocolVersion::P1, 1020),
+        (ProtocolVersion::P2, 1020),
+        (ProtocolVersion::P1, 1030),
+        (ProtocolVersion::P2, 1030),
+        (ProtocolVersion::P1, 1040),
+        (ProtocolVersion::P2, 1040),
+        (ProtocolVersion::P1, 1050),
+        (ProtocolVersion::P2, 1050),
+        (ProtocolVersion::P1, 1060),
+        (ProtocolVersion::P2, 1060),
+        (ProtocolVersion::P1, 1070),
+        (ProtocolVersion::P2, 1070),
+        (ProtocolVersion::P1, 1080),
+        (ProtocolVersion::P2, 1080),
+        (ProtocolVersion::P1, 1090),
+        (ProtocolVersion::P2, 1090),
+        (ProtocolVersion::P1, 1100),
+        (ProtocolVersion::P2, 1100),
+        (ProtocolVersion::P1, 1101),
+        (ProtocolVersion::P2, 1101),
+        (ProtocolVersion::P1, 1110),
+        (ProtocolVersion::P2, 1110),
+        (ProtocolVersion::P1, 1111),
+        (ProtocolVersion::P2, 1111),
+        (ProtocolVersion::P1, 1120),
+        (ProtocolVersion::P2, 1120),
+        (ProtocolVersion::P1, 1130),
+        (ProtocolVersion::P2, 1130),
+        (ProtocolVersion::P1, 1140),
+        (ProtocolVersion::P2, 1140),
+        (ProtocolVersion::P1, 1150),
+        (ProtocolVersion::P2, 1150),
+        (ProtocolVersion::P1, 1160),
+        (ProtocolVersion::P2, 1160),
+        (ProtocolVersion::P1, 1170),
+        (ProtocolVersion::P2, 1170),
+        (ProtocolVersion::P1, 1180),
+        (ProtocolVersion::P2, 1180),
+        (ProtocolVersion::P2, 1190),
+        (ProtocolVersion::P2, 1200),
+        (ProtocolVersion::P2, 1210),
+        (ProtocolVersion::P2, 1220),
+        (ProtocolVersion::P2, 1230),
+        (ProtocolVersion::P2, 1240),
+        (ProtocolVersion::P1, 1270),
+        (ProtocolVersion::P2, 1270),
+        (ProtocolVersion::P1, 1310),
+        (ProtocolVersion::P2, 1310),
+    ] {
+        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: number,
+            protocol,
+            feature: Some("x-series"),
+        };
+        assert_eq!(found, Err(error));
+        assert_eq!(
+            ActuatorKind::firmware_register(protocol, ModelNumber(number)),
+            None
+        );
+    }
+}
+
+#[cfg(not(feature = "y-series"))]
+#[test]
+fn y_series_off() {
+    let id = id();
+    for (protocol, number) in [
+        (ProtocolVersion::P2, 4000),
+        (ProtocolVersion::P2, 4010),
+        (ProtocolVersion::P2, 4020),
+        (ProtocolVersion::P2, 4030),
+        (ProtocolVersion::P2, 4040),
+        (ProtocolVersion::P2, 4050),
+        (ProtocolVersion::P2, 4120),
+        (ProtocolVersion::P2, 4130),
+        (ProtocolVersion::P2, 4140),
+        (ProtocolVersion::P2, 4150),
+        (ProtocolVersion::P2, 4160),
+        (ProtocolVersion::P2, 4170),
+    ] {
+        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: number,
+            protocol,
+            feature: Some("y-series"),
+        };
+        assert_eq!(found, Err(error));
+        assert_eq!(
+            ActuatorKind::firmware_register(protocol, ModelNumber(number)),
+            None
+        );
+    }
+}
+
 #[cfg(feature = "ax")]
 #[test]
 fn ax_12a_describe_round_trip() {

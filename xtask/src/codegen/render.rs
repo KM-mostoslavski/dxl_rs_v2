@@ -593,4 +593,53 @@ mod tests {
             compact(file(&files, "models/ax.rs")).contains("protocols:Protocols{p1:true,p2:false}")
         );
     }
+
+    #[test]
+    fn every_model_item_is_gated() {
+        let files = files_for(
+            &Map::new()
+                .model(12, "ax", "AX-12A")
+                .p1(&[(0, "ax")])
+                .model(1020, "x-series", "XM430-W350")
+                .p1(&[(0, "xm")])
+                .p2(&[(0, "xm")])
+                .default_p2(),
+            &[("ax", Table::ax()), ("xm", Table::xm())],
+        );
+        let module = file(&files, "models.rs");
+        let lines: Vec<&str> = module.lines().map(str::trim).collect();
+        for (family, ty) in [("ax", "Ax"), ("x-series", "Xm")] {
+            let on = format!("#[cfg(feature = \"{family}\")]");
+            let off = format!("#[cfg(not(feature = \"{family}\"))]");
+            let mut gated = 0;
+            for (i, line) in lines.iter().enumerate() {
+                let names_model = line.contains(&format!("Self::{ty}("))
+                    || line.contains(&format!("{ty}::"))
+                    || *line == format!("mod {};", ty.to_lowercase())
+                    || line.starts_with(&format!("pub use {}::", ty.to_lowercase()))
+                    || *line == format!("{ty}({ty}),");
+                if names_model {
+                    assert_eq!(lines[i - 1], on, "line {line}");
+                    gated += 1;
+                }
+                if line.contains(&format!("feature: Some(\"{family}\")")) {
+                    let arm = lines[..i].iter().rposition(|l| l.starts_with('#')).unwrap();
+                    assert_eq!(lines[arm], off, "line {line}");
+                }
+            }
+            assert!(gated >= 10, "{family}: {gated}");
+        }
+        let header: String = uses(module).concat();
+        for name in [
+            "LimitRegisters",
+            "Protocols",
+            "ModeSource",
+            "ModeValues",
+            "PositionScale",
+        ] {
+            assert!(!header.contains(name), "{name}");
+        }
+        assert!(uses(file(&files, "models/xm.rs"))[0].contains("ModeValues"));
+        assert!(!uses(file(&files, "models/ax.rs"))[0].contains("ModeValues"));
+    }
 }
