@@ -10,8 +10,11 @@ Command line, output and exit codes are the contract in
 
 A page's control tables are the HTML tables whose header row names Address,
 Size, Data Name and Access (matched by header name, not position). A row's
-area comes from the heading right above its table, which must name EEPROM or
-RAM. Rows whose address or size is not a number (the "…" rows) are skipped.
+area comes from the table's Area column when there is one (Y series: EEPROM,
+RAM or Hybrid), else from the heading right above its table, which must name
+EEPROM or RAM. A page access of `R/RW` is recorded as `RW` (`ACCESS_RECORDED_AS`,
+architect 2026-10-29). Rows whose address or size is not a number (the "…"
+rows) are skipped.
 
 `fill` adds `access` and `area` only to a row whose address, size and name all
 match one page row, and only when the row has neither field yet. It never
@@ -124,6 +127,11 @@ PAGES: dict[str, str] = {
 }
 
 ACCESS_VALUES = ("R", "RW")
+AREA_VALUES = ("EEPROM", "RAM", "Hybrid")
+# Page access values recorded as another value (architect, provisional, 2026-10-29, spec
+# Clarifications): the PRO / PRO+ / RH pages give External Port Data 1-4 `R/RW` (read-only as an
+# input, writable as an output); the table records `RW` and the findings note the page's value.
+ACCESS_RECORDED_AS = {"R/RW": "RW"}
 
 PageRow = tuple[int, int, str, str, str]  # address, size, data name, access, area
 
@@ -228,7 +236,9 @@ def _columns(header: list[str]) -> dict[str, int] | None:
             found.setdefault("name", i)
         elif key == "access":
             found.setdefault("access", i)
-    return found if len(found) == 4 else None
+        elif key == "area":
+            found.setdefault("area", i)
+    return found if {"address", "size", "name", "access"} <= set(found) else None
 
 
 def _area(heading: str | None) -> str | None:
@@ -246,9 +256,13 @@ def _area(heading: str | None) -> str | None:
 def parse_page(html: str, skipped: list[str] | None = None) -> list[PageRow]:
     """Every control-table row of a page, in page order.
 
-    Raises `PageError` on an access value other than R or RW, or on a row
-    whose table is not right under an EEPROM or RAM heading. Rows whose address
-    or size is not a number are appended to `skipped` (when given).
+    The area comes from the table's Area column when it has one (Y series:
+    EEPROM, RAM or Hybrid), else from the EEPROM or RAM heading right above the
+    table. Raises `PageError` on an access value other than R or RW (after
+    `ACCESS_RECORDED_AS`), on an Area value other than EEPROM, RAM or Hybrid, or
+    on a row whose table has no Area column and is not right under an EEPROM or
+    RAM heading. Rows whose address or size is not a number are appended to
+    `skipped` (when given).
     """
     parser = _PageParser()
     parser.feed(html)
@@ -277,14 +291,18 @@ def parse_page(html: str, skipped: list[str] | None = None) -> list[PageRow]:
                 if skipped is not None and not all(c in ("…", "...", "-", "") for c in (address, size, name)):
                     skipped.append(" | ".join(cells))
                 continue
-            if area is None:
+            row_area = cells[cols["area"]] if "area" in cols else area
+            if "area" in cols and row_area not in AREA_VALUES:
+                raise PageError(f"row {address} {name!r}: area {row_area!r} is not EEPROM, RAM or Hybrid")
+            access = ACCESS_RECORDED_AS.get(access, access)
+            if row_area is None:
                 raise PageError(
                     f"row {address} {name!r}: its table is not under an EEPROM or RAM heading "
                     f"(heading above it: {heading!r})"
                 )
             if access not in ACCESS_VALUES:
                 raise PageError(f"row {address} {name!r}: access {access!r} is neither R nor RW")
-            rows.append((int(address), int(size), name, access, area))
+            rows.append((int(address), int(size), name, access, row_area))
     return rows
 
 
