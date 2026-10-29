@@ -108,10 +108,6 @@ impl Xh540W150 {
     pub(crate) const EXTERNAL_PORT_DATA_3: Register = super::reg(156, 2, Access::RW, Area::Ram);
     pub(crate) const INDIRECT_ADDRESS_1: Register = super::reg(168, 2, Access::RW, Area::Ram);
     pub(crate) const INDIRECT_DATA_1: Register = super::reg(224, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_WRITE: Register = super::reg(168, 2, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_DATA_WRITE: Register = super::reg(224, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_READ: Register = super::reg(578, 2, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_DATA_READ: Register = super::reg(634, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for Xh540W150 {

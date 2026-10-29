@@ -158,11 +158,6 @@ impl Ym080230M001 {
     pub(crate) const PRESENT_MOTOR_TEMPERATURE: Register = super::reg(571, 1, Access::R, Area::Ram);
     pub(crate) const INDIRECT_DATA_1: Register = super::reg(634, 1, Access::RW, Area::Ram);
     pub(crate) const BACKUP_READY: Register = super::reg(919, 1, Access::R, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_WRITE: Register =
-        super::reg(256, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_WRITE: Register = super::reg(634, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_READ: Register = super::reg(384, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_READ: Register = super::reg(698, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for Ym080230M001 {

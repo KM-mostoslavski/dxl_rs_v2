@@ -100,10 +100,6 @@ impl TwoXc430W250 {
     pub(crate) const PRESENT_TEMPERATURE: Register = super::reg(146, 1, Access::R, Area::Ram);
     pub(crate) const INDIRECT_ADDRESS_1: Register = super::reg(168, 2, Access::RW, Area::Ram);
     pub(crate) const INDIRECT_DATA_1: Register = super::reg(224, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_WRITE: Register = super::reg(168, 2, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_DATA_WRITE: Register = super::reg(224, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_READ: Register = super::reg(578, 2, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_DATA_READ: Register = super::reg(634, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for TwoXc430W250 {
