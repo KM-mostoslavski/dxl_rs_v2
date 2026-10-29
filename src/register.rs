@@ -19,13 +19,16 @@ pub enum Access {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
     dead_code,
-    reason = "RW and Ram are built by X1's generated reg() calls"
+    reason = "RW, Ram and Hybrid are built by X1's generated reg() calls"
 )]
 pub enum Area {
     /// Kept across power cycles; writable only with torque off.
     Eeprom,
     /// Lost at power off; resets to its default at power on.
     Ram,
+    /// Kept across power cycles and writable with torque on (Y series, e-Manual
+    /// <https://emanual.robotis.com/docs/en/dxl/y/ym070-210-m001-rh/>).
+    Hybrid,
 }
 
 /// Where a register lives in an actuator's control table.
@@ -147,6 +150,7 @@ mod tests {
     fn access_and_area_are_comparable() {
         assert_ne!(Access::R, Access::RW);
         assert_ne!(Area::Eeprom, Area::Ram);
+        assert_ne!(Area::Hybrid, Area::Ram);
     }
 
     fn does_not_fit(raw: i32, size: u8) -> Result<&'static [u8], ValidationError> {
