@@ -8,7 +8,7 @@ use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
-/// RH-P12-RN (model number 35074).
+/// RH-P12-RN(A) (model number 35074).
 ///
 /// Protocol 2, all firmware.
 ///
@@ -27,7 +27,7 @@ impl RhP12Rn {
     }
 
     pub(crate) const DATA: ModelData = ModelData {
-        name: "RH-P12-RN",
+        name: "RH-P12-RN(A)",
         model_number: 35074,
         protocols: Protocols {
             p1: false,
@@ -141,6 +141,6 @@ impl Actuator for RhP12Rn {
     }
 
     fn name(&self) -> &'static str {
-        "RH-P12-RN"
+        "RH-P12-RN(A)"
     }
 }

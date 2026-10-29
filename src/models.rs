@@ -27,6 +27,10 @@ mod rx_28;
 #[cfg(feature = "rx")]
 pub use rx_28::Rx28;
 #[cfg(feature = "mx")]
+mod mx_28_p1;
+#[cfg(feature = "mx")]
+pub use mx_28_p1::Mx28P1;
+#[cfg(feature = "mx")]
 mod mx_28;
 #[cfg(feature = "mx")]
 pub use mx_28::Mx28;
@@ -42,6 +46,10 @@ pub use mx_64_p1::Mx64P1;
 mod mx_64;
 #[cfg(feature = "mx")]
 pub use mx_64::Mx64;
+#[cfg(feature = "mx")]
+mod mx_106_p1;
+#[cfg(feature = "mx")]
+pub use mx_106_p1::Mx106P1;
 #[cfg(feature = "mx")]
 mod mx_106;
 #[cfg(feature = "mx")]
@@ -331,15 +339,18 @@ pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ActuatorKind {
-    /// AX-12A (model number 12). Protocol 1, all firmware.
+    /// AX-12A (model number 12, also sold as AX-12+). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax12a(Ax12a),
-    /// AX-18A (model number 18). Protocol 1, all firmware.
+    /// AX-18A (model number 18, also sold as AX-18F). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax18a(Ax18a),
     /// RX-28 (model number 28). Protocol 1, all firmware.
     #[cfg(feature = "rx")]
     Rx28(Rx28),
+    /// MX-28 (model number 29). Protocol 1, all firmware.
+    #[cfg(feature = "mx")]
+    Mx28P1(Mx28P1),
     /// MX-28(2.0) (model number 30). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx28(Mx28),
@@ -352,6 +363,9 @@ pub enum ActuatorKind {
     /// MX-64(2.0) (model number 311). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx64(Mx64),
+    /// MX-106 (model number 320). Protocol 1, all firmware.
+    #[cfg(feature = "mx")]
+    Mx106P1(Mx106P1),
     /// MX-106(2.0) (model number 321). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx106(Mx106),
@@ -463,7 +477,7 @@ pub enum ActuatorKind {
     /// XC330-M288 (model number 1240). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330M288(Xc330M288),
-    /// XW430-T333 (model number 1270). Protocol 1 and 2, all firmware.
+    /// XW430-T333 (model number 1270, also sold as XW430-T200). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw430T333(Xw430T333),
     /// XW540-H260 (model number 1310). Protocol 1 and 2, all firmware.
@@ -523,7 +537,7 @@ pub enum ActuatorKind {
     /// YM080-230-A099 (model number 4170). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230A099(Ym080230A099),
-    /// RH-P12-RN (model number 35074). Protocol 2, all firmware.
+    /// RH-P12-RN(A) (model number 35074). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     RhP12Rn(RhP12Rn),
     /// M42-10-S260-RA (model number 43289). Protocol 2, all firmware.
@@ -587,6 +601,15 @@ impl ActuatorKind {
                 feature: Some("rx"),
             }),
             #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 29) => Ok(Self::Mx28P1(Mx28P1::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P1, 29) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 29,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
             (ProtocolVersion::P1, 30) => Ok(Self::Mx28(Mx28::new(id))),
             #[cfg(not(feature = "mx"))]
             (ProtocolVersion::P1, 30) => Err(SetupError::UnsupportedModel {
@@ -637,6 +660,15 @@ impl ActuatorKind {
             (ProtocolVersion::P2, 311) => Err(SetupError::UnsupportedModel {
                 id,
                 model_number: 311,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 320) => Ok(Self::Mx106P1(Mx106P1::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P1, 320) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 320,
                 protocol,
                 feature: Some("mx"),
             }),
@@ -1464,6 +1496,8 @@ impl Describe for ActuatorKind {
             #[cfg(feature = "rx")]
             Self::Rx28(ref m) => m.data(),
             #[cfg(feature = "mx")]
+            Self::Mx28P1(ref m) => m.data(),
+            #[cfg(feature = "mx")]
             Self::Mx28(ref m) => m.data(),
             #[cfg(feature = "ax")]
             Self::Ax12w(ref m) => m.data(),
@@ -1471,6 +1505,8 @@ impl Describe for ActuatorKind {
             Self::Mx64P1(ref m) => m.data(),
             #[cfg(feature = "mx")]
             Self::Mx64(ref m) => m.data(),
+            #[cfg(feature = "mx")]
+            Self::Mx106P1(ref m) => m.data(),
             #[cfg(feature = "mx")]
             Self::Mx106(ref m) => m.data(),
             #[cfg(feature = "x-series")]
@@ -1611,6 +1647,8 @@ impl Describe for ActuatorKind {
             #[cfg(feature = "rx")]
             Self::Rx28(ref m) => m.cache(),
             #[cfg(feature = "mx")]
+            Self::Mx28P1(ref m) => m.cache(),
+            #[cfg(feature = "mx")]
             Self::Mx28(ref m) => m.cache(),
             #[cfg(feature = "ax")]
             Self::Ax12w(ref m) => m.cache(),
@@ -1618,6 +1656,8 @@ impl Describe for ActuatorKind {
             Self::Mx64P1(ref m) => m.cache(),
             #[cfg(feature = "mx")]
             Self::Mx64(ref m) => m.cache(),
+            #[cfg(feature = "mx")]
+            Self::Mx106P1(ref m) => m.cache(),
             #[cfg(feature = "mx")]
             Self::Mx106(ref m) => m.cache(),
             #[cfg(feature = "x-series")]
@@ -1758,6 +1798,8 @@ impl Describe for ActuatorKind {
             #[cfg(feature = "rx")]
             Self::Rx28(ref mut m) => m.cache_mut(),
             #[cfg(feature = "mx")]
+            Self::Mx28P1(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "mx")]
             Self::Mx28(ref mut m) => m.cache_mut(),
             #[cfg(feature = "ax")]
             Self::Ax12w(ref mut m) => m.cache_mut(),
@@ -1765,6 +1807,8 @@ impl Describe for ActuatorKind {
             Self::Mx64P1(ref mut m) => m.cache_mut(),
             #[cfg(feature = "mx")]
             Self::Mx64(ref mut m) => m.cache_mut(),
+            #[cfg(feature = "mx")]
+            Self::Mx106P1(ref mut m) => m.cache_mut(),
             #[cfg(feature = "mx")]
             Self::Mx106(ref mut m) => m.cache_mut(),
             #[cfg(feature = "x-series")]
@@ -1907,6 +1951,8 @@ impl Actuator for ActuatorKind {
             #[cfg(feature = "rx")]
             Self::Rx28(ref m) => m.id(),
             #[cfg(feature = "mx")]
+            Self::Mx28P1(ref m) => m.id(),
+            #[cfg(feature = "mx")]
             Self::Mx28(ref m) => m.id(),
             #[cfg(feature = "ax")]
             Self::Ax12w(ref m) => m.id(),
@@ -1914,6 +1960,8 @@ impl Actuator for ActuatorKind {
             Self::Mx64P1(ref m) => m.id(),
             #[cfg(feature = "mx")]
             Self::Mx64(ref m) => m.id(),
+            #[cfg(feature = "mx")]
+            Self::Mx106P1(ref m) => m.id(),
             #[cfg(feature = "mx")]
             Self::Mx106(ref m) => m.id(),
             #[cfg(feature = "x-series")]
@@ -2054,6 +2102,8 @@ impl Actuator for ActuatorKind {
             #[cfg(feature = "rx")]
             Self::Rx28(ref m) => m.model_number(),
             #[cfg(feature = "mx")]
+            Self::Mx28P1(ref m) => m.model_number(),
+            #[cfg(feature = "mx")]
             Self::Mx28(ref m) => m.model_number(),
             #[cfg(feature = "ax")]
             Self::Ax12w(ref m) => m.model_number(),
@@ -2061,6 +2111,8 @@ impl Actuator for ActuatorKind {
             Self::Mx64P1(ref m) => m.model_number(),
             #[cfg(feature = "mx")]
             Self::Mx64(ref m) => m.model_number(),
+            #[cfg(feature = "mx")]
+            Self::Mx106P1(ref m) => m.model_number(),
             #[cfg(feature = "mx")]
             Self::Mx106(ref m) => m.model_number(),
             #[cfg(feature = "x-series")]
@@ -2201,6 +2253,8 @@ impl Actuator for ActuatorKind {
             #[cfg(feature = "rx")]
             Self::Rx28(ref m) => m.name(),
             #[cfg(feature = "mx")]
+            Self::Mx28P1(ref m) => m.name(),
+            #[cfg(feature = "mx")]
             Self::Mx28(ref m) => m.name(),
             #[cfg(feature = "ax")]
             Self::Ax12w(ref m) => m.name(),
@@ -2208,6 +2262,8 @@ impl Actuator for ActuatorKind {
             Self::Mx64P1(ref m) => m.name(),
             #[cfg(feature = "mx")]
             Self::Mx64(ref m) => m.name(),
+            #[cfg(feature = "mx")]
+            Self::Mx106P1(ref m) => m.name(),
             #[cfg(feature = "mx")]
             Self::Mx106(ref m) => m.name(),
             #[cfg(feature = "x-series")]

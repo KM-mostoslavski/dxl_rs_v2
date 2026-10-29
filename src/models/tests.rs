@@ -38,8 +38,10 @@ fn no_tables_on_this_protocol() {
         (ProtocolVersion::P2, 12),
         (ProtocolVersion::P2, 18),
         (ProtocolVersion::P2, 28),
+        (ProtocolVersion::P2, 29),
         (ProtocolVersion::P2, 300),
         (ProtocolVersion::P2, 310),
+        (ProtocolVersion::P2, 320),
         (ProtocolVersion::P1, 350),
         (ProtocolVersion::P1, 1190),
         (ProtocolVersion::P1, 1200),
@@ -149,6 +151,29 @@ fn p1_28_lookup() {
     }
     assert_eq!(
         ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(28)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p1_29_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx28P1;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx28P1(Mx28P1::new(id))),
+        (255, ActuatorKind::Mx28P1(Mx28P1::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(29), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(29)),
         None
     );
 }
@@ -287,6 +312,29 @@ fn p2_311_lookup() {
     }
     assert_eq!(
         ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(311)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p1_320_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx106P1;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx106P1(Mx106P1::new(id))),
+        (255, ActuatorKind::Mx106P1(Mx106P1::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(320), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(320)),
         None
     );
 }
@@ -2264,11 +2312,13 @@ fn ax_off() {
 fn mx_off() {
     let id = id();
     for (protocol, number) in [
+        (ProtocolVersion::P1, 29),
         (ProtocolVersion::P1, 30),
         (ProtocolVersion::P2, 30),
         (ProtocolVersion::P1, 310),
         (ProtocolVersion::P1, 311),
         (ProtocolVersion::P2, 311),
+        (ProtocolVersion::P1, 320),
         (ProtocolVersion::P1, 321),
         (ProtocolVersion::P2, 321),
     ] {
@@ -2493,6 +2543,19 @@ fn rx_28_concrete_match() {
 
 #[cfg(feature = "mx")]
 #[test]
+fn mx_28_p1_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Mx28P1;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(29), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Mx28P1(m)) if m.id() == id && m.name() == Mx28P1::DATA.name && m.model_number() == Mx28P1::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
 fn mx_28_concrete_match() {
     use crate::actuator::Actuator;
     use crate::models::Mx28;
@@ -2540,6 +2603,19 @@ fn mx_64_concrete_match() {
     let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(311), 0, id);
     assert!(
         matches!(&kind, Ok(ActuatorKind::Mx64(m)) if m.id() == id && m.name() == Mx64::DATA.name && m.model_number() == Mx64::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_106_p1_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Mx106P1;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(320), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Mx106P1(m)) if m.id() == id && m.name() == Mx106P1::DATA.name && m.model_number() == Mx106P1::DATA.model_number)
     );
 }
 
@@ -3440,6 +3516,27 @@ fn rx_28_describe_round_trip() {
 
 #[cfg(feature = "mx")]
 #[test]
+fn mx_28_p1_describe_round_trip() {
+    use crate::actuator::{Cache, Describe, LimitMode};
+    use crate::models::Mx28P1;
+
+    let id = id();
+    let mut kind = ActuatorKind::Mx28P1(Mx28P1::new(id));
+    assert_eq!(kind.data(), &Mx28P1::DATA);
+    assert_eq!(super::MODEL_NUMBER, Mx28P1::MODEL_NUMBER);
+    assert_eq!(kind.cache().id(), id);
+    kind.cache_mut().record_mode(LimitMode::Unbounded);
+    assert!(kind.cache_mut().record_limits(10, 20).is_ok());
+    let limits = kind.cache().limits().map(|l| (l.min_raw(), l.max_raw()));
+    assert_eq!(limits, Some((10, 20)));
+    let mut expected = Cache::new(id);
+    expected.record_mode(LimitMode::Unbounded);
+    assert!(expected.record_limits(10, 20).is_ok());
+    assert_eq!(*kind.cache(), expected);
+}
+
+#[cfg(feature = "mx")]
+#[test]
 fn mx_28_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Mx28;
@@ -3511,6 +3608,27 @@ fn mx_64_describe_round_trip() {
     let mut kind = ActuatorKind::Mx64(Mx64::new(id));
     assert_eq!(kind.data(), &Mx64::DATA);
     assert_eq!(super::MODEL_NUMBER, Mx64::MODEL_NUMBER);
+    assert_eq!(kind.cache().id(), id);
+    kind.cache_mut().record_mode(LimitMode::Unbounded);
+    assert!(kind.cache_mut().record_limits(10, 20).is_ok());
+    let limits = kind.cache().limits().map(|l| (l.min_raw(), l.max_raw()));
+    assert_eq!(limits, Some((10, 20)));
+    let mut expected = Cache::new(id);
+    expected.record_mode(LimitMode::Unbounded);
+    assert!(expected.record_limits(10, 20).is_ok());
+    assert_eq!(*kind.cache(), expected);
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_106_p1_describe_round_trip() {
+    use crate::actuator::{Cache, Describe, LimitMode};
+    use crate::models::Mx106P1;
+
+    let id = id();
+    let mut kind = ActuatorKind::Mx106P1(Mx106P1::new(id));
+    assert_eq!(kind.data(), &Mx106P1::DATA);
+    assert_eq!(super::MODEL_NUMBER, Mx106P1::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());

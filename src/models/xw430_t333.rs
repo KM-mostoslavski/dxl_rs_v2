@@ -8,7 +8,7 @@ use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
-/// XW430-T333 (model number 1270).
+/// XW430-T333 (model number 1270, also sold as XW430-T200).
 ///
 /// Protocol 1, all firmware. Protocol 2, all firmware.
 ///
