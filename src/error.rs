@@ -3,11 +3,57 @@
 use core::fmt;
 
 use crate::Id;
+use crate::protocol::ProtocolVersion;
 
-/// Every error this crate returns.
+/// Every error this crate returns, by category.
 ///
-/// Each variant is one category from `docs/ARCHITECTURE.md`; match on the
-/// category first, then on its inner error for the detail.
+/// Match on the category first, then on its inner error for the detail:
+///
+/// - [`Transport`](Error::Transport): the serial line failed, or a reply
+///   did not arrive in time.
+/// - [`Protocol`](Error::Protocol): bytes arrived but did not form the
+///   expected status packet.
+/// - [`Status`](Error::Status): an actuator answered, and its status packet
+///   reports an error.
+/// - [`Validation`](Error::Validation): a value was refused before anything
+///   was sent.
+/// - [`Setup`](Error::Setup): the bus could not be set up as declared.
+///
+/// ```
+/// use dxl_rs_v2::{Error, Id, SetupError, ValidationError};
+///
+/// fn advice(err: Error) -> &'static str {
+///     match err {
+///         Error::Setup(SetupError::Missing { .. }) => "check the wiring and the baud rate",
+///         Error::Setup(_) => "check the declared actuators",
+///         Error::Validation(ValidationError::OutOfLimits { .. }) => "pick a goal inside the limits",
+///         Error::Validation(_) => "fix the arguments",
+///         _ => "try again",
+///     }
+/// }
+///
+/// let id = Id::new(5)?;
+/// assert_eq!(
+///     advice(SetupError::Missing { id }.into()),
+///     "check the wiring and the baud rate"
+/// );
+/// # Ok::<(), Error>(())
+/// ```
+///
+/// Categories and variants may be added later without a breaking change, so
+/// a `match` outside the crate needs a `_` arm:
+///
+/// ```compile_fail,E0004
+/// fn category(err: dxl_rs_v2::Error) -> &'static str {
+///     match err {
+///         dxl_rs_v2::Error::Transport(_) => "transport",
+///         dxl_rs_v2::Error::Protocol(_) => "protocol",
+///         dxl_rs_v2::Error::Status(_) => "status",
+///         dxl_rs_v2::Error::Validation(_) => "validation",
+///         dxl_rs_v2::Error::Setup(_) => "setup",
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -15,10 +61,12 @@ pub enum Error {
     #[error(transparent)]
     Validation(#[from] ValidationError),
 
-    /// An actuator reported a model number this build can't drive.
+    /// Kept for today's generated code; use
+    /// [`SetupError::UnsupportedModel`]. Removed in core-2.
     ///
     /// `feature` names the Cargo feature that would add the model, or is
     /// `None` if no feature does.
+    #[doc(hidden)]
     #[error("unsupported model number {model_number}{}", FeatureHint(*feature))]
     UnsupportedModel {
         /// The model number the actuator reported.
@@ -38,9 +86,13 @@ pub enum Error {
     /// An actuator answered, and its status packet reports an error.
     #[error(transparent)]
     Status(#[from] StatusError),
+
+    /// The bus could not be set up as declared.
+    #[error(transparent)]
+    Setup(#[from] SetupError),
 }
 
-/// Formats the "enable this feature" hint of [`Error::UnsupportedModel`].
+/// Formats the "enable this feature" hint of [`SetupError::UnsupportedModel`].
 struct FeatureHint(Option<&'static str>);
 
 impl fmt::Display for FeatureHint {
@@ -52,7 +104,43 @@ impl fmt::Display for FeatureHint {
     }
 }
 
+/// Formats where a [`ValidationError::DoesNotFit`] value had to fit.
+struct FitsIn(u8);
+
+impl fmt::Display for FitsIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            0 => f.write_str("in 32 bits"),
+            size => write!(f, "a {size}-byte register"),
+        }
+    }
+}
+
 /// A value rejected before anything was sent on the bus.
+///
+/// Variants may be added later, so a `match` outside the crate needs a `_`
+/// arm:
+///
+/// ```compile_fail,E0004
+/// use dxl_rs_v2::ValidationError as V;
+///
+/// fn is_about_limits(err: V) -> bool {
+///     match err {
+///         V::OutOfLimits { .. } | V::LimitsUnknown { .. } | V::InvertedLimits { .. } => true,
+///         V::InvalidId(_)
+///         | V::AddressOutOfRange { .. }
+///         | V::PacketTooLarge { .. }
+///         | V::DataLength { .. }
+///         | V::ActuatorIsOff { .. }
+///         | V::ActuatorFaulted { .. }
+///         | V::NotFinite
+///         | V::DoesNotFit { .. }
+///         | V::BufferLength { .. }
+///         | V::DuplicateId { .. }
+///         | V::NotPositionMode { .. } => false,
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ValidationError {
@@ -84,6 +172,195 @@ pub enum ValidationError {
         expected: usize,
         /// The size of the slice that was passed, in bytes.
         got: usize,
+    },
+
+    /// A goal was given while the actuator's torque is off. A faulted
+    /// actuator counts as off.
+    #[error(
+        "actuator {} has torque off; enable torque before setting a goal",
+        id.get()
+    )]
+    ActuatorIsOff {
+        /// The actuator the goal was for.
+        id: Id,
+    },
+
+    /// Torque was to be enabled on a faulted actuator.
+    #[error(
+        "actuator {} is faulted; clear the fault before enabling torque",
+        id.get()
+    )]
+    ActuatorFaulted {
+        /// The faulted actuator.
+        id: Id,
+    },
+
+    /// A goal tick lies outside the position limits read from the
+    /// actuator's EEPROM. Both bounds are allowed.
+    #[error("goal {raw} for actuator {} is outside its limits {min}..={max}", id.get())]
+    OutOfLimits {
+        /// The actuator the goal was for.
+        id: Id,
+        /// The goal, in raw ticks.
+        raw: i32,
+        /// The minimum position limit, in raw ticks.
+        min: i32,
+        /// The maximum position limit, in raw ticks.
+        max: i32,
+    },
+
+    /// A goal was checked before Setup read the actuator's position limits.
+    /// Limits are never taken from a control table's defaults.
+    #[error("limits of actuator {} are not known; they are read at setup", id.get())]
+    LimitsUnknown {
+        /// The actuator the goal was for.
+        id: Id,
+    },
+
+    /// The actuator reports a minimum position limit above its maximum.
+    #[error(
+        "actuator {} reports a minimum limit {min} above its maximum {max}",
+        id.get()
+    )]
+    InvertedLimits {
+        /// The actuator that reported the limits.
+        id: Id,
+        /// The minimum position limit it reports, in raw ticks.
+        min: i32,
+        /// The maximum position limit it reports, in raw ticks.
+        max: i32,
+    },
+
+    /// An angle is NaN or infinite, so no tick matches it.
+    #[error("angle is not a finite number")]
+    NotFinite,
+
+    /// A value does not fit a register of `size` bytes, or, when `size` is
+    /// 0, does not fit an `i32`. Values are never truncated.
+    #[error("value {raw} does not fit {}", FitsIn(*size))]
+    DoesNotFit {
+        /// The value that does not fit.
+        raw: i64,
+        /// The register size in bytes; `size` 0 = does not fit `i32`.
+        size: u8,
+    },
+
+    /// A caller buffer or value slice does not have one slot per target.
+    #[error("buffer has {got} slots for {targets} targets")]
+    BufferLength {
+        /// The number of target actuators.
+        targets: usize,
+        /// The number of slots that were passed.
+        got: usize,
+    },
+
+    /// An actuator ID appears more than once in a target or declared list.
+    #[error("actuator {} is listed more than once", id.get())]
+    DuplicateId {
+        /// The repeated ID.
+        id: Id,
+    },
+
+    /// The actuator's operating mode ignores Goal Position: velocity,
+    /// current, PWM or wheel mode.
+    #[error(
+        "actuator {} is not in a position mode; it ignores goal positions",
+        id.get()
+    )]
+    NotPositionMode {
+        /// The actuator the goal was for.
+        id: Id,
+    },
+}
+
+/// The bus could not be set up as declared: an actuator is missing, unknown
+/// to this build, or not what was declared.
+///
+/// Variants may be added later, so a `match` outside the crate needs a `_`
+/// arm:
+///
+/// ```compile_fail,E0004
+/// use dxl_rs_v2::SetupError as S;
+///
+/// fn names_an_actuator(err: S) -> bool {
+///     match err {
+///         S::TooManyActuators { .. } => false,
+///         S::UnsupportedModel { .. }
+///         | S::Missing { .. }
+///         | S::WrongModel { .. }
+///         | S::NotOnBus { .. }
+///         | S::UnknownOperatingMode { .. } => true,
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SetupError {
+    /// No model compiled into this build has this model number on this
+    /// protocol.
+    ///
+    /// `feature` names the Cargo feature that would add the model, when the
+    /// model is known but its family is off; `None` otherwise.
+    #[error(
+        "actuator {} reports model number {model_number}, not supported on {protocol}{}",
+        id.get(),
+        FeatureHint(*feature)
+    )]
+    UnsupportedModel {
+        /// The actuator that reported the model number.
+        id: Id,
+        /// The model number it reported.
+        model_number: u16,
+        /// The protocol of the bus.
+        protocol: ProtocolVersion,
+        /// The Cargo feature that adds this model, if any.
+        feature: Option<&'static str>,
+    },
+
+    /// More actuators answered than the bus can hold.
+    #[error("more actuators answered than the bus capacity of {capacity}")]
+    TooManyActuators {
+        /// The number of actuators the bus can hold.
+        capacity: usize,
+    },
+
+    /// A declared actuator did not answer.
+    #[error("declared actuator {} did not answer", id.get())]
+    Missing {
+        /// The declared actuator.
+        id: Id,
+    },
+
+    /// A declared actuator reports another model number than declared.
+    #[error(
+        "actuator {} was declared as model number {declared} but reports {found}",
+        id.get()
+    )]
+    WrongModel {
+        /// The declared actuator.
+        id: Id,
+        /// The model number it was declared with.
+        declared: u16,
+        /// The model number it reports.
+        found: u16,
+    },
+
+    /// A target ID that the bus does not hold.
+    #[error("actuator {} is not on this bus", id.get())]
+    NotOnBus {
+        /// The ID that was asked for.
+        id: Id,
+    },
+
+    /// The actuator's Operating Mode (or XL-320 Control Mode) value is in
+    /// none of its model's value lists, which come from its control table;
+    /// no mode is guessed (decided 2026-10-28).
+    #[error("actuator {} reports unknown operating mode {value}", id.get())]
+    UnknownOperatingMode {
+        /// The actuator that reported the value.
+        id: Id,
+        /// The mode register value it reported.
+        value: u8,
     },
 }
 
@@ -409,6 +686,171 @@ mod tests {
         for (err, msg) in cases {
             assert_eq!(Error::from(err).to_string(), msg);
         }
+    }
+
+    fn core_validation_cases() -> [(ValidationError, &'static str); 11] {
+        [
+            (
+                ValidationError::ActuatorIsOff { id: id(4) },
+                "actuator 4 has torque off; enable torque before setting a goal",
+            ),
+            (
+                ValidationError::ActuatorFaulted { id: id(4) },
+                "actuator 4 is faulted; clear the fault before enabling torque",
+            ),
+            (
+                ValidationError::OutOfLimits {
+                    id: id(3),
+                    raw: 3001,
+                    min: 1000,
+                    max: 3000,
+                },
+                "goal 3001 for actuator 3 is outside its limits 1000..=3000",
+            ),
+            (
+                ValidationError::LimitsUnknown { id: id(3) },
+                "limits of actuator 3 are not known; they are read at setup",
+            ),
+            (
+                ValidationError::InvertedLimits {
+                    id: id(3),
+                    min: 3000,
+                    max: 1000,
+                },
+                "actuator 3 reports a minimum limit 3000 above its maximum 1000",
+            ),
+            (ValidationError::NotFinite, "angle is not a finite number"),
+            (
+                ValidationError::DoesNotFit {
+                    raw: 70000,
+                    size: 2,
+                },
+                "value 70000 does not fit a 2-byte register",
+            ),
+            (
+                ValidationError::DoesNotFit {
+                    raw: 3_000_000_000,
+                    size: 0,
+                },
+                "value 3000000000 does not fit in 32 bits",
+            ),
+            (
+                ValidationError::BufferLength { targets: 3, got: 2 },
+                "buffer has 2 slots for 3 targets",
+            ),
+            (
+                ValidationError::DuplicateId { id: id(5) },
+                "actuator 5 is listed more than once",
+            ),
+            (
+                ValidationError::NotPositionMode { id: id(4) },
+                "actuator 4 is not in a position mode; it ignores goal positions",
+            ),
+        ]
+    }
+
+    #[test]
+    fn core_validation_messages() {
+        for (err, msg) in core_validation_cases() {
+            assert_eq!(Error::from(err).to_string(), msg);
+        }
+    }
+
+    #[test]
+    fn validation_converts_under_its_category() {
+        for (err, _) in core_validation_cases() {
+            assert_eq!(Error::from(err), Error::Validation(err));
+        }
+    }
+
+    #[test]
+    fn setup_messages() {
+        let unsupported = |feature| SetupError::UnsupportedModel {
+            id: id(3),
+            model_number: 1020,
+            protocol: ProtocolVersion::P1,
+            feature,
+        };
+        let cases = [
+            (
+                unsupported(Some("x-series")),
+                "actuator 3 reports model number 1020, not supported on Protocol 1 \
+                 (enable the `x-series` feature)",
+            ),
+            (
+                unsupported(None),
+                "actuator 3 reports model number 1020, not supported on Protocol 1",
+            ),
+            (
+                SetupError::TooManyActuators { capacity: 32 },
+                "more actuators answered than the bus capacity of 32",
+            ),
+            (
+                SetupError::Missing { id: id(5) },
+                "declared actuator 5 did not answer",
+            ),
+            (
+                SetupError::WrongModel {
+                    id: id(5),
+                    declared: 1020,
+                    found: 12,
+                },
+                "actuator 5 was declared as model number 1020 but reports 12",
+            ),
+            (
+                SetupError::NotOnBus { id: id(7) },
+                "actuator 7 is not on this bus",
+            ),
+            (
+                SetupError::UnknownOperatingMode {
+                    id: id(5),
+                    value: 7,
+                },
+                "actuator 5 reports unknown operating mode 7",
+            ),
+        ];
+        for (err, msg) in cases {
+            assert_eq!(Error::from(err).to_string(), msg);
+            assert_eq!(Error::from(err), Error::Setup(err));
+        }
+    }
+
+    #[test]
+    fn setup_is_its_own_category() {
+        assert!(matches!(
+            Error::from(SetupError::Missing { id: id(5) }),
+            Error::Setup(SetupError::Missing { id: missing }) if missing == id(5)
+        ));
+    }
+
+    #[test]
+    fn unsupported_model_is_under_setup() {
+        let err = Error::from(SetupError::UnsupportedModel {
+            id: id(3),
+            model_number: 1020,
+            protocol: ProtocolVersion::P2,
+            feature: Some("x-series"),
+        });
+        assert!(matches!(
+            err,
+            Error::Setup(SetupError::UnsupportedModel {
+                model_number: 1020,
+                protocol: ProtocolVersion::P2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn errors_are_copy_eq_and_alloc_free() {
+        const fn assert_traits<T: Copy + Eq + core::error::Error>() {}
+        assert_traits::<Error>();
+        assert_traits::<ValidationError>();
+        assert_traits::<SetupError>();
+        let err = Error::from(SetupError::Missing { id: id(5) });
+        let copy = err;
+        assert_eq!(err, copy);
+        assert_ne!(err, Error::from(ValidationError::NotFinite));
     }
 
     #[test]
