@@ -8,7 +8,7 @@ use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
-/// RH-P12-RN (model number 35074).
+/// RH-P12-RN(A) (model number 35074).
 ///
 /// Protocol 2, all firmware.
 ///
@@ -27,7 +27,7 @@ impl RhP12Rn {
     }
 
     pub(crate) const DATA: ModelData = ModelData {
-        name: "RH-P12-RN",
+        name: "RH-P12-RN(A)",
         model_number: 35074,
         protocols: Protocols {
             p1: false,
@@ -110,12 +110,11 @@ impl RhP12Rn {
     pub(crate) const POSITION_TRAJECTORY: Register = super::reg(588, 4, Access::R, Area::Ram);
     pub(crate) const PRESENT_INPUT_VOLTAGE: Register = super::reg(592, 2, Access::R, Area::Ram);
     pub(crate) const PRESENT_TEMPERATURE: Register = super::reg(594, 1, Access::R, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_1: Register = super::reg(600, 2, Access::RW, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_2: Register = super::reg(602, 2, Access::RW, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_3: Register = super::reg(604, 2, Access::RW, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_4: Register = super::reg(606, 2, Access::RW, Area::Ram);
     pub(crate) const INDIRECT_DATA_1: Register = super::reg(634, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_WRITE: Register =
-        super::reg(168, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_WRITE: Register = super::reg(634, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_READ: Register = super::reg(296, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_READ: Register = super::reg(698, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for RhP12Rn {
@@ -142,6 +141,6 @@ impl Actuator for RhP12Rn {
     }
 
     fn name(&self) -> &'static str {
-        "RH-P12-RN"
+        "RH-P12-RN(A)"
     }
 }

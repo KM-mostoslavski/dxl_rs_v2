@@ -1,6 +1,10 @@
 (
-  source: Unverified,
+  source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/", verified: "2026-10-29"),
   protocols: [P1],
+  instructions: [
+    (protocol: P1, source: "https://emanual.robotis.com/docs/en/dxl/protocol1/",
+     list: [Ping, Read, Write, RegWrite, Action, FactoryReset, SyncWrite]),
+  ],
   type_info: {
     value_of_zero_radian_position: 512,
     value_of_max_radian_position: 1023,
@@ -11,7 +15,6 @@
   unit_info: [
     { data_name: "Position", value: 0.29, unit: "deg", sign_type: "unsigned" },
     { data_name: "Speed", value: 0.111, unit: "rpm", sign_type: "signed" },
-    { data_name: "Torque", value: 0.001465, unit: "N·m/bit", sign_type: "unsigned" },
   ],
   control_table: [
     { address: 0, size: 2, data_name: "Model Number", access: R, area: EEPROM },

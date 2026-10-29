@@ -8,7 +8,7 @@ use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
-/// AX-18A (model number 18).
+/// AX-18A (model number 18, also sold as AX-18F).
 ///
 /// Protocol 1, all firmware.
 ///

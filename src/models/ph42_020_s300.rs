@@ -60,7 +60,7 @@ impl Ph42020S300 {
     pub(crate) const RETURN_DELAY_TIME: Register = super::reg(9, 1, Access::RW, Area::Eeprom);
     pub(crate) const DRIVE_MODE: Register = super::reg(10, 1, Access::RW, Area::Eeprom);
     pub(crate) const OPERATING_MODE: Register = super::reg(11, 1, Access::RW, Area::Eeprom);
-    pub(crate) const SECONDARY_ID: Register = super::reg(12, 1, Access::RW, Area::Eeprom);
+    pub(crate) const SECONDARY_SHADOW_ID: Register = super::reg(12, 1, Access::RW, Area::Eeprom);
     pub(crate) const PROTOCOL_TYPE: Register = super::reg(13, 1, Access::RW, Area::Eeprom);
     pub(crate) const HOMING_OFFSET: Register = super::reg(20, 4, Access::RW, Area::Eeprom);
     pub(crate) const MOVING_THRESHOLD: Register = super::reg(24, 4, Access::RW, Area::Eeprom);
@@ -118,11 +118,6 @@ impl Ph42020S300 {
     pub(crate) const BACKUP_READY: Register = super::reg(878, 1, Access::R, Area::Ram);
     pub(crate) const INDIRECT_ADDRESS_1: Register = super::reg(168, 2, Access::RW, Area::Eeprom);
     pub(crate) const INDIRECT_DATA_1: Register = super::reg(634, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_WRITE: Register =
-        super::reg(168, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_WRITE: Register = super::reg(634, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_READ: Register = super::reg(296, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_READ: Register = super::reg(698, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for Ph42020S300 {

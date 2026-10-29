@@ -694,33 +694,5 @@
             access: R,
             area: RAM,
         },
-        {
-            address: 256,
-            size: 2,
-            data_name: "Indirect Address Write",
-            access: RW,
-            area: EEPROM,
-        },
-        {
-            address: 634,
-            size: 1,
-            data_name: "Indirect Data Write",
-            access: RW,
-            area: RAM,
-        },
-        {
-            address: 384,
-            size: 2,
-            data_name: "Indirect Address Read",
-            access: RW,
-            area: EEPROM,
-        },
-        {
-            address: 698,
-            size: 1,
-            data_name: "Indirect Data Read",
-            access: RW,
-            area: RAM,
-        },
     ],
 )

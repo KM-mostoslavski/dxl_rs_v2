@@ -407,33 +407,5 @@
       access: RW,
       area: RAM,
     },
-    {
-      address: 168,
-      size: 2,
-      data_name: "Indirect Address Write",
-      access: RW,
-      area: RAM,
-    },
-    {
-      address: 224,
-      size: 1,
-      data_name: "Indirect Data Write",
-      access: RW,
-      area: RAM,
-    },
-    {
-      address: 578,
-      size: 2,
-      data_name: "Indirect Address Read",
-      access: RW,
-      area: RAM,
-    },
-    {
-      address: 634,
-      size: 1,
-      data_name: "Indirect Data Read",
-      access: RW,
-      area: RAM,
-    },
   ],
 )

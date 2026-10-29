@@ -8,7 +8,7 @@ use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
-/// AX-12A (model number 12).
+/// AX-12A (model number 12, also sold as AX-12+).
 ///
 /// Protocol 1, all firmware.
 ///

@@ -115,11 +115,6 @@ impl H4220S300Ra {
     pub(crate) const EXTERNAL_PORT_DATA_4: Register = super::reg(606, 2, Access::RW, Area::Ram);
     pub(crate) const INDIRECT_ADDRESS_1: Register = super::reg(168, 2, Access::RW, Area::Eeprom);
     pub(crate) const INDIRECT_DATA_1: Register = super::reg(634, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_WRITE: Register =
-        super::reg(168, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_WRITE: Register = super::reg(634, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_READ: Register = super::reg(296, 2, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_DATA_READ: Register = super::reg(698, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for H4220S300Ra {

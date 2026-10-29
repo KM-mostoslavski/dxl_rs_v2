@@ -570,6 +570,8 @@ ROLES = {
     "Present Position": ("R", "RAM"),
 }
 LIMIT_FORMS = (("Min Position Limit", "Max Position Limit"), ("CW Angle Limit", "CCW Angle Limit"))
+# Optional role: xtask check 14 keeps it within Protocol 1 addresses when present (X1, resolve.rs).
+FAULT_ROLE = "Hardware Error Status"
 TYPE_INFO_KEYS = (
     "value_of_zero_radian_position",
     "value_of_min_radian_position",
@@ -744,7 +746,7 @@ def check_roles(stem: str, table: dict, info: MapInfo, report: Report) -> None:
                         f"limit `{name}` must be RW/EEPROM, found {row.get('access', '-')}/{row.get('area', '-')}",
                     )
     if info.under(stem, "p1"):
-        role_names = set(ROLES) | set(MODE_NAMES) | {n for form in LIMIT_FORMS for n in form}
+        role_names = set(ROLES) | set(MODE_NAMES) | {n for form in LIMIT_FORMS for n in form} | {FAULT_ROLE}
         for row in rows:
             if row["data_name"] in role_names and row["address"] > 255:
                 report.add(
@@ -839,7 +841,7 @@ class MapInfo:
                     numbers[number].append(key)
             parts = []
             for number, keys in numbers.items():
-                shown = [k for k in ("p1", "p2") if k in keys] or ["tables"]
+                shown = [k for k in ("p1", "p2") if k in keys]
                 parts.append(" ".join([str(number), *shown]))
             return ", ".join(parts)
         if stem in self.not_mapped:
@@ -847,7 +849,7 @@ class MapInfo:
         return "not mapped"
 
 
-LIST_KEYS = ("p1", "p2", "tables")
+LIST_KEYS = ("p1", "p2")
 
 
 def read_map(model_map: object, report: Report) -> MapInfo:
@@ -900,7 +902,7 @@ def type_ident(stem: str) -> str:
 
 
 def _refs(entry: dict, key: str, loc: str, report: Report) -> list[tuple[int, str]] | None:
-    """A `p1`/`p2`/`tables` list as (from_fw, file) pairs, or None when malformed."""
+    """A `p1`/`p2` list as (from_fw, file) pairs, or None when malformed."""
     refs = entry.get(key)
     if not isinstance(refs, list):
         report.add(MAP_FILE, loc, f"`{key}` must be a list of `(from_fw: …, file: …)`")
@@ -923,6 +925,12 @@ def check_map(tables: dict[str, object], info: MapInfo, report: Report) -> None:
             report.add(MAP_FILE, loc, f"`family` must be one of {', '.join(FAMILIES)}, found {family!r}")
         if not isinstance(entry.get("name"), str) or not entry.get("name"):
             report.add(MAP_FILE, loc, "`name` must be a non-empty string")
+        if "also" in entry:
+            also = entry["also"]
+            if not isinstance(also, list) or not also:
+                report.add(MAP_FILE, loc, f"`also` must be a non-empty list of product names, found {also!r}")
+            elif not all(isinstance(n, str) and n for n in also) or len(set(also)) != len(also):
+                report.add(MAP_FILE, loc, f"`also` must list distinct non-empty product names, found {also!r}")
         lists: dict[str, list[tuple[int, str]]] = {}
         for key in ("p1", "p2"):
             if key in entry:
@@ -973,13 +981,8 @@ def check_map(tables: dict[str, object], info: MapInfo, report: Report) -> None:
                 report.add(
                     MAP_FILE, loc, f"{stem}.ron lists both protocols, so the model needs both `p1` and `p2` lists"
                 )
-        if "tables" not in entry:
-            report.add(MAP_FILE, loc, "missing the legacy `tables` list (T1: equal to the default or only list)")
-        else:
-            legacy = _refs(entry, "tables", loc, report)
-            expected = lists.get("p2") if both else next(iter(lists.values()), None)
-            if legacy is not None and expected is not None and legacy != expected:
-                report.add(MAP_FILE, loc, "legacy `tables` differs from the default (or only) list")
+        if "tables" in entry:
+            report.add(MAP_FILE, loc, "the legacy `tables` key was removed in T2; use `p1`/`p2` (ron-schema §2)")
     for stem, places in sorted(info.refs.items()):
         numbers = sorted({n for n, _k in places})
         if len(numbers) > 1:
