@@ -427,3 +427,51 @@ fn dyn_bus_p1_cycle_never_allocates() {
     let (line, _) = bus.into_parts();
     line.assert_done();
 }
+
+/// The partial reads of [`p2_partial_reads_never_allocate`] on a `DynBus`.
+#[cfg(all(feature = "std", feature = "partial-reads", feature = "x-series"))]
+#[test]
+fn dyn_bus_p2_partial_reads_never_allocate() {
+    use dxl_rs_v2::{
+        Config, DynBus, Error, Id, MockTime, MockTransport, ModelNumber, P2, Position,
+    };
+
+    let (a, b) = (Id::new(1).unwrap(), Id::new(2).unwrap());
+    let mut replies = Vec::new();
+    for n in [1, 2] {
+        replies.push(p2_status(n, &[0xFC, 0x03, 52]));
+        replies.push(p2_status(n, &0i32.to_le_bytes()));
+        replies.push(p2_status(n, &4095i32.to_le_bytes()));
+        replies.push(p2_status(n, &[3]));
+    }
+    let present = |n| p2_status(n, &2100i32.to_le_bytes());
+    let script: Vec<(usize, Vec<u8>)> = replies
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| (i + 1, r))
+        .chain([(9, present(1)), (9, present(2)), (10, present(2))])
+        .collect();
+
+    let time = MockTime::new();
+    let mut line = MockTransport::new(&time);
+    for (flush, reply) in &script {
+        line.reply_to(*flush, reply);
+    }
+    let mut bus = DynBus::<P2, _, _>::new(line, time.ticker(10), Config::new());
+    bus.declare([(a, ModelNumber(1020)), (b, ModelNumber(1020))])
+        .unwrap();
+    let mut typed: [Result<Position, Error>; 2] = [Ok(Position::ZERO); 2];
+    let mut raw: [Result<i32, Error>; 2] = [Ok(0); 2];
+
+    let before = allocations();
+    bus.read_positions_partial([a, b], &mut typed).unwrap();
+    bus.read_positions_raw_partial(bus.ids(), &mut raw).unwrap();
+    let after = allocations();
+
+    assert_eq!(after - before, 0, "a Cycle call allocated");
+    assert!(typed.iter().all(Result::is_ok));
+    assert!(raw[0].is_err());
+    assert_eq!(raw[1], Ok(2100));
+    let (line, _) = bus.into_parts();
+    line.assert_done();
+}

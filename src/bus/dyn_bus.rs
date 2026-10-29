@@ -331,6 +331,51 @@ impl<T: Transport, C: Clock> DynBus<P2, T, C> {
     }
 }
 
+/// Reads with one result per target (`partial-reads` feature).
+#[cfg(feature = "partial-reads")]
+impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
+    /// Reads Present Position of every target, in radians, with one result
+    /// per target, as [`Bus::read_positions_partial`] does: `out[i]` is
+    /// target `i`'s position or its own error.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::read_positions_partial`]: only refusals, with nothing
+    /// sent.
+    pub fn read_positions_partial<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        out: &mut [Result<Position, Error>],
+    ) -> Result<(), Error> {
+        self.read_partial::<PresentPosition, I>(ids, out)
+    }
+
+    /// Reads Present Position of every target, in ticks, with one result
+    /// per target, as [`Bus::read_positions_raw_partial`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::read_positions_raw_partial`]: only refusals, with nothing
+    /// sent.
+    pub fn read_positions_raw_partial<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        out: &mut [Result<i32, Error>],
+    ) -> Result<(), Error> {
+        self.read_partial::<Raw<PresentPosition>, I>(ids, out)
+    }
+
+    /// Reads field `F` of `ids` into `out`, one result per target.
+    fn read_partial<F: ReadField, I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        out: &mut [Result<F::Value, Error>],
+    ) -> Result<(), Error> {
+        let (mut wire, mut slots, stages) = self.split_staged();
+        super::partial::read_partial::<P, T, C, _, F, I>(&mut wire, &mut slots, stages, ids, out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -622,6 +667,48 @@ mod tests {
                 std::vec![show(bus.autoscan()), show(bus.torque_states())]
             });
             assert!(steps[0].starts_with("Ok"));
+        }
+
+        /// Two XM430-W350 at IDs 1 and 2, then the replies of the partial
+        /// reads: ID 2 silent, then ID 1 reporting a hardware fault.
+        #[cfg(feature = "partial-reads")]
+        fn two_partial(line: &mut MockTransport<'_>) {
+            let at = xm430_p2(line, 1, 1, 0, 4095, 3);
+            let at = xm430_p2(line, at, 2, 0, 4095, 3);
+            line.reply_to(at, &p2_status(1, 0, &2048i32.to_le_bytes()))
+                .reply_to(
+                    at + 1,
+                    &concat(&[
+                        p2_status(1, 0x80, &[0; 4]),
+                        p2_status(2, 0, &100i32.to_le_bytes()),
+                    ]),
+                );
+        }
+
+        #[cfg(feature = "partial-reads")]
+        #[test]
+        fn partial_reads_same_as_bus() {
+            let steps = on_both!(P2, two_partial, |bus| {
+                let (a, b) = (id(1), id(2));
+                let list = [(a, ModelNumber(XM430)), (b, ModelNumber(XM430))];
+                let mut typed = [Ok(Position::ZERO); 2];
+                let mut raw = [Ok(-7); 3];
+                std::vec![
+                    show(bus.declare(list)),
+                    show(bus.read_positions_partial([a, b], &mut typed)),
+                    show(typed),
+                    show(bus.read_positions_raw_partial(bus.ids(), &mut raw)),
+                    show(raw),
+                    show(bus.read_positions_raw_partial([a, a], &mut raw)),
+                    show(bus.read_positions_raw_partial([a, b], &mut [])),
+                    show(bus.torque_states()),
+                ]
+            });
+            assert!(steps[2].contains("Ok(") && steps[2].contains("Timeout"));
+            assert!(steps[4].starts_with("[Err(Status") && steps[4].ends_with("Ok(100), Ok(-7)]"));
+            assert!(steps[5].contains("DuplicateId"));
+            assert!(steps[6].contains("BufferLength"));
+            assert_eq!(steps[7], show([FAULTED, OFF]));
         }
 
         #[test]
