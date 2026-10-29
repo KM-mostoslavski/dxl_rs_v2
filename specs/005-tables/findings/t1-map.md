@@ -79,3 +79,15 @@ above. No map or record error: 0 unrecorded files, 0 files under two numbers, 0 
 (the parser rejects them), 0 files unmapped for being unverified. `cargo xtask codegen` prints the
 three skip warnings (`ax_12_plus`, `ax_18f`, `xw430_t200`; expected until X1 reads `not_mapped`) and
 `git diff --exit-code src/models.rs src/models/` is empty.
+
+## 2026-10-29: T045 completed, T047 and T051 pass
+
+After T033/T034 ran (provisional answers 1 and 2), the 25 remaining entries got `p2` (their tables
+are `[P2]`): 2000, 2010, 2020, 2100, 2110, 2120, 35074, 43289, 46097, 46353, 51201, 53769, 54025,
+4000–4050, 4120–4170. All 64 entries now carry `p1` and/or `p2` (4 P1-only, 32 P2-only, 28 dual),
+`default: P2` exactly on the 28 dual ones, legacy `tables` unchanged and last.
+
+`python3 control_tables/check_tables.py`: exit 0, `summary: 73 tables, 2 verified, 71 unverified,
+70 mapped, 3 not mapped, 28 dual-protocol, 0 errors`. The dual-protocol section is unchanged (28,
+listed above). `cargo xtask codegen && git diff --exit-code src/models.rs src/models/`: empty; the
+three skip warnings remain until X1 reads `not_mapped`.

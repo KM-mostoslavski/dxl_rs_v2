@@ -963,6 +963,15 @@ Open:
   is for the bus. A token can still be added before 1.0 (breaking changes allowed in alpha).
 - Provisional 2026-10-29 (tables spec, Session 2026-10-29): `Area` gains `Hybrid` (Y series),
   added to core-1; X1 maps `area: Hybrid` to it. PRO External Port Data `R/RW` is recorded `RW`.
+- T1 follow-ups (2026-10-29, PR #9): the elided-block rule was also applied to PRO/PRO+/RH
+  Indirect Address/Data Read (296, 698) and Y (384, 698, Error Code History 3–14 at 156–167);
+  Y `type_info` corrected on 8 tables from the pages' Resolution rows (A051/R051 ±13,369,344,
+  A099/R099 ±25,952,256), while every Y page also says "Approx. 0.006866 deg" per pulse, which
+  matches none; `rh_p12_rn` is a gripper (0 open, 740 closed) with no radian scale on its page,
+  `type_info` left as is: decide what scale a gripper carries; M42-10-S260-R(A) gives 526,375
+  pulse/rev against a ±263,187 range.
+- X1 deltas from T1 (2026-10-29): family `rx` is valid (Cargo feature `rx` exists); `area` has a
+  third value `Hybrid` (serde name `Hybrid`) mapped to core's `Area::Hybrid`.
 - Integration (user, 2026-10-29): agents no longer wait for merges. Finished branches are merged
   into branch `integration` (worktree `../dxl_rs_v2-int`); each next branch starts from it and its
   PR into `main` says which PRs it is stacked on. "Merged into `main`" in the task lists reads

@@ -66,7 +66,7 @@ Key order: `source`, `protocols`, `instructions`, `operating_modes`, `type_info`
 | `unit_info` | unchanged | optional; not read by codegen |
 | `control_table` | `[ROW, …]`, `ROW = { address: INT, size: INT, data_name: STRING, access: ACCESS, area: AREA }` | required, non-empty |
 | `ACCESS` | `R \| RW` | required on every row; anything else is a contract change |
-| `AREA` | `EEPROM \| RAM` | required on every row |
+| `AREA` | `EEPROM \| RAM \| Hybrid` | required on every row; `Hybrid` only where the page's Area column says so (Y series, 2026-10-29) |
 
 Extra rules for a table that the map lists (contract 4.3, data part; xtask checks in brackets):
 - Roles present with these attributes: `Torque Enable` RW RAM; `Goal Position` RW RAM; `Present

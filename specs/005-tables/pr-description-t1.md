@@ -9,10 +9,9 @@ where it has a mode register, `operating_modes` copied from its page. The map ge
 new **RX-28** table are verified; RX-28 is mapped under 28 and compiled in behind a new default
 feature `rx` (architect, 2026-10-28: the test robot has 10 RX-28 on Protocol 1).
 
-> **Draft: blocked on three questions for the architect (T055, see "Open questions").** The check
-> exits 1 on 37 tables whose page values do not fit the schema (25 tables) or have no page row to
-> copy from (12 tables). Everything else passes. The RX-28 part is complete and usable from this
-> branch today.
+> All 73 tables pass the check (0 errors). Four answers that unblocked the PRO, Y and X330 groups are
+> **provisional** (spec Clarifications, Session 2026-10-29); the architect confirms or overturns them
+> in review (T055, see "Provisional answers").
 
 ## Why
 
@@ -32,8 +31,8 @@ X1 needs `source`, `protocols`, `access`, `area`, `operating_modes` and `p1`/`p2
   `access`/`area` only on an exact (address, size, name) match and keeps the row style; stops on
   any access other than R/RW or a row outside an EEPROM/RAM heading. `PAGES` lists the page of all
   73 tables plus the three MX Protocol 1 pages (each opened on 2026-10-28).
-- **Tests**: `control_tables/test_check_tables.py` and `test_emanual.py`, 107 tests, no network.
-- **Data**: every value from the model's English e-Manual page fetched on 2026-10-28 (instructions
+- **Tests**: `control_tables/test_check_tables.py` and `test_emanual.py`, 113 tests, no network.
+- **Data**: every value from the model's English e-Manual page fetched on 2026-10-28 or, for the PRO, Y and X330 completion, 2026-10-29 (instructions
   from the Protocol 1.0 page). Rows that `fill` left were set by hand only from the page row at
   the same address and size.
 - **Analysis**: `analyze_tables.py` reads `protocols` and the map's model numbers; report regenerated.
@@ -49,22 +48,22 @@ X1 needs `source`, `protocols`, `access`, `area`, `operating_modes` and `p1`/`p2
 - `ax_12w`: unverified, [P1], 300 p1
 - `ax_18a`: unverified, [P1], 18 p1
 - `ax_18f`: unverified, [P1], not mapped: same number as 18
-- `h42_20_s300_ra`: unverified, [?], 51201 tables
-- `h54_100_s500_ra`: unverified, [?], 53769 tables
-- `h54_200_s500_ra`: unverified, [?], 54025 tables
-- `m42_10_s260_ra`: unverified, [?], 43289 tables
-- `m54_40_s250_ra`: unverified, [?], 46097 tables
-- `m54_60_s250_ra`: unverified, [?], 46353 tables
+- `h42_20_s300_ra`: unverified, [P2], 51201 p2
+- `h54_100_s500_ra`: unverified, [P2], 53769 p2
+- `h54_200_s500_ra`: unverified, [P2], 54025 p2
+- `m42_10_s260_ra`: unverified, [P2], 43289 p2
+- `m54_40_s250_ra`: unverified, [P2], 46097 p2
+- `m54_60_s250_ra`: unverified, [P2], 46353 p2
 - `mx_106`: unverified, [P1, P2], 321 p1 p2
 - `mx_28`: unverified, [P1, P2], 30 p1 p2
 - `mx_64`: unverified, [P1, P2], 311 p1 p2
-- `ph42_020_s300`: unverified, [?], 2000 tables
-- `ph54_100_s500`: unverified, [?], 2010 tables
-- `ph54_200_s500`: unverified, [?], 2020 tables
-- `pm42_010_s260`: unverified, [?], 2100 tables
-- `pm54_040_s250`: unverified, [?], 2110 tables
-- `pm54_060_s250`: unverified, [?], 2120 tables
-- `rh_p12_rn`: unverified, [?], 35074 tables
+- `ph42_020_s300`: unverified, [P2], 2000 p2
+- `ph54_100_s500`: unverified, [P2], 2010 p2
+- `ph54_200_s500`: unverified, [P2], 2020 p2
+- `pm42_010_s260`: unverified, [P2], 2100 p2
+- `pm54_040_s250`: unverified, [P2], 2110 p2
+- `pm54_060_s250`: unverified, [P2], 2120 p2
+- `rh_p12_rn`: unverified, [P2], 35074 p2
 - `rx_28`: verified https://emanual.robotis.com/docs/en/dxl/rx/rx-28/ 2026-10-28, [P1], 28 p1
 - `xc330_m181`: unverified, [P2], 1230 p2
 - `xc330_m181_fw52`: unverified, [P2], 1230 p2
@@ -103,18 +102,18 @@ X1 needs `source`, `protocols`, `access`, `area`, `operating_modes` and `p1`/`p2
 - `xw540_h260`: unverified, [P1, P2], 1310 p1 p2
 - `xw540_t140`: unverified, [P1, P2], 1180 p1 p2
 - `xw540_t260`: unverified, [P1, P2], 1170 p1 p2
-- `ym070_210_a051`: unverified, [?], 4040 tables
-- `ym070_210_a099`: unverified, [?], 4050 tables
-- `ym070_210_b001`: unverified, [?], 4010 tables
-- `ym070_210_m001`: unverified, [?], 4000 tables
-- `ym070_210_r051`: unverified, [?], 4020 tables
-- `ym070_210_r099`: unverified, [?], 4030 tables
-- `ym080_230_a051`: unverified, [?], 4160 tables
-- `ym080_230_a099`: unverified, [?], 4170 tables
-- `ym080_230_b001`: unverified, [?], 4130 tables
-- `ym080_230_m001`: unverified, [?], 4120 tables
-- `ym080_230_r051`: unverified, [?], 4140 tables
-- `ym080_230_r099`: unverified, [?], 4150 tables
+- `ym070_210_a051`: unverified, [P2], 4040 p2
+- `ym070_210_a099`: unverified, [P2], 4050 p2
+- `ym070_210_b001`: unverified, [P2], 4010 p2
+- `ym070_210_m001`: unverified, [P2], 4000 p2
+- `ym070_210_r051`: unverified, [P2], 4020 p2
+- `ym070_210_r099`: unverified, [P2], 4030 p2
+- `ym080_230_a051`: unverified, [P2], 4160 p2
+- `ym080_230_a099`: unverified, [P2], 4170 p2
+- `ym080_230_b001`: unverified, [P2], 4130 p2
+- `ym080_230_m001`: unverified, [P2], 4120 p2
+- `ym080_230_r051`: unverified, [P2], 4140 p2
+- `ym080_230_r099`: unverified, [P2], 4150 p2
 
 </details>
 
@@ -145,53 +144,61 @@ X1 needs `source`, `protocols`, `access`, `area`, `operating_modes` and `p1`/`p2
 - **AX ×5** (`ax_12a`, `ax_12_plus`, `ax_12w`, `ax_18a`, `ax_18f`): `min_radian 0.0 → -2.6205530`,
   `max_radian 5.2359877 → 2.6154347` (same slope, angles moved to zero 512). The stale comment
   `// 300° = 5.2359 rad` in `ax_18a`/`ax_18f` went with the old value.
-- PRO / PRO+ / RH / Y: not checked (tasks stopped, see below).
+- **Y geared ×8**: specification row Resolution 26,738,688 [pulse/rev] (A051, R051) and 51,904,512
+  [pulse/rev] (A099, R099); the tables had ±262,144 = ±π (524,288/rev). Now ±13,369,344 and
+  ±25,952,256, zero 0, ±3.14159265. Y B001/M001 (524,288 [pulse/rev]) unchanged.
+- PRO (A), PRO+: unchanged; each page gives "-180 ~ 180 [°]" ↔ the table's ±N.
+- **`rh_p12_rn`: unchanged, raised** (see "Still open").
 
 ## Row findings (not fixed in T1; corrections are T2)
 
-- **Alias rows not on the pages** (research R-14), `access`/`area` taken from the page row at the
-  same address and size: "Indirect Address Write" (168, 2) and "Indirect Data Write" (224, 1) from
-  Indirect Address/Data 1, "Indirect Address Read" (578, 2) and "Indirect Data Read" (634, 1) from
-  Indirect Address/Data 29, all RW RAM, in the 26 X430/X540 tables; Write rows in MX(2.0) ×3 and the
-  6 X330 tables likewise; MX(2.0) Read rows from Indirect Address/Data 29.
-- **X330 alias rows with no page row**: "Indirect Address Read" (180, 2) and "Indirect Data Read"
-  (230, 1) in the 6 current-firmware X330 tables sit in the rows the page elides ("…" between
-  Indirect Address 3 and 26); left without `access`/`area` (question 3).
-- **Rows on the pages that the tables lack**: "Startup Configuration" (60, 1, RW, EEPROM) and "Backup
-  Ready" (147, 1, R, RAM) on every X430/X540/X330 page; the numbered indirect rows the tables never
-  carried (MX(2.0), X).
-- No address, size or name of an existing row differs from its page (AX, MX(2.0), XL-320, X430,
-  X540, X330 current firmware).
+- **Alias rows not on the pages** (research R-14), `access`/`area` from the page row at the same
+  address and size: "Indirect Address Write" / "Indirect Data Write" from Indirect Address/Data 1 in
+  MX(2.0), X430, X540, X330, PRO, PRO+, RH and Y tables (RW; RAM, or EEPROM for the PRO/RH/Y Indirect
+  Address block, as the pages give); "Indirect Address Read" (578, 2) / "Indirect Data Read" (634, 1)
+  from Indirect Address/Data 29 in MX(2.0), X430, X540.
+- **Rows in elided "…" blocks** (provisional answer 4): X330 "Indirect Address Read" (180, 2) and
+  "Indirect Data Read" (230, 1); extended by the same rule to PRO/PRO+/RH (296, 698), Y (384, 698)
+  and Y "Error Code History 3" … "14" (156–167, R RAM; the page lists 1, 2, …, 15, 16).
+- **X330 `_fw52` tables** (provisional answer 3): the current X330 page with its note "Firmware
+  versions prior to V53 support up to 20 Indirect Address/Data items. The address range for Indirect
+  Address is 168 ~ 207, and for Indirect Data is 208 ~ 227." applied (indirect rows RW RAM).
+- **Rows on the pages that the tables lack**: "Startup Configuration" (60) and "Backup Ready" (147)
+  on X430/X540/X330 pages; External Port Data 1–4 on the RH-P12-RN(A) page; the numbered indirect
+  rows. **Name**: PH tables "Secondary ID" (12, 1), the pages "Secondary(Shadow) ID".
+- PRO / PRO+ External Port Data 1–4: the pages give access `R/RW`; recorded `RW` (answer 1).
+- No address or size of an existing row differs from its page.
 
 ### Mode rows (FR-020)
 
-Every mode row checked matches its page: `Operating Mode` (11, 1, RW, EEPROM) on MX(2.0), X430,
-X540 and X330; `Control Mode` (11, 1, RW, EEPROM) on XL-320; no mode register on the AX and RX-28
-pages (CW/CCW pair). **No mode-row finding.** The `_fw52` X330 rows could only be compared with
-the current-firmware table (the pages give no firmware-52 table). PRO / PRO+ / RH / Y mode rows
-were not checked (tasks stopped).
+Every mode row matches its page: `Operating Mode` (11, 1, RW, EEPROM) on MX(2.0), X, PRO, PRO+ and
+RH; (33, 1, RW, EEPROM) on Y; `Control Mode` (11, 1, RW, EEPROM) on XL-320; no mode register on the
+AX and RX-28 pages (CW/CCW pair). **No mode-row finding.**
 
-## `operating_modes` (each from its own page, 2026-10-28)
+## `operating_modes` (each from its own page, 2026-10-28/29)
 
 | Tables | Written |
 |---|---|
 | `mx_64`, `mx_106`, 10 X430 (`xd430_*`, `xh430_*`, `xm430_*`, `xw430_*`), 11 X540, 12 X330 (incl. `_fw52`) | `(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16])` |
 | `mx_28`, `xl430_w250`, `2xl430_w250`, `2xc430_w250`, `xc430_w150`, `xc430_w240` | `(bounded: [3], unbounded: [4], no_position: [1, 16])` |
+| 6 PRO (A), 6 PRO+ | `(bounded: [3], unbounded: [4], no_position: [0, 1, 16])` |
+| `rh_p12_rn` (RH-P12-RN(A); "1 ~ 4 Reserved" in no list) | `(bounded: [5], unbounded: [], no_position: [0])` |
+| 12 Y | `(bounded: [3], unbounded: [], no_position: [0, 1])` |
 | `xl320` (`Control Mode`) | `(bounded: [2], unbounded: [], no_position: [1])` |
 
-Pages: Operating Mode(11) value table; Min/Max Position Limit "These values are not used in
-Extended Position Control Mode and Current-based Position Control Mode" (or "…not used in Extended
-Position Control Mode" on pages without mode 5); Position Control Mode "Operating position range is
-limited by the Max Position Limit(48) and the Min Position Limit(52)"; XL-320 "CW Angle Limit: the
-minimum value of Goal Position(30)", "If it is set to Wheel Mode, Goal Position value is not used."
-X330 pages give one mode description for all firmware, so it applies to the `_fw52` tables too.
+67 tables carry the field. Pages: each mode value table plus the Min/Max Position Limit text
+(X: "These values are not used in Extended Position Control Mode and Current-based Position Control
+Mode"; PRO: "NOT used in Extended Position Control Mode"; RH-P12-RN(A): "limit maximum and minimum
+positions in Current based Position Control Mode"; Y: "Movement is restricted to within the range
+defined by Max and Min [Position Limit(84)]"; XL-320: "CW Angle Limit: the minimum value of Goal
+Position(30)", "If it is set to Wheel Mode, Goal Position value is not used."). X330 pages give one
+mode description for all firmware, so it applies to the `_fw52` tables too.
 
 **Pages that differ from the expected family list** (research R-15; the page wins):
-- `mx_28` (MX-28(2.0), https://emanual.robotis.com/docs/en/dxl/mx/mx-28-2/): lists only 1, 3, 4, 16
-  (no 0, no 5), unlike MX-64/106(2.0).
-- `xc430_w150`, `xc430_w240` (…/x/xc430-w150/, …/x/xc430-w240/): list only 1, 3, 4, 16.
+- `mx_28` (https://emanual.robotis.com/docs/en/dxl/mx/mx-28-2/): only 1, 3, 4, 16.
+- `xc430_w150`, `xc430_w240` (…/x/xc430-w150/, …/x/xc430-w240/): only 1, 3, 4, 16.
 
-No value was left unplaced; no reserved value appeared.
+No value was left unplaced.
 
 ## Map
 
@@ -235,29 +242,33 @@ No value was left unplaced; no reserved value appeared.
 `not_mapped` (model numbers re-read on the pages 2026-10-28): `ax_12_plus` → `SameNumberAs(12)`
 (AX-12A page "AX-12+, AX-12A", 12), `ax_18f` → `SameNumberAs(18)` (AX-18A page "AX-18F, AX-18A",
 18), `xw430_t200` → `SameNumberAs(1270)` (XW430-T200 page 1,270; XW430-T333 also 1,270).
-25 entries (PRO / PRO+ / RH / Y) keep only the legacy `tables` list until their tables have
-`protocols` (question 1, 2).
+All 64 entries carry `p1` and/or `p2` (4 P1-only, 32 P2-only, 28 dual), legacy `tables` unchanged.
 
-## Open questions for the architect (T055; block the check)
+## Provisional answers (spec Clarifications, Session 2026-10-29; for the architect to confirm, T055)
 
-1. **PRO / PRO+ / RH (13 tables, T033 stopped):** all 13 pages give access **`R/RW`** for External
-   Port Data 1–4 (600–606, size 2); the access depends on External Port Mode (input R, output W).
-   The schema allows R | RW only. Record as a new access value, as RW, or another rule? T033 and
-   T040 (`operating_modes`) wait for it.
-2. **Y (12 tables, T034 stopped):** the pages define a third area **`Hybrid`** ("behaves like the
-   EEPROM area" with torque off, "like the RAM area" with torque on) for 11 rows (gains 212–236,
-   profile 240–252), and give the area in a column, not a heading. The schema allows EEPROM | RAM.
-   Record as a new area value, map it to EEPROM or RAM, or another rule? `emanual.py` then needs
-   to read an `Area` column. T034 and T041 wait for it.
-3. **X330 (12 tables, T032):** (a) the six `_fw52` tables: the pages give no firmware-52 control
-   table, only "Firmware versions prior to V53 support up to 20 Indirect Address/Data items. The
-   address range for Indirect Address is 168 ~ 207, and for Indirect Data is 208 ~ 227." Per T032
-   nothing was filled. May the current table plus this note serve as the firmware-52 source?
-   (b) the six current-firmware tables: alias rows at 180 and 230 have no page row (elided "…"):
-   give them the elided block's access/area, or wait for their removal in T2?
+1. **PRO / PRO+ / RH External Port Data 1–4:** the pages give access `R/RW` (read-only as an input,
+   writable as an output); recorded **`RW`** (`emanual.py` maps `R/RW` → `RW`; any other value still
+   stops it).
+2. **Y `Hybrid`:** `area` gains **`Hybrid`** (11 rows per Y table: gains 212–236, profile 240–252),
+   read from the page's Area column (`emanual.py` now reads that column; `check_tables.py` accepts
+   `Hybrid`; core's `Area::Hybrid` is on core-1).
+3. **X330 `_fw52` tables:** access/area from the current X330 page with its firmware-52 indirect-range
+   note applied.
+4. **X330 "Indirect Address Read" (180) / "Indirect Data Read" (230):** the access/area of the elided
+   "…" block they sit in; T2 decides rename or removal. **Extended by the agent** to the same case in
+   PRO/PRO+/RH (296, 698) and Y (384, 698, and Error Code History 3–14 at 156–167): please confirm.
 
 Also for T055: approve the T1/T2 split (module-interfaces §9) and the AX-12+ record citing the
 AX-12A page (research R-9).
+
+### Still open (no blocker for the check)
+
+- **`rh_p12_rn` `type_info`** is unchanged (`0 / -740 / 740`, ±1.099 rad). The RH-P12-RN(A) page gives
+  a gripper: stroke 0 ~ 106 mm, Goal Position 0 (open) / 740 (closed), limit range 0 ~ 1,150, no
+  radian scale. Which scale should a gripper carry?
+- Every Y page's Goal Position says "1[pulse] (Approx. 0.006866 deg)", which fits none of the Y
+  Resolution rows; the model-specific Resolution row was used.
+- M42-10-S260-R(A) page: 526,375 pulse/rev against a ±263,187 range (PM42: 526,374).
 
 ## Architecture
 
@@ -282,15 +293,16 @@ deviations:
 - `operating_modes` sits after `protocols` (after `instructions` when present), before
   `type_info` (contract 3.1 fixes no position).
 - AX-12+ cites the AX-12A page (no page of its own).
-- `emanual.py` stops on page values outside the schema (as the contract says); that is what
-  blocked the PRO and Y groups.
+- `emanual.py` beyond contract table-tools §2 (provisional answers): reads an `Area` column when a
+  page has one (Y), and records a page access `R/RW` as `RW`; every other value outside the schema
+  still stops it.
+- `area` gains `Hybrid` (data-model updated 2026-10-29; ron-schema §1 still lists EEPROM | RAM).
 
 Notes for other modules:
 - **X1**: after T1 the 4096-pulse tables read `PositionScale::new(2048, 0, 4095, -3.1415927,
   3.1400587)` and AX / XL-320 / RX-28 `(512, 0, 1023, -2.6205530, 2.6154347)`. One model type per
   file even when it is under `p1` and `p2`. Every table gives exactly one mode source;
-  `Operating Mode` at 11 (33 on Y); `operating_modes` on 42 tables now, 67 once the PRO and Y
-  groups land. Read tables with `IMPLICIT_SOME` (research R-1). Accept family `rx`.
+  `Operating Mode` at 11 (33 on Y); `operating_modes` on the 67 tables with a mode row. Read tables with `IMPLICIT_SOME` (research R-1). Accept family `rx`.
 - **core**: slope 2π/4096 now in the tables; the mode value lists live in each table's
   `operating_modes`, so core holds none. Some pages give fewer modes than their family (above).
 - **ci**: remove the `if [ -f control_tables/check_tables.py ]` guard in its next change; add `rx`
@@ -303,4 +315,4 @@ Notes for other modules:
 - [x] `cargo xtask codegen` leaves `src/models.rs` and `src/models/` unchanged (the RX-28 output is committed)
 - [x] Public methods documented (Python tools: module and function docstrings)
 - [x] Docs updated if behaviour or setup changed (`dynamixel.ron` header documents the new keys)
-- [ ] `python3 control_tables/check_tables.py` exits 0: **no**, 5134 errors in the 37 blocked tables (open questions); `python3 -m unittest discover -s control_tables -p 'test_*.py'`: 107 tests pass
+- [x] `python3 control_tables/check_tables.py` exits 0 (`73 tables, 2 verified, 71 unverified, 70 mapped, 3 not mapped, 28 dual-protocol, 0 errors`); `python3 -m unittest discover -s control_tables -p 'test_*.py'`: 113 tests pass
