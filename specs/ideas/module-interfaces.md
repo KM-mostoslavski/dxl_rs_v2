@@ -970,6 +970,13 @@ Open:
   matches none; `rh_p12_rn` is a gripper (0 open, 740 closed) with no radian scale on its page,
   `type_info` left as is: decide what scale a gripper carries; M42-10-S260-R(A) gives 526,375
   pulse/rev against a ±263,187 range.
+- core-2 (PR #27, 2026-10-29): Y scales from T1 (±13,369,344 and ±25,952,256 ticks for ±π) are
+  finer than an `f32` angle near ±π holds, so ticks round-trip within 1 and 3 ticks there (every
+  other scale is exact); the every-tick test allows that on those two scales only and `Position`'s
+  docs say so. Decide together with the Y `type_info` question (an `f64` angle, or keep). Also: the
+  generated `src/models/tests.rs` trips `clippy::single_element_loop` on single-family test
+  builds (xtask's, not run by ci); X2 (drop the generated `id`/`model_number`/`name` overrides) is
+  now possible.
 - X1 deltas from T1 (2026-10-29): family `rx` is valid (Cargo feature `rx` exists); `area` has a
   third value `Hybrid` (serde name `Hybrid`) mapped to core's `Area::Hybrid`.
 - Integration (user, 2026-10-29): agents no longer wait for merges. Finished branches are merged
