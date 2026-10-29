@@ -64,3 +64,4 @@ Expected: a 14-byte status packet starting `FF FF FD 00 01 07 00 55 00`. Without
 reply typically arrives about 16 ms late. Once the `bus` module lands, this becomes a one-line
 `bus.ping`.
 <!-- ci probe 1 (DO NOT MERGE) -->
+<!-- ci probe 2 -->
