@@ -977,6 +977,13 @@ Open:
   generated `src/models/tests.rs` trips `clippy::single_element_loop` on single-family test
   builds (xtask's, not run by ci); X2 (drop the generated `id`/`model_number`/`name` overrides) is
   now possible.
+- T2 (PR #28, 2026-10-29), questions in its PR and `specs/005-tables/findings/t2-*.md`: `mx_64`
+  diff still lists 22 page-only indirect rows (T060 over T063); Clear listed for MX(2.0) P2;
+  MX-64/MX-106 P1 "Torque Ctrl Mode Enable" (70) makes the actuator ignore Goal Position, which
+  the AngleLimits mode source cannot see; rows with a firmware condition (X Startup Configuration,
+  Backup Ready from V45; MX P1 Realtime Tick from v40) have no format; MX P1 page contradicts
+  itself on multi-turn (note says CW = CCW = 0, table says 4095; table followed); table-tools §1
+  check 14 should name Hardware Error Status; MX-106 P1 Drive Mode reverse bit is not modelled.
 - X1 deltas from T1 (2026-10-29): family `rx` is valid (Cargo feature `rx` exists); `area` has a
   third value `Hybrid` (serde name `Hybrid`) mapped to core's `Area::Hybrid`.
 - Integration (user, 2026-10-29): agents no longer wait for merges. Finished branches are merged
