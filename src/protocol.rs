@@ -104,7 +104,7 @@ pub struct Pong {
     pub(crate) model_number: Option<u16>,
     /// Protocol 2 only.
     pub(crate) firmware: Option<u8>,
-    /// The error byte of a scan or broadcast ping reply that had one set.
+    /// The error byte of a scan reply that had one set.
     /// Unicast ping reports a set error byte as [`Error::Status`] instead,
     /// so this is always `None` there.
     pub(crate) fault: Option<StatusReport>,
