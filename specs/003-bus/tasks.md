@@ -396,6 +396,7 @@ Branch `003-bus-6` from `origin/main` after bus-4 merged (independent of bus-5).
 - [ ] T088 [human] Architect: update `docs/ARCHITECTURE.md` (architect-owned) to `Bus<P, T, C = DefaultClock, const N: usize = 32>`, torque state in a bus-owned byte array, the limit mode in each actuator's cache (module-interfaces §2.4b), autoscan in no_std, `DynBus` (module-interfaces §8 conflict 20, §9)
 - [X] T089 [P] Check with the ci module (specs/007-ci) that `.github/workflows/ci.yml` runs `cargo test --features mock` (tests/bus_no_alloc.rs), the family-off test leg of quickstart §1, the `partial-reads` / `raw-registers` feature-set legs and the std-off doctest pass (research R-12); raise any gap to the ci owner, do not edit the workflow from a bus PR
 - [ ] T090 Run the manual hardware check of specs/003-bus/quickstart.md §4 (XM430-W350 on P2 in modes 3, 4 and 1, AX-12A on P1, U2D2) if hardware is available; otherwise leave it unchecked in the PR descriptions
+  - 2026-10-29, partial run on other hardware: 10 × RX-28 on P1 at 1 Mbps (FTDI FT232R, latency timer 1 ms), `examples/rx28_sine.rs` on `integration` 45e99d2: `SerialBus::open`, `autoscan` (P1 sweep found IDs 1–10, model RX-28), `present_position_raw`, `enable_torque`, `set_goal_position_raw` at 50 Hz for 3 sine cycles of ±30 ticks, `disable_torque`; every actuator back within 0–3 ticks of its start (compliance margin). The XM430-W350 P2 and AX-12A runs of quickstart §4 are not done, so the task stays open.
 
 ---
 
