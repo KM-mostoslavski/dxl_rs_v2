@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// XH540-V270 (model number 1140).
+///
+/// Protocol 1, all firmware. Protocol 2, all firmware.
+///
+/// Source table: `control_tables/xh540_v270.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xh540V270 {
     cache: Cache,

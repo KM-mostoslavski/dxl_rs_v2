@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// RH-P12-RN (model number 35074).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/rh_p12_rn.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RhP12Rn {
     cache: Cache,

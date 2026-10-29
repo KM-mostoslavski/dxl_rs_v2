@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// XH430-V350 (model number 1040).
+///
+/// Protocol 1, all firmware. Protocol 2, all firmware.
+///
+/// Source table: `control_tables/xh430_v350.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xh430V350 {
     cache: Cache,

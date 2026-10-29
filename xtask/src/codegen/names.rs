@@ -43,7 +43,6 @@ pub(crate) fn const_ident(data_name: &str) -> String {
 /// Whether `ident` cannot name a generated model module: `tests` is taken by
 /// the generated test module, and Rust 2024 keywords (strict and reserved)
 /// are not identifiers.
-#[allow(dead_code, reason = "check 16 uses it from US4")]
 pub(crate) fn is_reserved_module(ident: &str) -> bool {
     const RESERVED: &[&str] = &[
         "tests", "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false",

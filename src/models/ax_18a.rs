@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// AX-18A (model number 18).
+///
+/// Protocol 1, all firmware.
+///
+/// Source table: `control_tables/ax_18a.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ax18a {
     cache: Cache,

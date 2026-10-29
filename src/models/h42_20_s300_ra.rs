@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// H42-20-S300-RA (model number 51201).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/h42_20_s300_ra.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct H4220S300Ra {
     cache: Cache,

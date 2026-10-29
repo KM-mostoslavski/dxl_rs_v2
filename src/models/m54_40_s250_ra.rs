@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// M54-40-S250-RA (model number 46097).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/m54_40_s250_ra.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct M5440S250Ra {
     cache: Cache,

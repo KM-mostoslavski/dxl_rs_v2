@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// 2XL430-W250 (model number 1090).
+///
+/// Protocol 1, all firmware. Protocol 2, all firmware.
+///
+/// Source table: `control_tables/2xl430_w250.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TwoXl430W250 {
     cache: Cache,

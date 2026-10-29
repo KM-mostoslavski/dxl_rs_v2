@@ -8,7 +8,12 @@ use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
-/// XC330-T288 (model number 1220, firmware up to v52).
+/// XC330-T288 (model number 1220).
+///
+/// Protocol 2, firmware up to v52.
+///
+/// Source table: `control_tables/xc330_t288_fw52.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xc330T288Fw52 {
     cache: Cache,

@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// YM070-210-R051 (model number 4020).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/ym070_210_r051.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ym070210R051 {
     cache: Cache,

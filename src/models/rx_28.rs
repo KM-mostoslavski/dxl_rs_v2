@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// RX-28 (model number 28).
+///
+/// Protocol 1, all firmware.
+///
+/// Source table: `control_tables/rx_28.ron`.
+/// Verified against <https://emanual.robotis.com/docs/en/dxl/rx/rx-28/> on 2026-10-28.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rx28 {
     cache: Cache,

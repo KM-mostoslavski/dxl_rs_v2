@@ -512,6 +512,12 @@ fn xm_root(table: Table) -> Root {
 pub(crate) fn failing() -> Vec<Failing> {
     vec![
         Failing {
+            check: 1,
+            root: Root::new(&xm_map(), &[]),
+            file: "xm",
+            keywords: &["cannot read"],
+        },
+        Failing {
             check: 2,
             root: Root::new(
                 &Map::new()
@@ -569,6 +575,15 @@ pub(crate) fn failing() -> Vec<Failing> {
             ),
             file: "dynamixel",
             keywords: &["table xm", "model 1020", "model 1030"],
+        },
+        Failing {
+            check: 7,
+            root: Root::new(
+                &xm_map().not_mapped("gone", "NoModelNumber"),
+                &[("xm", Table::xm())],
+            ),
+            file: "dynamixel",
+            keywords: &["not_mapped names gone"],
         },
         Failing {
             check: 8,
@@ -654,6 +669,16 @@ pub(crate) fn failing() -> Vec<Failing> {
             root: xm_root(Table::xm().type_info(2048, 4095, 0, -1.0, 1.0)),
             file: "xm",
             keywords: &["value_of_max_radian_position"],
+        },
+        Failing {
+            check: 16,
+            root: xm_root(
+                Table::xm()
+                    .with_row(65, 1, "LED", "RW", "RAM")
+                    .with_row(66, 1, "Led", "RW", "RAM"),
+            ),
+            file: "xm",
+            keywords: &["\"LED\"", "\"Led\""],
         },
         Failing {
             check: 17,

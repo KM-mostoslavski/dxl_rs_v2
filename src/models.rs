@@ -313,219 +313,219 @@ pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);
 
 /// Any supported actuator, one variant per model type.
 ///
-/// Match on it to reach a model's specific features; use the
-/// [`Actuator`] trait for what every model has in common.
+/// Match on it to reach a model's own features; use the [`Actuator`] trait for what every
+/// model has in common.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ActuatorKind {
-    /// AX-12A.
+    /// AX-12A (model number 12). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax12a(Ax12a),
-    /// AX-18A.
+    /// AX-18A (model number 18). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax18a(Ax18a),
-    /// RX-28.
+    /// RX-28 (model number 28). Protocol 1, all firmware.
     #[cfg(feature = "rx")]
     Rx28(Rx28),
-    /// MX-28(2.0).
+    /// MX-28(2.0) (model number 30). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx28(Mx28),
-    /// AX-12W.
+    /// AX-12W (model number 300). Protocol 1, all firmware.
     #[cfg(feature = "ax")]
     Ax12w(Ax12w),
-    /// MX-64(2.0).
+    /// MX-64(2.0) (model number 311). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx64(Mx64),
-    /// MX-106(2.0).
+    /// MX-106(2.0) (model number 321). Protocol 1 and 2, all firmware.
     #[cfg(feature = "mx")]
     Mx106(Mx106),
-    /// XL-320.
+    /// XL-320 (model number 350). Protocol 2, all firmware.
     #[cfg(feature = "x-series")]
     Xl320(Xl320),
-    /// XH430-W350.
+    /// XH430-W350 (model number 1000). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430W350(Xh430W350),
-    /// XD430-T350.
+    /// XD430-T350 (model number 1001). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd430T350(Xd430T350),
-    /// XH430-W210.
+    /// XH430-W210 (model number 1010). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430W210(Xh430W210),
-    /// XD430-T210.
+    /// XD430-T210 (model number 1011). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd430T210(Xd430T210),
-    /// XM430-W350.
+    /// XM430-W350 (model number 1020). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm430W350(Xm430W350),
-    /// XM430-W210.
+    /// XM430-W210 (model number 1030). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm430W210(Xm430W210),
-    /// XH430-V350.
+    /// XH430-V350 (model number 1040). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430V350(Xh430V350),
-    /// XH430-V210.
+    /// XH430-V210 (model number 1050). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh430V210(Xh430V210),
-    /// XL430-W250.
+    /// XL430-W250 (model number 1060). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xl430W250(Xl430W250),
-    /// XC430-W150.
+    /// XC430-W150 (model number 1070). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xc430W150(Xc430W150),
-    /// XC430-W240.
+    /// XC430-W240 (model number 1080). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xc430W240(Xc430W240),
-    /// 2XL430-W250.
+    /// 2XL430-W250 (model number 1090). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     TwoXl430W250(TwoXl430W250),
-    /// XH540-W270.
+    /// XH540-W270 (model number 1100). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540W270(Xh540W270),
-    /// XD540-T270.
+    /// XD540-T270 (model number 1101). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd540T270(Xd540T270),
-    /// XH540-W150.
+    /// XH540-W150 (model number 1110). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540W150(Xh540W150),
-    /// XD540-T150.
+    /// XD540-T150 (model number 1111). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xd540T150(Xd540T150),
-    /// XM540-W270.
+    /// XM540-W270 (model number 1120). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm540W270(Xm540W270),
-    /// XM540-W150.
+    /// XM540-W150 (model number 1130). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xm540W150(Xm540W150),
-    /// XH540-V270.
+    /// XH540-V270 (model number 1140). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540V270(Xh540V270),
-    /// XH540-V150.
+    /// XH540-V150 (model number 1150). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xh540V150(Xh540V150),
-    /// 2XC430-W250.
+    /// 2XC430-W250 (model number 1160). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     TwoXc430W250(TwoXc430W250),
-    /// XW540-T260.
+    /// XW540-T260 (model number 1170). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw540T260(Xw540T260),
-    /// XW540-T140.
+    /// XW540-T140 (model number 1180). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw540T140(Xw540T140),
-    /// XL330-M077, firmware up to v52.
+    /// XL330-M077 (model number 1190). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xl330M077Fw52(Xl330M077Fw52),
-    /// XL330-M077, firmware v53 and later.
+    /// XL330-M077 (model number 1190). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xl330M077(Xl330M077),
-    /// XL330-M288, firmware up to v52.
+    /// XL330-M288 (model number 1200). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xl330M288Fw52(Xl330M288Fw52),
-    /// XL330-M288, firmware v53 and later.
+    /// XL330-M288 (model number 1200). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xl330M288(Xl330M288),
-    /// XC330-T181, firmware up to v52.
+    /// XC330-T181 (model number 1210). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330T181Fw52(Xc330T181Fw52),
-    /// XC330-T181, firmware v53 and later.
+    /// XC330-T181 (model number 1210). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330T181(Xc330T181),
-    /// XC330-T288, firmware up to v52.
+    /// XC330-T288 (model number 1220). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330T288Fw52(Xc330T288Fw52),
-    /// XC330-T288, firmware v53 and later.
+    /// XC330-T288 (model number 1220). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330T288(Xc330T288),
-    /// XC330-M181, firmware up to v52.
+    /// XC330-M181 (model number 1230). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330M181Fw52(Xc330M181Fw52),
-    /// XC330-M181, firmware v53 and later.
+    /// XC330-M181 (model number 1230). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330M181(Xc330M181),
-    /// XC330-M288, firmware up to v52.
+    /// XC330-M288 (model number 1240). Protocol 2, firmware up to v52.
     #[cfg(feature = "x-series")]
     Xc330M288Fw52(Xc330M288Fw52),
-    /// XC330-M288, firmware v53 and later.
+    /// XC330-M288 (model number 1240). Protocol 2, firmware v53 and later.
     #[cfg(feature = "x-series")]
     Xc330M288(Xc330M288),
-    /// XW430-T333.
+    /// XW430-T333 (model number 1270). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw430T333(Xw430T333),
-    /// XW540-H260.
+    /// XW540-H260 (model number 1310). Protocol 1 and 2, all firmware.
     #[cfg(feature = "x-series")]
     Xw540H260(Xw540H260),
-    /// PH42-020-S300.
+    /// PH42-020-S300 (model number 2000). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Ph42020S300(Ph42020S300),
-    /// PH54-100-S500.
+    /// PH54-100-S500 (model number 2010). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Ph54100S500(Ph54100S500),
-    /// PH54-200-S500.
+    /// PH54-200-S500 (model number 2020). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Ph54200S500(Ph54200S500),
-    /// PM42-010-S260.
+    /// PM42-010-S260 (model number 2100). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Pm42010S260(Pm42010S260),
-    /// PM54-040-S250.
+    /// PM54-040-S250 (model number 2110). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Pm54040S250(Pm54040S250),
-    /// PM54-060-S250.
+    /// PM54-060-S250 (model number 2120). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     Pm54060S250(Pm54060S250),
-    /// YM070-210-M001.
+    /// YM070-210-M001 (model number 4000). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210M001(Ym070210M001),
-    /// YM070-210-B001.
+    /// YM070-210-B001 (model number 4010). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210B001(Ym070210B001),
-    /// YM070-210-R051.
+    /// YM070-210-R051 (model number 4020). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210R051(Ym070210R051),
-    /// YM070-210-R099.
+    /// YM070-210-R099 (model number 4030). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210R099(Ym070210R099),
-    /// YM070-210-A051.
+    /// YM070-210-A051 (model number 4040). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210A051(Ym070210A051),
-    /// YM070-210-A099.
+    /// YM070-210-A099 (model number 4050). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym070210A099(Ym070210A099),
-    /// YM080-230-M001.
+    /// YM080-230-M001 (model number 4120). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230M001(Ym080230M001),
-    /// YM080-230-B001.
+    /// YM080-230-B001 (model number 4130). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230B001(Ym080230B001),
-    /// YM080-230-R051.
+    /// YM080-230-R051 (model number 4140). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230R051(Ym080230R051),
-    /// YM080-230-R099.
+    /// YM080-230-R099 (model number 4150). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230R099(Ym080230R099),
-    /// YM080-230-A051.
+    /// YM080-230-A051 (model number 4160). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230A051(Ym080230A051),
-    /// YM080-230-A099.
+    /// YM080-230-A099 (model number 4170). Protocol 2, all firmware.
     #[cfg(feature = "y-series")]
     Ym080230A099(Ym080230A099),
-    /// RH-P12-RN.
+    /// RH-P12-RN (model number 35074). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     RhP12Rn(RhP12Rn),
-    /// M42-10-S260-RA.
+    /// M42-10-S260-RA (model number 43289). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     M4210S260Ra(M4210S260Ra),
-    /// M54-40-S250-RA.
+    /// M54-40-S250-RA (model number 46097). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     M5440S250Ra(M5440S250Ra),
-    /// M54-60-S250-RA.
+    /// M54-60-S250-RA (model number 46353). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     M5460S250Ra(M5460S250Ra),
-    /// H42-20-S300-RA.
+    /// H42-20-S300-RA (model number 51201). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     H4220S300Ra(H4220S300Ra),
-    /// H54-100-S500-RA.
+    /// H54-100-S500-RA (model number 53769). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     H54100S500Ra(H54100S500Ra),
-    /// H54-200-S500-RA.
+    /// H54-200-S500-RA (model number 54025). Protocol 2, all firmware.
     #[cfg(feature = "pro")]
     H54200S500Ra(H54200S500Ra),
 }

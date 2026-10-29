@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// XL-320 (model number 350).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/xl320.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xl320 {
     cache: Cache,

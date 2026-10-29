@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// XH540-W150 (model number 1110).
+///
+/// Protocol 1, all firmware. Protocol 2, all firmware.
+///
+/// Source table: `control_tables/xh540_w150.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xh540W150 {
     cache: Cache,

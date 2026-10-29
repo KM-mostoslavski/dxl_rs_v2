@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 
 use super::names::const_ident;
 use super::resolve::{GenModel, Limits, ModeRole, Resolved};
-use super::schema::{Access, Area, ProtocolTag, Row, TypeInfo};
+use super::schema::{Access, Area, ProtocolTag, Row, Source, TypeInfo};
 use super::{HEADER, MODULE_DIR, MODULE_FILE, render_tests};
 
 /// Every generated file: path relative to `src/`, and its text.
@@ -35,23 +35,76 @@ fn cfg_attr(family: &str) -> String {
     format!("#[cfg(feature = \"{family}\")]")
 }
 
-/// The appearance whose firmware range the legacy docs show: the P2 list
-/// when the number has one, else P1.
-fn default_appearance(model: &GenModel) -> (ProtocolTag, u8, Option<u8>) {
-    model
-        .appearances
-        .iter()
-        .copied()
-        .max_by_key(|a| a.0)
-        .unwrap_or((ProtocolTag::P2, 0, None))
+/// `XM430-W350 (model number 1020)`, with `also` names.
+fn name_line(model: &GenModel) -> String {
+    if model.also.is_empty() {
+        format!("{} (model number {})", model.name, model.number)
+    } else {
+        format!(
+            "{} (model number {}, also sold as {})",
+            model.name,
+            model.number,
+            model.also.join(", ")
+        )
+    }
 }
 
-fn firmware_doc(model: &GenModel) -> String {
-    match default_appearance(model) {
-        (_, 0, None) => String::new(),
-        (_, 0, Some(until)) => format!(", firmware up to v{}", until - 1),
-        (_, from, None) => format!(", firmware v{from} and later"),
-        (_, from, Some(until)) => format!(", firmware v{from} to v{}", until - 1),
+/// `all firmware`, `firmware up to v52`, `firmware v53 and later` or
+/// `firmware v53 to v60`.
+fn firmware_range(from: u8, until: Option<u8>) -> String {
+    match (from, until.map(|u| u.saturating_sub(1))) {
+        (0, None) => "all firmware".to_string(),
+        (0, Some(last)) => format!("firmware up to v{last}"),
+        (from, None) => format!("firmware v{from} and later"),
+        (from, Some(last)) => format!("firmware v{from} to v{last}"),
+    }
+}
+
+fn protocol_number(protocol: ProtocolTag) -> &'static str {
+    match protocol {
+        ProtocolTag::P1 => "1",
+        ProtocolTag::P2 => "2",
+    }
+}
+
+/// One sentence per protocol: `Protocol 1, all firmware. Protocol 2, all
+/// firmware.`
+fn protocol_lines(model: &GenModel) -> String {
+    let sentences: Vec<String> = model
+        .appearances
+        .iter()
+        .map(|&(protocol, from, until)| {
+            format!(
+                "Protocol {}, {}.",
+                protocol_number(protocol),
+                firmware_range(from, until)
+            )
+        })
+        .collect();
+    sentences.join(" ")
+}
+
+/// The protocols and firmware of an `ActuatorKind` variant, merged when
+/// both protocols share one range: `Protocol 1 and 2, all firmware.`
+fn variant_protocols(model: &GenModel) -> String {
+    match model.appearances.as_slice() {
+        [
+            (ProtocolTag::P1, a_from, a_until),
+            (ProtocolTag::P2, b_from, b_until),
+        ] if (a_from, a_until) == (b_from, b_until) => {
+            format!("Protocol 1 and 2, {}.", firmware_range(*a_from, *a_until))
+        }
+        _ => protocol_lines(model),
+    }
+}
+
+/// The verification line of a model's doc.
+fn source_line(source: &Source) -> String {
+    match source {
+        Source::Unverified => {
+            "Unverified: not yet checked against the ROBOTIS e-Manual.".to_string()
+        }
+        Source::Verified { url, verified } => format!("Verified against <{url}> on {verified}."),
     }
 }
 
@@ -152,10 +205,12 @@ fn render_model(model: &GenModel) -> String {
     );
     let _ = writeln!(
         out,
-        "/// {} (model number {}{}).\n#[derive(Debug, Clone, PartialEq, Eq)]\npub struct {ty} {{\n    cache: Cache,\n}}\n",
-        model.name,
-        model.number,
-        firmware_doc(model)
+        "/// {}.\n///\n/// {}\n///\n/// Source table: `control_tables/{}.ron`.\n/// {}\n\
+         #[derive(Debug, Clone, PartialEq, Eq)]\npub struct {ty} {{\n    cache: Cache,\n}}\n",
+        name_line(model),
+        protocol_lines(model),
+        model.file,
+        source_line(&model.source),
     );
 
     let has = |p| model.protocols.contains(&p);
@@ -334,17 +389,17 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
     out.push_str(
         "\n/// Any supported actuator, one variant per model type.\n\
          ///\n\
-         /// Match on it to reach a model's specific features; use the\n\
-         /// [`Actuator`] trait for what every model has in common.\n\
+         /// Match on it to reach a model's own features; use the [`Actuator`] trait for what every\n\
+         /// model has in common.\n\
          #[derive(Debug, Clone, PartialEq, Eq)]\n#[non_exhaustive]\npub enum ActuatorKind {\n",
     );
     for model in &resolved.models {
         let ty = &model.type_ident;
         let _ = writeln!(
             out,
-            "    /// {}{}.\n    {}\n    {ty}({ty}),",
-            model.name,
-            firmware_doc(model),
+            "    /// {}. {}\n    {}\n    {ty}({ty}),",
+            name_line(model),
+            variant_protocols(model),
             cfg_attr(&model.family)
         );
     }
@@ -641,5 +696,73 @@ mod tests {
         }
         assert!(uses(file(&files, "models/xm.rs"))[0].contains("ModeValues"));
         assert!(!uses(file(&files, "models/ax.rs"))[0].contains("ModeValues"));
+    }
+
+    #[test]
+    fn model_docs() {
+        let files = files_for(
+            &Map::new()
+                .model(12, "ax", "AX-12A")
+                .also(&["AX-12+"])
+                .p1(&[(0, "ax")])
+                .model(1020, "x-series", "XM430-W350")
+                .p1(&[(0, "xm430_w350")])
+                .p2(&[(0, "xm430_w350")])
+                .default_p2()
+                .model(1190, "x-series", "XL330-M077")
+                .p2(&[(0, "fw52"), (53, "new")]),
+            &[
+                (
+                    "ax",
+                    Table::ax().source(
+                        "Verified(url: \"https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/\", verified: \"2026-10-28\")",
+                    ),
+                ),
+                ("xm430_w350", Table::xm()),
+                ("fw52", Table::xm().protocols("[P2]")),
+                ("new", Table::xm().protocols("[P2]")),
+            ],
+        );
+        let xm = file(&files, "models/xm430_w350.rs");
+        assert!(xm.starts_with(&format!(
+            "{HEADER}// Source: control_tables/xm430_w350.ron\n"
+        )));
+        for line in [
+            "/// XM430-W350 (model number 1020).",
+            "/// Protocol 1, all firmware. Protocol 2, all firmware.",
+            "/// Source table: `control_tables/xm430_w350.ron`.",
+            "/// Unverified: not yet checked against the ROBOTIS e-Manual.",
+        ] {
+            assert!(xm.lines().any(|l| l == line), "{line}");
+        }
+        let ax = file(&files, "models/ax.rs");
+        assert!(ax.contains("/// AX-12A (model number 12, also sold as AX-12+)."));
+        assert!(ax.contains(
+            "/// Verified against <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/> on 2026-10-28."
+        ));
+        assert!(!ax.contains("Unverified"));
+        assert!(file(&files, "models/fw52.rs").contains("/// Protocol 2, firmware up to v52."));
+        assert!(file(&files, "models/new.rs").contains("/// Protocol 2, firmware v53 and later."));
+
+        let module = file(&files, "models.rs");
+        assert!(module.starts_with(HEADER));
+        assert!(
+            module.contains("/// XM430-W350 (model number 1020). Protocol 1 and 2, all firmware.")
+        );
+        assert!(
+            module.contains("/// XL330-M077 (model number 1190). Protocol 2, firmware up to v52.")
+        );
+        assert!(module.contains(
+            "/// AX-12A (model number 12, also sold as AX-12+). Protocol 1, all firmware."
+        ));
+        assert!(file(&files, "models/tests.rs").starts_with(HEADER));
+    }
+
+    #[test]
+    fn firmware_ranges() {
+        assert_eq!(firmware_range(0, None), "all firmware");
+        assert_eq!(firmware_range(0, Some(53)), "firmware up to v52");
+        assert_eq!(firmware_range(53, None), "firmware v53 and later");
+        assert_eq!(firmware_range(53, Some(61)), "firmware v53 to v60");
     }
 }

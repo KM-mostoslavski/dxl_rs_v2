@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// M42-10-S260-RA (model number 43289).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/m42_10_s260_ra.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct M4210S260Ra {
     cache: Cache,

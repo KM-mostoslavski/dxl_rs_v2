@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// PH42-020-S300 (model number 2000).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/ph42_020_s300.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ph42020S300 {
     cache: Cache,

@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// PH54-200-S500 (model number 2020).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/ph54_200_s500.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ph54200S500 {
     cache: Cache,

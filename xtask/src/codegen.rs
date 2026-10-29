@@ -591,4 +591,160 @@ mod tests {
         assert!(!module.contains("(ProtocolVersion::P1, 350)"));
         assert!(module.contains("(ProtocolVersion::P1, 28) => Ok(Self::Rx28(Rx28::new(id))),"));
     }
+
+    fn two_model_root() -> Root {
+        Root::new(
+            &Map::new()
+                .model(12, "ax", "AX-12A")
+                .p1(&[(0, "ax")])
+                .model(1020, "x-series", "XM430-W350")
+                .p1(&[(0, "xm")])
+                .p2(&[(0, "xm")])
+                .default_p2(),
+            &[("ax", Table::ax()), ("xm", Table::xm())],
+        )
+    }
+
+    #[test]
+    fn second_run_is_byte_identical() {
+        let root = two_model_root();
+        let first = run(root.path()).unwrap();
+        assert_eq!(first.written.len(), 4);
+        let before = root.snapshot();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let second = run(root.path()).unwrap();
+        assert!(second.written.is_empty());
+        assert!(second.removed.is_empty());
+        assert_eq!(second.unchanged, 4);
+        root.assert_unchanged(&before);
+    }
+
+    #[test]
+    fn one_row_change_rewrites_one_file() {
+        let root = two_model_root();
+        run(root.path()).unwrap();
+        root.write(
+            "xm",
+            &Table::xm()
+                .without("Goal Position")
+                .with_row(120, 4, "Goal Position", "RW", "RAM")
+                .render(),
+        );
+        let report = run(root.path()).unwrap();
+        assert_eq!(report.written, [PathBuf::from("models/xm.rs")]);
+        assert_eq!(report.unchanged, 3);
+    }
+
+    #[test]
+    fn every_check_leaves_output_untouched() {
+        let mut covered = BTreeSet::new();
+        for case in fixtures::failing() {
+            let snapshot = case.root.sentinels();
+            let Err(Failure::Checks { errors, .. }) = run(case.root.path()) else {
+                panic!("check {}: expected check failures", case.check);
+            };
+            assert!(
+                errors
+                    .iter()
+                    .any(|d| d.file == case.file
+                        && case.keywords.iter().all(|k| d.message.contains(k))),
+                "check {}: no {} error with {:?} in {errors:?}",
+                case.check,
+                case.file,
+                case.keywords
+            );
+            case.root.assert_unchanged(&snapshot);
+            covered.insert(case.check);
+        }
+        assert_eq!(covered, (1..=17).collect());
+    }
+
+    #[test]
+    fn missing_goal_position_writes_nothing() {
+        let root = Root::new(&xm_map(), &[("xm", Table::xm().without("Goal Position"))]);
+        let snapshot = root.sentinels();
+        let errors = checks(generate(&root.control_tables()));
+        assert!(
+            errors.iter().any(|d| d.file == "xm"
+                && d.message == "missing role Goal Position (row \"Goal Position\")")
+        );
+        assert!(run(root.path()).is_err());
+        root.assert_unchanged(&snapshot);
+    }
+
+    #[test]
+    fn unmapped_tables_warn_and_succeed() {
+        let stray = [
+            ("xm", Table::xm()),
+            ("ax_12_plus", Table::ax()),
+            ("ax_18f", Table::ax()),
+            ("xw430_t200", Table::xm()),
+        ];
+        let root = Root::new(&xm_map(), &stray);
+        let report = run(root.path()).unwrap();
+        let warned: Vec<&str> = report.warnings.iter().map(|w| w.file.as_str()).collect();
+        assert_eq!(warned, ["ax_12_plus", "ax_18f", "xw430_t200"]);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .all(|w| w.message == "not in dynamixel.ron (models or not_mapped), skipped")
+        );
+
+        let listed = xm_map()
+            .not_mapped("ax_12_plus", "SameNumberAs(12)")
+            .not_mapped("ax_18f", "SameNumberAs(18)")
+            .not_mapped("xw430_t200", "SameNumberAs(1270)");
+        let root = Root::new(&listed, &stray);
+        assert!(run(root.path()).unwrap().warnings.is_empty());
+    }
+
+    #[test]
+    fn rustfmt_failure_writes_nothing() {
+        let root = two_model_root();
+        let snapshot = root.sentinels();
+        let result = run_with(root.path(), |rel, text| {
+            output::format_with("rustfmt-does-not-exist", rel, text)
+        });
+        assert!(matches!(result, Err(Failure::Rustfmt(_))));
+        root.assert_unchanged(&snapshot);
+    }
+
+    #[test]
+    fn summary_line() {
+        let report = Report {
+            written: vec![PathBuf::from("models.rs"), PathBuf::from("models/a.rs")],
+            removed: Vec::new(),
+            unchanged: 68,
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            report.summary(),
+            "generated 70 files under src/ (2 written, 0 removed, 68 unchanged)"
+        );
+    }
+
+    #[test]
+    fn failure_lines() {
+        let failure = Failure::Checks {
+            errors: vec![Diagnostic::new("a", "one"), Diagnostic::new("b", "two")],
+            warnings: vec![Diagnostic::new("c", "skipped")],
+        };
+        assert_eq!(
+            failure.lines(),
+            [
+                "error: control_tables/a.ron: one",
+                "error: control_tables/b.ron: two",
+                "warning: control_tables/c.ron: skipped",
+            ]
+        );
+        assert_eq!(
+            Failure::Rustfmt("rustfmt not found".into()).lines(),
+            ["error: rustfmt not found"]
+        );
+        assert_eq!(
+            Failure::Io("src/models.rs: denied".into()).lines(),
+            ["error: src/models.rs: denied"]
+        );
+    }
 }

@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// AX-12A (model number 12).
+///
+/// Protocol 1, all firmware.
+///
+/// Source table: `control_tables/ax_12a.ron`.
+/// Verified against <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/> on 2026-10-28.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ax12a {
     cache: Cache,

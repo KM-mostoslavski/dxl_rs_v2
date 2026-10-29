@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// YM080-230-A051 (model number 4160).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/ym080_230_a051.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ym080230A051 {
     cache: Cache,

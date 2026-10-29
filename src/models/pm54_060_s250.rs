@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// PM54-060-S250 (model number 2120).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/pm54_060_s250.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pm54060S250 {
     cache: Cache,

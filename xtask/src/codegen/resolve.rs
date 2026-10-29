@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::Diagnostic;
-use super::names::{const_ident, module_ident, type_ident};
+use super::names::{const_ident, is_reserved_module, module_ident, type_ident};
 use super::schema::{
     Access, Area, ControlTable, ModelEntry, ModelMap, OperatingModes, ProtocolTag, Row, Source,
     TableRef, TypeInfo,
@@ -34,7 +34,6 @@ impl ProtocolTag {
 
 /// One generated model type: one mapped table file.
 #[derive(Debug)]
-#[allow(dead_code, reason = "read as the stories of X1 land")]
 pub(crate) struct GenModel {
     /// File stem.
     pub(crate) file: String,
@@ -264,6 +263,15 @@ pub(crate) fn resolve(
                 format!("tables {other} and {file} both give the type {ty}"),
             ));
         }
+        let module = module_ident(file);
+        if is_reserved_module(&module) {
+            out.errors.push(Diagnostic::new(
+                file,
+                format!(
+                    "module name {module} is reserved (a Rust keyword, or the generated tests module)"
+                ),
+            ));
+        }
         let Some(table) = tables.get(file) else {
             continue;
         };
@@ -290,7 +298,7 @@ pub(crate) fn resolve(
         out.resolved.models.push(GenModel {
             file: file.to_string(),
             type_ident: ty,
-            module_ident: module_ident(file),
+            module_ident: module,
             number: mapping.number,
             name: mapping.entry.name.clone(),
             also: mapping.entry.also.clone(),
@@ -314,6 +322,20 @@ pub(crate) fn resolve(
     }
 
     let not_mapped: BTreeSet<&str> = map.not_mapped.iter().map(|n| n.file.as_str()).collect();
+    for &file in &not_mapped {
+        if mapped.contains_key(file) {
+            out.errors.push(Diagnostic::new(
+                "dynamixel",
+                format!("table {file} is both mapped and in not_mapped"),
+            ));
+        }
+        if !on_disk.contains(file) {
+            out.errors.push(Diagnostic::new(
+                "dynamixel",
+                format!("not_mapped names {file}, which does not exist"),
+            ));
+        }
+    }
     for stem in on_disk {
         if !mapped.contains_key(stem.as_str()) && !not_mapped.contains(stem.as_str()) {
             out.warnings.push(Diagnostic::new(
@@ -1326,5 +1348,181 @@ mod tests {
             &[("rx_28", Table::ax())],
         );
         assert!(out.errors.is_empty(), "{:?}", out.errors);
+    }
+
+    use crate::codegen::fixtures::{Root, xm_map};
+    use crate::codegen::{Failure, generate};
+
+    fn generate_errors(root: &Root) -> Vec<Diagnostic> {
+        match generate(&root.control_tables()) {
+            Err(Failure::Checks { errors, .. }) => errors,
+            other => panic!("expected check failures, got {other:?}"),
+        }
+    }
+
+    #[track_caller]
+    fn assert_has(errors: &[Diagnostic], file: &str, keywords: &[&str]) {
+        assert!(
+            errors
+                .iter()
+                .any(|d| d.file == file && keywords.iter().all(|k| d.message.contains(k))),
+            "no {file} error with {keywords:?} in {errors:?}"
+        );
+    }
+
+    #[test]
+    fn check01_map_missing() {
+        let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
+        std::fs::remove_file(root.control_tables().join("dynamixel.ron")).unwrap();
+        assert_has(&generate_errors(&root), "dynamixel", &["cannot read"]);
+    }
+
+    #[test]
+    fn check01_map_unparsable() {
+        let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
+        root.write("dynamixel", "(models: {");
+        assert_has(&generate_errors(&root), "dynamixel", &[]);
+    }
+
+    #[test]
+    fn check01_table_missing() {
+        let root = Root::new(&xm_map(), &[]);
+        assert_has(&generate_errors(&root), "xm", &["cannot read"]);
+    }
+
+    #[test]
+    fn check01_table_unparsable() {
+        let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
+        root.write("xm", "( source: Unverified, protocols: [P1, P2], ");
+        assert_has(&generate_errors(&root), "xm", &[]);
+    }
+
+    #[test]
+    fn check01_row_without_access() {
+        let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
+        let text = Table::xm()
+            .render()
+            .replace("access: RW, area: RAM", "area: RAM");
+        root.write("xm", &text);
+        assert_has(&generate_errors(&root), "xm", &["access"]);
+    }
+
+    #[test]
+    fn two_broken_tables_two_diagnostics() {
+        let root = Root::new(
+            &Map::new()
+                .model(12, "ax", "A")
+                .p1(&[(0, "b")])
+                .model(18, "ax", "B")
+                .p1(&[(0, "a")]),
+            &[
+                ("a", Table::ax().without("Goal Position")),
+                ("b", Table::ax().omit_field("source")),
+            ],
+        );
+        let errors = generate_errors(&root);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert_eq!(
+            (errors[0].file.as_str(), errors[1].file.as_str()),
+            ("a", "b")
+        );
+    }
+
+    #[test]
+    fn check07_mapped_and_not_mapped() {
+        assert_map_fails(
+            &xm_map().not_mapped("xm", "NoModelNumber"),
+            &[("xm", Table::xm())],
+            "dynamixel",
+            &["table xm is both mapped and in not_mapped"],
+        );
+    }
+
+    #[test]
+    fn check07_not_mapped_missing() {
+        assert_map_fails(
+            &xm_map().not_mapped("gone", "SameNumberAs(1020)"),
+            &[("xm", Table::xm())],
+            "dynamixel",
+            &["not_mapped names gone, which does not exist"],
+        );
+    }
+
+    #[test]
+    fn check16_duplicate_type() {
+        assert_map_fails(
+            &Map::new()
+                .model(1, "ax", "A")
+                .p1(&[(0, "xl_320")])
+                .model(2, "ax", "B")
+                .p1(&[(0, "xl320")]),
+            &[("xl_320", Table::ax()), ("xl320", Table::ax())],
+            "xl_320",
+            &["tables xl320 and xl_320 both give the type Xl320"],
+        );
+    }
+
+    #[test]
+    fn check16_duplicate_register() {
+        assert_fails(
+            Table::xm()
+                .with_row(65, 1, "LED", "RW", "RAM")
+                .with_row(66, 1, "Led", "RW", "RAM"),
+            &["rows \"LED\" and \"Led\" both give the constant LED"],
+        );
+    }
+
+    #[test]
+    fn check16_module_tests() {
+        let table = Table::xm();
+        assert_map_fails(
+            &Map::single(1020, "x-series", "X", "tests", &table),
+            &[("tests", table)],
+            "tests",
+            &["module name tests is reserved"],
+        );
+    }
+
+    #[test]
+    fn check16_module_keyword() {
+        let table = Table::xm();
+        assert_map_fails(
+            &Map::single(1020, "x-series", "X", "type", &table),
+            &[("type", table)],
+            "type",
+            &["module name type is reserved"],
+        );
+    }
+
+    #[test]
+    fn aliases_on_one_address_allowed() {
+        let out = single(
+            Table::xm()
+                .with_row(168, 2, "Indirect Address 1", "RW", "RAM")
+                .with_row(168, 2, "Indirect Address Write", "RW", "RAM"),
+        );
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+    }
+
+    #[test]
+    fn unmapped_tables_warn() {
+        let table = Table::xm();
+        let out = outcome(
+            &Map::single(1020, "x-series", "X", "xm", &table)
+                .not_mapped("ax_18f", "SameNumberAs(18)"),
+            &[
+                ("xm", table),
+                ("ax_18f", Table::ax()),
+                ("stray", Table::ax()),
+            ],
+        );
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+        assert_eq!(
+            out.warnings,
+            [Diagnostic::new(
+                "stray",
+                "not in dynamixel.ron (models or not_mapped), skipped"
+            )]
+        );
     }
 }

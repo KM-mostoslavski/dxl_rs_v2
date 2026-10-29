@@ -8,7 +8,12 @@ use crate::id::Id;
 use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
-/// XL330-M077 (model number 1190, firmware v53 and later).
+/// XL330-M077 (model number 1190).
+///
+/// Protocol 2, firmware v53 and later.
+///
+/// Source table: `control_tables/xl330_m077.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xl330M077 {
     cache: Cache,

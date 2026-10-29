@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// AX-12W (model number 300).
+///
+/// Protocol 1, all firmware.
+///
+/// Source table: `control_tables/ax_12w.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ax12w {
     cache: Cache,

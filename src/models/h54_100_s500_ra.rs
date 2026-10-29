@@ -9,6 +9,11 @@ use crate::register::{Access, Area, Register};
 use crate::units::PositionScale;
 
 /// H54-100-S500-RA (model number 53769).
+///
+/// Protocol 2, all firmware.
+///
+/// Source table: `control_tables/h54_100_s500_ra.ron`.
+/// Unverified: not yet checked against the ROBOTIS e-Manual.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct H54100S500Ra {
     cache: Cache,
