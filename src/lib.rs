@@ -42,3 +42,17 @@ pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
 pub use units::{Position, PositionScale};
+
+/// Seeded fault.
+#[cfg(not(any(
+    feature = "ax",
+    feature = "mx",
+    feature = "x-series",
+    feature = "y-series",
+    feature = "pro",
+    feature = "mock",
+    feature = "rx"
+)))]
+pub fn leak() -> alloc::vec::Vec<u8> {
+    alloc::vec::Vec::new()
+}
