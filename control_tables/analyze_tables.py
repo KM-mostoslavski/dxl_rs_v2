@@ -27,7 +27,7 @@ ENTRY = re.compile(r'address:\s*(\d+)\s*,\s*size:\s*(\d+)\s*,\s*data_name:\s*"([
 SKIP = {"dynamixel.ron"}  # model-number map, not a control table
 
 def load_model_numbers():
-    """file stem -> model number, from the `p1`, `p2` and legacy `tables` lists of dynamixel.ron."""
+    """file stem -> model number, from the `p1` and `p2` lists of dynamixel.ron."""
     m = {}
     try:
         txt = open(MODEL_MAP_FILE).read()
@@ -35,7 +35,7 @@ def load_model_numbers():
         return m
     models = parse_ron(txt, "dynamixel.ron").get("models", {})
     for num, entry in models.items():
-        for key in ("p1", "p2", "tables"):
+        for key in ("p1", "p2"):
             for ref in entry.get(key) or []:
                 m.setdefault(ref["file"], num)
     return m

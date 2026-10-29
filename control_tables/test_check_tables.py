@@ -156,9 +156,9 @@ def entry(
     family: str = "x-series",
     name: str | None = None,
     default: str | None = AUTO,  # type: ignore[assignment]
-    tables: str | None = AUTO,  # type: ignore[assignment]
+    tables: str | None = None,
 ) -> str:
-    """One model entry mapping `stem` under `lists`, with the legacy `tables` list."""
+    """One model entry mapping `stem` under `lists`. `tables` writes a legacy `tables` key (rejected from T2 on)."""
     ref = ref_list(stem)
     parts = [f'family: "{family}"', f'name: "{name or stem.upper()}"']
     parts += [f"{key}: {ref}" for key in lists]
@@ -166,8 +166,6 @@ def entry(
         default = "P2" if len(lists) == 2 else None
     if default is not None:
         parts.append(f"default: {default}")
-    if tables is AUTO:
-        tables = ref
     if tables is not None:
         parts.append(f"tables: {tables}")
     return "(" + ", ".join(parts) + ")"
@@ -860,15 +858,15 @@ class MapTests(FixtureCase):
         return self.check(files)
 
     def test_from_fw_order(self) -> None:
-        ok = f'(family: "x-series", name: "X", p2: {ref_list((0, "x_fw52"), (53, "x"))}, tables: {ref_list((0, "x_fw52"), (53, "x"))})'
+        ok = f'(family: "x-series", name: "X", p2: {ref_list((0, "x_fw52"), (53, "x"))})'
         files = {"x": table(protocols="[P2]"), "x_fw52": table(protocols="[P2]")}
         self.assertPasses(self.run_map({1190: ok}, files))
-        first_one = f'(family: "x-series", name: "X", p2: {ref_list((1, "x"))}, tables: {ref_list((1, "x"))})'
+        first_one = f'(family: "x-series", name: "X", p2: {ref_list((1, "x"))})'
         self.assertFails(self.run_map({1190: first_one}, {"x": table(protocols="[P2]")}), "model 1190", "from_fw")
         swapped = ref_list((0, "x"), (53, "x_fw52"), (40, "x2"))
         files = {"x": table(protocols="[P2]"), "x_fw52": table(protocols="[P2]"), "x2": table(protocols="[P2]")}
         self.assertFails(
-            self.run_map({1190: f'(family: "x-series", name: "X", p2: {swapped}, tables: {swapped})'}, files),
+            self.run_map({1190: f'(family: "x-series", name: "X", p2: {swapped})'}, files),
             "model 1190",
             "from_fw",
         )
@@ -877,8 +875,8 @@ class MapTests(FixtureCase):
         self.assertFails(self.run_map({1020: entry("x"), 1030: entry("gone")}), "model 1030", "gone")
 
     def test_needs_a_non_empty_protocol_list(self) -> None:
-        self.assertFails(self.run_map({1020: entry("x", (), tables=ref_list("x"))}), "model 1020", "p1")
-        empty = '(family: "x-series", name: "X", p1: [], p2: [(from_fw: 0, file: "x")], default: P2, tables: [(from_fw: 0, file: "x")])'
+        self.assertFails(self.run_map({1020: entry("x", ())}), "model 1020", "p1")
+        empty = '(family: "x-series", name: "X", p1: [], p2: [(from_fw: 0, file: "x")], default: P2)'
         self.assertFails(self.run_map({1020: empty}), "model 1020", "empty")
 
     def test_default_exactly_with_both_lists_and_p2(self) -> None:
@@ -904,18 +902,38 @@ class MapTests(FixtureCase):
     def test_dual_protocol_table_needs_both_lists(self) -> None:
         self.assertFails(self.run_map({1020: entry("x", ("p2",))}), "model 1020", "both")
 
-    def test_legacy_tables_equals_the_default_list(self) -> None:
-        files = {"x": table(), "y": table()}
-        other = ref_list("y")
-        self.assertFails(self.run_map({1020: entry("x", tables=other), 1030: entry("y")}, files), "model 1020", "tables")
-        self.assertFails(self.run_map({1020: entry("x", tables=None)}), "model 1020", "tables")
+    def test_tables_key_is_rejected(self) -> None:
+        # ron-schema §2: "Absent after T2: from T2 on, the check rejects a `tables` key in any model entry".
+        self.assertFails(self.run_map({1020: entry("x", tables=ref_list("x"))}), "model 1020", "tables")
+        p1_only = {"ax": table(AX_ROWS, protocols="[P1]", type_info=AX_SCALE)}
+        self.assertFails(
+            self.run_map({12: entry("ax", ("p1",), family="ax", tables=ref_list("ax"))}, p1_only), "model 12", "tables"
+        )
+        self.assertFails(self.run_map({1020: entry("x", tables="[]")}), "model 1020", "tables")
+        self.assertPasses(self.run_map({1020: entry("x")}))
+
+    def test_also_is_a_non_empty_list_of_names(self) -> None:
+        # data-model "`also` | list of string | no | other products sold under this number (docs only)"; US5 AS1.
+        ax = {"ax": table(AX_ROWS, protocols="[P1]", type_info=AX_SCALE)}
+        p1 = ref_list("ax")
+
+        def ax_entry(also: str | None) -> str:
+            extra = "" if also is None else f", also: {also}"
+            return f'(family: "ax", name: "AX-12A"{extra}, p1: {p1})'
+
+        self.assertPasses(self.run_map({12: ax_entry('["AX-12+"]')}, ax))
+        self.assertPasses(self.run_map({12: ax_entry('["AX-12+", "AX-12"]')}, ax))
+        self.assertPasses(self.run_map({12: ax_entry(None)}, ax))  # a P1-only entry without `default`
+        for bad in ('"AX-12+"', "[]", '[""]', "[12]", '["AX-12+", "AX-12+"]'):
+            with self.subTest(also=bad):
+                self.assertFails(self.run_map({12: ax_entry(bad)}, ax), "model 12", "also")
 
     def test_firmware_version_at_one_place_per_list(self) -> None:
         moved = replaced(X_ROWS, "Firmware Version", address=7)
         files = {"x": table(protocols="[P2]"), "x_fw52": table(moved, protocols="[P2]")}
         refs = ref_list((0, "x_fw52"), (53, "x"))
         self.assertFails(
-            self.run_map({1190: f'(family: "x-series", name: "X", p2: {refs}, tables: {refs})'}, files),
+            self.run_map({1190: f'(family: "x-series", name: "X", p2: {refs})'}, files),
             "model 1190",
             "Firmware Version",
         )
@@ -924,6 +942,14 @@ class MapTests(FixtureCase):
         rows = replaced(X_ROWS, "Goal Position", address=300)
         self.assertFails(self.run_map({1020: entry("x")}, {"x": table(rows)}), "x.ron", "255")
         self.assertPasses(self.run_map({1020: entry("x", ("p2",))}, {"x": table(rows, protocols="[P2]")}))
+
+    def test_p1_hardware_error_status_above_255(self) -> None:
+        # xtask check 14 (X1, resolve.rs `check_p1_addresses`) counts the optional fault register as a role.
+        rows = X_ROWS + [(300, 1, "Hardware Error Status", "R", "RAM")]
+        self.assertFails(self.run_map({1020: entry("x")}, {"x": table(rows)}), "x.ron", "255")
+        self.assertPasses(self.run_map({1020: entry("x", ("p2",))}, {"x": table(rows, protocols="[P2]")}))
+        fine = X_ROWS + [(70, 1, "Hardware Error Status", "R", "RAM")]
+        self.assertPasses(self.run_map({1020: entry("x")}, {"x": table(fine)}))
 
     def test_type_and_module_identifiers(self) -> None:
         files = {"ax_12a": table(), "ax12a": table()}
