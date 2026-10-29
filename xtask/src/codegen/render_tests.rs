@@ -130,14 +130,26 @@ fn render_unknown(out: &mut String, resolved: &Resolved) {
         "#[test]\n\
          fn no_tables_on_this_protocol() {{\n\
          \x20   let id = id();\n\
-         \x20   for (protocol, number) in [{}] {{\n\
-         \x20       let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);\n\
-         \x20       let error = SetupError::UnsupportedModel {{ id, model_number: number, protocol, feature: None }};\n\
-         \x20       assert_eq!(found, Err(error));\n\
-         \x20   }}\n\
+         {}\
          }}\n",
-        missing.join(", ")
+        each(
+            "(protocol, number)",
+            &missing,
+            "let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);\n\
+             let error = SetupError::UnsupportedModel { id, model_number: number, protocol, feature: None };\n\
+             assert_eq!(found, Err(error));\n",
+        )
     );
+}
+
+/// `for {pattern} in [{items}] {{ {body} }}`, or `let {pattern} = {item};
+/// {body}` when there is a single item, so a one-model family does not trip
+/// `clippy::single_element_loop`.
+fn each(pattern: &str, items: &[String], body: &str) -> String {
+    match items {
+        [item] => format!("let {pattern} = {item};\n{body}"),
+        _ => format!("for {pattern} in [{}] {{\n{body}}}\n", items.join(", ")),
+    }
 }
 
 /// Per family, with the family off: every (protocol, number) with tables
@@ -153,21 +165,22 @@ fn render_family_off(out: &mut String, resolved: &Resolved) {
             .filter(|l| l.family == family)
             .map(|l| format!("(ProtocolVersion::{}, {})", l.protocol.variant(), l.number))
             .collect();
+        let body = format!(
+            "let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);\n\
+             let error = SetupError::UnsupportedModel {{ id, model_number: number, protocol, feature: Some(\"{family}\") }};\n\
+             assert_eq!(found, Err(error));\n\
+             assert_eq!(ActuatorKind::firmware_register(protocol, ModelNumber(number)), None);\n"
+        );
         let _ = writeln!(
             out,
             "#[cfg(not(feature = \"{family}\"))]\n\
              #[test]\n\
              fn {name}_off() {{\n\
              \x20   let id = id();\n\
-             \x20   for (protocol, number) in [{pairs}] {{\n\
-             \x20       let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);\n\
-             \x20       let error = SetupError::UnsupportedModel {{ id, model_number: number, protocol, feature: Some(\"{family}\") }};\n\
-             \x20       assert_eq!(found, Err(error));\n\
-             \x20       assert_eq!(ActuatorKind::firmware_register(protocol, ModelNumber(number)), None);\n\
-             \x20   }}\n\
+             {checks}\
              }}\n",
             name = family.replace('-', "_"),
-            pairs = pairs.join(", "),
+            checks = each("(protocol, number)", &pairs, &body),
         );
     }
 }
@@ -348,7 +361,7 @@ mod tests {
         );
         let c = compact(&render_tests(&r).unwrap());
         assert!(c.contains("ModelNumber(65534)"));
-        assert!(c.contains("for(protocol,number)in[(ProtocolVersion::P2,65535)]"));
+        assert!(c.contains("let(protocol,number)=(ProtocolVersion::P2,65535);"));
     }
 
     #[test]
@@ -374,7 +387,16 @@ mod tests {
             "#[cfg(not(feature=\"x-series\"))]#[test]fnx_series_off(){letid=id();for(protocol,number)in[(ProtocolVersion::P1,1020),(ProtocolVersion::P2,1020)]{"
         ));
         assert!(c.contains("feature:Some(\"x-series\")};assert_eq!(found,Err(error));assert_eq!(ActuatorKind::firmware_register(protocol,ModelNumber(number)),None);"));
-        assert!(c.contains("#[cfg(not(feature=\"ax\"))]#[test]fnax_off(){letid=id();for(protocol,number)in[(ProtocolVersion::P1,12)]{"));
+        assert!(c.contains("#[cfg(not(feature=\"ax\"))]#[test]fnax_off(){letid=id();let(protocol,number)=(ProtocolVersion::P1,12);letfound="));
+        assert!(!c.contains("in[(ProtocolVersion::P1,12)]"));
+    }
+
+    #[test]
+    fn each_loops_only_over_several_items() {
+        let one = ["1".to_string()];
+        let two = ["1".to_string(), "2".to_string()];
+        assert_eq!(each("x", &one, "f(x);\n"), "let x = 1;\nf(x);\n");
+        assert_eq!(each("x", &two, "f(x);\n"), "for x in [1, 2] {\nf(x);\n}\n");
     }
 
     #[test]

@@ -2375,20 +2375,19 @@ fn pro_off() {
 #[test]
 fn rx_off() {
     let id = id();
-    for (protocol, number) in [(ProtocolVersion::P1, 28)] {
-        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
-        let error = SetupError::UnsupportedModel {
-            id,
-            model_number: number,
-            protocol,
-            feature: Some("rx"),
-        };
-        assert_eq!(found, Err(error));
-        assert_eq!(
-            ActuatorKind::firmware_register(protocol, ModelNumber(number)),
-            None
-        );
-    }
+    let (protocol, number) = (ProtocolVersion::P1, 28);
+    let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+    let error = SetupError::UnsupportedModel {
+        id,
+        model_number: number,
+        protocol,
+        feature: Some("rx"),
+    };
+    assert_eq!(found, Err(error));
+    assert_eq!(
+        ActuatorKind::firmware_register(protocol, ModelNumber(number)),
+        None
+    );
 }
 
 #[cfg(not(feature = "x-series"))]
