@@ -550,29 +550,6 @@ impl P2 {
         }
         Ok(())
     }
-
-    /// Pings every actuator at once and calls `on_reply` for each answer
-    /// that arrives within one timeout.
-    ///
-    /// The e-Manual does not specify reply order or timing (`#ping-0x01`),
-    /// so all replies inside the window are collected. A reply whose error
-    /// byte is set is still reported, since the actuator is present, with
-    /// the error in [`Pong::fault`]. Corrupted replies are skipped; use
-    /// [`Exchange::scan`] to see them. Returns `Err` only when the
-    /// transport fails.
-    pub(crate) fn broadcast_ping<T: Transport, C: Clock, F>(
-        link: &mut Link<'_, T, C>,
-        mut on_reply: F,
-    ) -> Result<(), Error>
-    where
-        F: FnMut(Pong),
-    {
-        Self::scan(link, |reply| {
-            if let Ok(pong) = reply {
-                on_reply(pong);
-            }
-        })
-    }
 }
 
 #[cfg(test)]
@@ -980,25 +957,6 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_ping_reports_a_set_error_byte_as_a_fault() {
-        let time = MockTime::new();
-        let mut clock = time.ticker(10);
-        let mut line = MockTransport::new(&time);
-        line.reply(&packet(1, STATUS, &[0x80, 0x06, 0x04, 0x26]));
-        let mut got = Vec::new();
-        P2::broadcast_ping(&mut link!(line, clock), |p| got.push(p)).unwrap();
-        assert_eq!(got.len(), 1);
-        assert_eq!(
-            got[0].fault,
-            Some(StatusReport::P2 {
-                alert: true,
-                code: None
-            })
-        );
-        assert_eq!(got[0].model_number, Some(1030));
-    }
-
-    #[test]
     fn status_error_byte_becomes_a_typed_error() {
         let time = MockTime::new();
         let mut clock = time.ticker(1);
@@ -1149,33 +1107,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn broadcast_ping_collects_every_reply_in_the_window() {
-        let time = MockTime::new();
-        let mut clock = time.ticker(10);
-        let mut line = MockTransport::new(&time);
-        line.reply(v::PING_REPLY)
-            .reply(&[
-                0xFF, 0xFF, 0xFD, 0x00, 0x09, 0x07, 0x00, 0x55, 0x00, 1, 2, 3, 0, 0,
-            ])
-            .reply(v::BROADCAST_PING_REPLY_2);
-        let mut got = Vec::new();
-        P2::broadcast_ping(&mut link!(line, clock), |p| got.push(p)).unwrap();
-        assert_eq!(line.sent(), v::BROADCAST_PING);
-        let ids: Vec<_> = got.iter().map(|p| p.id.get()).collect();
-        assert_eq!(ids, [1, 2]);
-        assert!(got.iter().all(|p| p.model_number == Some(1030)));
-
-        let mut line = MockTransport::new(&time);
-        let mut count = 0;
-        P2::broadcast_ping(&mut link!(line, clock), |_| count += 1).unwrap();
-        assert_eq!(count, 0);
-
-        let mut line = MockTransport::new(&time);
-        line.fail_with(ErrorKind::BrokenPipe);
-        assert!(P2::broadcast_ping(&mut link!(line, clock), |_| {}).is_err());
-    }
-
     fn scan_with(replies: &[&[u8]]) -> Vec<Result<Pong, Error>> {
         let time = MockTime::new();
         let mut clock = time.ticker(10);
@@ -1258,6 +1189,18 @@ mod tests {
                 Err(ProtocolError::Malformed.into()),
                 Err(ProtocolError::Malformed.into()),
             ]
+        );
+    }
+
+    #[test]
+    fn scan_fails_on_the_transport() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(10);
+        let mut line = MockTransport::new(&time);
+        line.fail_with(ErrorKind::BrokenPipe);
+        assert_eq!(
+            P2::scan(&mut link!(line, clock), |_| {}),
+            Err(TransportError::Io(ErrorKind::BrokenPipe).into())
         );
     }
 
