@@ -987,6 +987,6 @@ Open:
 - X1 deltas from T1 (2026-10-29): family `rx` is valid (Cargo feature `rx` exists); `area` has a
   third value `Hybrid` (serde name `Hybrid`) mapped to core's `Area::Hybrid`.
 - Integration (user, 2026-10-29): agents no longer wait for merges. Finished branches are merged
-  into branch `integration` (worktree `../dxl_rs_v2-int`); each next branch starts from it and its
+  into branch `integration` (worktree `.worktrees/int`; every worktree lives under `.worktrees/`); each next branch starts from it and its
   PR into `main` says which PRs it is stacked on. "Merged into `main`" in the task lists reads
   "merged into `integration`".
