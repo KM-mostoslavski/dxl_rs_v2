@@ -597,6 +597,7 @@ mod tests {
             &Map::new()
                 .model(12, "ax", "AX-12A")
                 .p1(&[(0, "ax")])
+                .legacy_tables(&[(0, "ax")])
                 .model(1020, "x-series", "XM430-W350")
                 .p1(&[(0, "xm")])
                 .p2(&[(0, "xm")])

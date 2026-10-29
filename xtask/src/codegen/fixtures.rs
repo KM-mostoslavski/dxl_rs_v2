@@ -2,10 +2,9 @@
 //! tables and maps, a temp workspace root, and one failing root per check.
 
 #![allow(
-    dead_code,
     clippy::approx_constant,
     clippy::excessive_precision,
-    reason = "builders are used as the stories add tests; fixture angles copy table text"
+    reason = "fixture angles copy table text"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
