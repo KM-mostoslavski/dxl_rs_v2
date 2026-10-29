@@ -98,6 +98,8 @@ use embedded_io::{Read, ReadReady, Write};
 /// needs_transport(&mut Uart);
 /// ```
 ///
+/// See [`NoSuchItem`].
+///
 /// Without [`ReadReady`] the bus could not bound its waits, so such a type is
 /// rejected at compile time:
 ///
