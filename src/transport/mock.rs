@@ -698,3 +698,9 @@ mod tests {
         assert_eq!(time.now(), u64::MAX);
     }
 }
+
+#[cfg(all(test, feature = "mock"))]
+#[test]
+fn seeded_all_features() {
+    panic!("seeded");
+}
