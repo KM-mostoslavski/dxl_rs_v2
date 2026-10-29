@@ -60,6 +60,8 @@ assert!((present.radians() - 0.5).abs() < 0.01);
 
 mod actuator_ref;
 mod observe;
+#[cfg(feature = "std")]
+mod serial;
 mod setup;
 mod slots;
 #[cfg(test)]
@@ -76,6 +78,8 @@ use crate::protocol::{Clock, Protocol};
 use crate::{Id, Transport};
 
 pub use actuator_ref::ActuatorRef;
+#[cfg(feature = "std")]
+pub use serial::SerialBus;
 
 use slots::{FixedSlots, Slots, find};
 use wire::Wire;
@@ -123,6 +127,13 @@ pub type DefaultClock = NoClock;
 ///
 /// - on a quiet line: `(retries + 1) × timeout`;
 /// - on a line that never stops talking: `(retries + 1) × 2 × timeout`.
+///
+/// [`scan_timeout`](Config::scan_timeout) bounds [`Bus::autoscan`]: one
+/// window for the Protocol 2 broadcast ping, one wait per ID for the
+/// Protocol 1 sweep (253 IDs, about 2.5 s at the default when few answer).
+/// Broadcast replies share one wire: each Protocol 2 ping reply is 14
+/// bytes, about 140 bit-times plus the actuator's Return Delay Time, so a
+/// long chain at a low baud rate needs a longer window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Config {
@@ -174,7 +185,8 @@ impl Default for Config {
 /// A Dynamixel bus: one wire, one protocol `P`, a transport `T`, a clock `C`
 /// and at most `N` actuators (default 32, at most 253).
 ///
-/// Nothing is sent until Setup ([`declare`](Bus::declare)). Setup reads each
+/// Nothing is sent until Setup ([`declare`](Bus::declare) or
+/// [`autoscan`](Bus::autoscan)). Setup reads each
 /// actuator's model, firmware variant, EEPROM limits and operating mode,
 /// and holds it with torque off. Each actuator is then reached through a
 /// short-lived [`ActuatorRef`] from [`actuator`](Bus::actuator).
@@ -281,6 +293,37 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     {
         let (mut wire, mut slots) = self.split();
         setup::declare::<P, T, C, _, _, N>(&mut wire, &mut slots, list)?;
+        Ok(self.actuators())
+    }
+
+    /// Setup by scanning (P2 broadcast ping, P1 sweep 0..=252). Available
+    /// without `std`.
+    ///
+    /// Replaces the held list; empty on `Err`. Protocol 2 sends one
+    /// broadcast Ping and collects every reply within
+    /// [`Config::scan_timeout`]. Protocol 1 pings IDs 0..=252 in turn, each
+    /// waiting `scan_timeout`, which takes about 2.5 s at the default when
+    /// few IDs answer. Each actuator found is then set up like
+    /// [`declare`](Bus::declare) does, in `Id` order, and held with torque
+    /// `Off`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Protocol`]: a corrupted reply to the scan.
+    /// - [`Error::Status`]: a reply reporting an error (a hardware fault
+    ///   fails Setup).
+    /// - [`ValidationError::DuplicateId`]: two replies with one `Id`.
+    /// - [`SetupError::TooManyActuators`]: more than `N` replies.
+    /// - [`SetupError::UnsupportedModel`]: a model this build has no table
+    ///   for on `P` (its `feature` names the Cargo feature that adds it).
+    /// - The other Setup errors of [`declare`](Bus::declare), after the scan.
+    ///
+    /// [`ValidationError::DuplicateId`]: crate::ValidationError::DuplicateId
+    /// [`SetupError::TooManyActuators`]: crate::SetupError::TooManyActuators
+    /// [`SetupError::UnsupportedModel`]: crate::SetupError::UnsupportedModel
+    pub fn autoscan(&mut self) -> Result<&[ActuatorKind], Error> {
+        let (mut wire, mut slots) = self.split();
+        setup::autoscan::<P, T, C, _, N>(&mut wire, &mut slots)?;
         Ok(self.actuators())
     }
 

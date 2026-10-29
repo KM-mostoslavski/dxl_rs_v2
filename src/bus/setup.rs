@@ -2,9 +2,9 @@
 //! hold them with torque off (research R-6, R-9).
 
 use crate::actuator::{Describe, LimitMode, ModelNumber};
-use crate::error::{Error, SetupError, TransportError, ValidationError};
+use crate::error::{Error, SetupError, StatusError, TransportError, ValidationError};
 use crate::models::{self, ActuatorKind};
-use crate::protocol::{Clock, Protocol};
+use crate::protocol::{Clock, Pong, Protocol};
 use crate::{Id, Transport};
 
 use super::slots::Slots;
@@ -82,6 +82,80 @@ where
         init_one(wire, slots, id, declared, pong.firmware)?;
     }
     Ok(())
+}
+
+/// Setup by scanning: a P2 broadcast ping, or a P1 sweep of IDs 0..=252.
+///
+/// Replaces what `slots` held. Every reply is collected first; a corrupted
+/// reply, a reply reporting an error, two replies with one `Id`, or more
+/// than `N` replies fail Setup before anything else is sent. The replies are
+/// then set up in `Id` order like declared actuators. On any error `slots`
+/// is left empty.
+pub(crate) fn autoscan<P, T, C, S, const N: usize>(
+    wire: &mut Wire<'_, P, T, C>,
+    slots: &mut S,
+) -> Result<(), Error>
+where
+    P: Protocol,
+    T: Transport,
+    C: Clock,
+    S: Slots,
+{
+    slots.clear();
+    let result = autoscan_all::<P, T, C, S, N>(wire, slots);
+    if result.is_err() {
+        slots.clear();
+    }
+    result
+}
+
+fn autoscan_all<P, T, C, S, const N: usize>(
+    wire: &mut Wire<'_, P, T, C>,
+    slots: &mut S,
+) -> Result<(), Error>
+where
+    P: Protocol,
+    T: Transport,
+    C: Clock,
+    S: Slots,
+{
+    let mut pongs = heapless::Vec::<Pong, N>::new();
+    let mut failure = None;
+    wire.scan(|reply| {
+        if failure.is_none() {
+            failure = collect::<N>(&mut pongs, reply).err();
+        }
+    })?;
+    if let Some(err) = failure {
+        return Err(err);
+    }
+    pongs.sort_unstable_by_key(|pong| pong.id);
+    for pong in &pongs {
+        let model = match pong.model_number {
+            Some(number) => number,
+            None => read_model_number(wire, pong.id)?,
+        };
+        init_one(wire, slots, pong.id, ModelNumber(model), pong.firmware)?;
+    }
+    Ok(())
+}
+
+/// Adds one scan reply to `pongs`, or says why Setup fails.
+fn collect<const N: usize>(
+    pongs: &mut heapless::Vec<Pong, N>,
+    reply: Result<Pong, Error>,
+) -> Result<(), Error> {
+    let pong = reply?;
+    let id = pong.id;
+    if let Some(report) = pong.fault {
+        return Err(StatusError { id, report }.into());
+    }
+    if pongs.iter().any(|held| held.id == id) {
+        return Err(ValidationError::DuplicateId { id }.into());
+    }
+    pongs
+        .push(pong)
+        .map_err(|_| SetupError::TooManyActuators { capacity: N }.into())
 }
 
 /// Reads Model Number, which every table has at the same place.
@@ -520,6 +594,272 @@ mod tests {
             );
             assert_eq!(bus.actuators()[7].cache().check_goal(1023), Ok(1023));
             assert_done(&bus);
+        }
+    }
+
+    mod scan {
+        extern crate std;
+
+        use super::*;
+        use crate::error::{ProtocolError, StatusError, StatusReport};
+
+        fn p1_sweep() -> std::vec::Vec<u8> {
+            concat(
+                &(0..=Id::MAX)
+                    .map(|n| p1_instruction(n, PING, &[]))
+                    .collect::<std::vec::Vec<_>>(),
+            )
+        }
+
+        fn broadcast_ping() -> std::vec::Vec<u8> {
+            p2_instruction(0xFE, PING, &[])
+        }
+
+        #[test]
+        fn p2_autoscan_empty_is_bounded() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            assert_eq!(bus.autoscan(), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(
+                sent(&bus),
+                [0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x03, 0x00, 0x01, 0x31, 0x42]
+            );
+            assert!(time.now() <= 10_000 + 1_000, "took {} us", time.now());
+        }
+
+        #[test]
+        fn p1_autoscan_empty_is_bounded() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            assert_eq!(bus.autoscan(), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(sent(&bus), p1_sweep());
+            assert!(
+                time.now() <= 253 * 10_000 + 10_000,
+                "took {} us",
+                time.now()
+            );
+        }
+
+        #[test]
+        fn corrupt_scan_reply_fails() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            let mut pong = p2_pong(3, XM430, XM430_FW);
+            let last = pong.len() - 1;
+            pong[last] ^= 0xFF;
+            line(&mut bus).reply_to(1, &pong);
+            assert!(matches!(
+                bus.autoscan(),
+                Err(Error::Protocol(ProtocolError::Crc { .. }))
+            ));
+            assert_eq!(sent(&bus), broadcast_ping());
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn two_pongs_one_id() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p2_pong(3, XM430, XM430_FW))
+                .reply_to(1, &p2_pong(3, XL320, 37));
+            assert_eq!(
+                bus.autoscan(),
+                Err(ValidationError::DuplicateId { id: id(3) }.into())
+            );
+            assert_eq!(sent(&bus), broadcast_ping());
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn pong_with_alert_fails() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            let [lo, hi] = XM430.to_le_bytes();
+            line(&mut bus).reply_to(1, &p2_status(3, 0x80, &[lo, hi, XM430_FW]));
+            assert_eq!(
+                bus.autoscan(),
+                Err(StatusError {
+                    id: id(3),
+                    report: StatusReport::P2 {
+                        alert: true,
+                        code: None
+                    }
+                }
+                .into())
+            );
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn scan_past_capacity() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 2>(&time);
+            for n in [1, 2, 3] {
+                line(&mut bus).reply_to(1, &p2_pong(n, XM430, XM430_FW));
+            }
+            assert_eq!(
+                bus.autoscan(),
+                Err(SetupError::TooManyActuators { capacity: 2 }.into())
+            );
+            assert_eq!(sent(&bus), broadcast_ping());
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn p2_only_model_on_p1_fails_setup() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            line(&mut bus)
+                .reply_to(5, &p1_status(4, 0, &[]))
+                .reply_to(254, &p1_status(4, 0, &XL320.to_le_bytes()));
+            assert_eq!(
+                bus.autoscan(),
+                Err(SetupError::UnsupportedModel {
+                    id: id(4),
+                    model_number: XL320,
+                    protocol: ProtocolVersion::P1,
+                    feature: None,
+                }
+                .into())
+            );
+            assert_eq!(sent(&bus), concat(&[p1_sweep(), p1_read(4, 0, 2)]));
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[cfg(not(feature = "pro"))]
+        #[test]
+        fn family_off_names_feature() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            line(&mut bus).reply_to(1, &p2_pong(7, 2000, 1));
+            assert_eq!(
+                bus.autoscan(),
+                Err(SetupError::UnsupportedModel {
+                    id: id(7),
+                    model_number: 2000,
+                    protocol: ProtocolVersion::P2,
+                    feature: Some("pro"),
+                }
+                .into())
+            );
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn autoscan_replaces_a_declared_list() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            assert_eq!(bus.declare([]), Ok(&[] as &[ActuatorKind]));
+            line(&mut bus).reply_to(1, &p2_pong(1, 9999, 1));
+            assert!(bus.autoscan().is_err());
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[cfg(feature = "x-series")]
+        mod x_series {
+            use super::*;
+            use crate::actuator::{Actuator, TorqueState};
+
+            #[test]
+            fn p2_autoscan_sorts_three() {
+                let time = MockTime::new();
+                let mut bus = test_bus::<P2, 32>(&time);
+                for n in [3, 1, 2] {
+                    line(&mut bus).reply_to(1, &p2_pong(n, XM430, XM430_FW));
+                }
+                let mut at = 2;
+                for n in [1, 2, 3] {
+                    at = xm430_p2_reads(line(&mut bus), at, n, 0, 4095, 3);
+                }
+                let held = bus.autoscan().unwrap();
+                let ids: [u8; 3] = core::array::from_fn(|i| held[i].id().get());
+                assert_eq!(ids, [1, 2, 3]);
+                assert_eq!(
+                    sent(&bus),
+                    concat(&[
+                        broadcast_ping(),
+                        xm430_p2_reads_sent(1),
+                        xm430_p2_reads_sent(2),
+                        xm430_p2_reads_sent(3),
+                    ])
+                );
+                assert_eq!(bus.torque_states(), [TorqueState::Off; 3]);
+                assert_done(&bus);
+            }
+
+            #[test]
+            fn firmware_picks_the_table() {
+                for (fw, fw52) in [(52, true), (53, false)] {
+                    let time = MockTime::new();
+                    let mut bus = test_bus::<P2, 32>(&time);
+                    line(&mut bus).reply_to(1, &p2_pong(4, 1190, fw));
+                    xm430_p2_reads(line(&mut bus), 2, 4, 0, 4095, 3);
+                    let held = bus.autoscan().unwrap();
+                    assert_eq!(
+                        matches!(held[0], ActuatorKind::Xl330M077Fw52(_)),
+                        fw52,
+                        "firmware {fw}"
+                    );
+                    assert_eq!(
+                        matches!(held[0], ActuatorKind::Xl330M077(_)),
+                        !fw52,
+                        "firmware {fw}"
+                    );
+                }
+            }
+
+            #[test]
+            fn autoscan_reads_the_mode_like_declare() {
+                let time = MockTime::new();
+                let mut bus = test_bus::<P2, 32>(&time);
+                line(&mut bus).reply_to(1, &p2_pong(1, XM430, XM430_FW));
+                xm430_p2_reads(line(&mut bus), 2, 1, 0, 4095, 2);
+                assert_eq!(
+                    bus.autoscan(),
+                    Err(SetupError::UnknownOperatingMode {
+                        id: id(1),
+                        value: 2
+                    }
+                    .into())
+                );
+                assert!(bus.actuators().is_empty());
+            }
+        }
+
+        #[cfg(feature = "rx")]
+        mod rx {
+            use super::*;
+            use crate::actuator::TorqueState;
+
+            #[test]
+            fn p1_autoscan_some_answer() {
+                let time = MockTime::new();
+                let mut bus = test_bus::<P1, 32>(&time);
+                line(&mut bus)
+                    .reply_to(2, &p1_status(1, 0, &[]))
+                    .reply_to(6, &p1_status(5, 0, &[]));
+                let at = angle_p1_reads(line(&mut bus), 254, 1, RX28, 0, 1023);
+                angle_p1_reads(line(&mut bus), at, 5, RX28, 0, 1023);
+                let held = bus.autoscan().unwrap();
+                assert_eq!(held.len(), 2);
+                assert!(matches!(held[0], ActuatorKind::Rx28(_)));
+                assert!(matches!(held[1], ActuatorKind::Rx28(_)));
+                assert_eq!(
+                    sent(&bus),
+                    concat(&[
+                        p1_sweep(),
+                        p1_read(1, 0, 2),
+                        p1_read(1, 6, 2),
+                        p1_read(1, 8, 2),
+                        p1_read(5, 0, 2),
+                        p1_read(5, 6, 2),
+                        p1_read(5, 8, 2),
+                    ])
+                );
+                assert_eq!(bus.torque_states(), [TorqueState::Off; 2]);
+                assert_done(&bus);
+            }
         }
     }
 }

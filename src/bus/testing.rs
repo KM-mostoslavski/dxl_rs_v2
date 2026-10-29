@@ -229,11 +229,30 @@ pub(crate) fn xm430_p2(
     max: i32,
     mode: u8,
 ) -> usize {
-    line.reply_to(at, &p2_pong(id, XM430, XM430_FW))
-        .reply_to(at + 1, &p2_status(id, 0, &min.to_le_bytes()))
-        .reply_to(at + 2, &p2_status(id, 0, &max.to_le_bytes()))
-        .reply_to(at + 3, &p2_status(id, 0, &[mode]));
-    at + 4
+    line.reply_to(at, &p2_pong(id, XM430, XM430_FW));
+    xm430_p2_reads(line, at + 1, id, min, max, mode)
+}
+
+/// Scripts the Setup reads of an XM430-W350 at `id` after its ping, from
+/// flush `at`: Min and Max Position Limit, Operating Mode. Returns the next
+/// free flush number.
+pub(crate) fn xm430_p2_reads(
+    line: &mut MockTransport<'_>,
+    at: usize,
+    id: u8,
+    min: i32,
+    max: i32,
+    mode: u8,
+) -> usize {
+    line.reply_to(at, &p2_status(id, 0, &min.to_le_bytes()))
+        .reply_to(at + 1, &p2_status(id, 0, &max.to_le_bytes()))
+        .reply_to(at + 2, &p2_status(id, 0, &[mode]));
+    at + 3
+}
+
+/// What the Setup reads of [`xm430_p2_reads`] send.
+pub(crate) fn xm430_p2_reads_sent(id: u8) -> Vec<u8> {
+    concat(&[p2_read(id, 52, 4), p2_read(id, 48, 4), p2_read(id, 11, 1)])
 }
 
 /// What Setup of [`xm430_p2`] sends.
@@ -285,11 +304,25 @@ pub(crate) fn angle_p1(
     cw: u16,
     ccw: u16,
 ) -> usize {
-    line.reply_to(at, &p1_status(id, 0, &[]))
-        .reply_to(at + 1, &p1_status(id, 0, &model.to_le_bytes()))
-        .reply_to(at + 2, &p1_status(id, 0, &cw.to_le_bytes()))
-        .reply_to(at + 3, &p1_status(id, 0, &ccw.to_le_bytes()));
-    at + 4
+    line.reply_to(at, &p1_status(id, 0, &[]));
+    angle_p1_reads(line, at + 1, id, model, cw, ccw)
+}
+
+/// Scripts the Setup reads of a Protocol 1 actuator of `model` at `id`
+/// after its ping, from flush `at`: Model Number, CW and CCW Angle Limit.
+/// Returns the next free flush number.
+pub(crate) fn angle_p1_reads(
+    line: &mut MockTransport<'_>,
+    at: usize,
+    id: u8,
+    model: u16,
+    cw: u16,
+    ccw: u16,
+) -> usize {
+    line.reply_to(at, &p1_status(id, 0, &model.to_le_bytes()))
+        .reply_to(at + 1, &p1_status(id, 0, &cw.to_le_bytes()))
+        .reply_to(at + 2, &p1_status(id, 0, &ccw.to_le_bytes()));
+    at + 3
 }
 
 /// Scripts an AX-12A at `id` on Protocol 1, as [`angle_p1`].

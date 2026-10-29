@@ -75,6 +75,18 @@ impl<'b, P: Protocol, T: Transport, C: Clock> Wire<'b, P, T, C> {
         self.unicast(|link| P::write(link, id, reg.addr, bytes))
     }
 
+    /// Finds every actuator answering at this baud rate (P2 broadcast ping,
+    /// P1 sweep of IDs 0..=252), waiting `scan_timeout` per window. Never
+    /// retried.
+    pub(crate) fn scan(&mut self, on_reply: impl FnMut(Result<Pong, Error>)) -> Result<(), Error> {
+        let mut link = Link {
+            transport: &mut *self.transport,
+            clock: &mut *self.clock,
+            timeout: self.config.scan_timeout,
+        };
+        P::scan(&mut link, on_reply)
+    }
+
     /// Reads register `reg` of `id` and decodes it.
     pub(crate) fn read_value(&mut self, id: Id, reg: Register) -> Result<i32, Error> {
         let mut buf = [0; 4];
