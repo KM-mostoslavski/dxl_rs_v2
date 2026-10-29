@@ -12,7 +12,10 @@ use crate::error::ValidationError;
 ///
 /// The angle is an `f32`, which holds every tick exactly up to an offset of
 /// 2²⁴ ticks from zero: more than 4000 turns on an X-series, about 33 on an
-/// H54. Beyond that, use raw ticks.
+/// H54. Beyond that, use raw ticks. Use them also where one tick is about as
+/// small as an `f32` step near ±π: on the Y-series scales of ±13 369 344 and
+/// ±25 952 256 ticks per half turn, a tick converted to a `Position` and back
+/// can be up to 3 ticks off.
 ///
 /// Any `f32` can be stored. NaN and infinity are refused when converted to
 /// ticks.
@@ -103,7 +106,17 @@ pub struct PositionScale {
 impl PositionScale {
     /// The scale of a table whose `type_info` gives `zero_raw` as the
     /// zero-radian tick, and `min_raw..=max_raw` as `min_rad..=max_rad`.
-    #[allow(dead_code, reason = "called by generated ModelData from X1")]
+    #[cfg_attr(
+        not(any(
+            feature = "ax",
+            feature = "mx",
+            feature = "rx",
+            feature = "x-series",
+            feature = "y-series",
+            feature = "pro"
+        )),
+        allow(dead_code, reason = "only generated models construct it")
+    )]
     pub(crate) const fn new(
         zero_raw: i32,
         min_raw: i32,
@@ -122,6 +135,13 @@ impl PositionScale {
             radians_per_tick: radians / ticks,
             ticks_per_radian: ticks / radians,
         }
+    }
+
+    /// The table's tick range, `min_raw..=max_raw`, for tests that walk
+    /// every tick of a model.
+    #[cfg(test)]
+    pub(crate) const fn raw_range(&self) -> core::ops::RangeInclusive<i32> {
+        self.min_raw..=self.max_raw
     }
 
     /// The tick of zero radians.
@@ -202,13 +222,11 @@ impl Limits {
     }
 
     /// The minimum limit (Min Position Limit, or CW Angle Limit).
-    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) const fn min_raw(&self) -> i32 {
         self.min
     }
 
     /// The maximum limit (Max Position Limit, or CCW Angle Limit).
-    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) const fn max_raw(&self) -> i32 {
         self.max
     }

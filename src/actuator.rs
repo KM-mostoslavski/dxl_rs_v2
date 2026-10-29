@@ -1,12 +1,13 @@
 //! What every actuator model has in common.
 
 use core::fmt;
+use core::ops::RangeInclusive;
 
 use crate::Id;
 use crate::error::ValidationError;
 use crate::protocol::ProtocolVersion;
 use crate::register::Register;
-use crate::units::{Limits, PositionScale};
+use crate::units::{Limits, Position, PositionScale};
 
 /// A model number as the actuator reports it (Model Number register, address
 /// 0, 2 bytes).
@@ -36,7 +37,9 @@ impl fmt::Display for ModelNumber {
     }
 }
 
-/// Common interface of every actuator model.
+/// Common interface of every actuator model: what it is and what Setup read
+/// from it. It performs no I/O; reading and writing an actuator goes through
+/// the bus.
 ///
 /// Implemented by each generated model type and by [`ActuatorKind`], so code
 /// that only needs the common features works with either:
@@ -47,10 +50,33 @@ impl fmt::Display for ModelNumber {
 /// fn describe<A: Actuator>(a: &A) -> (u8, &'static str) {
 ///     (a.id().get(), a.name())
 /// }
-/// # let _ = describe::<dxl_rs_v2::ActuatorKind>;
+///
+/// /// The width of the position limits in radians, `None` before Setup
+/// /// read them.
+/// fn span<A: Actuator>(a: &A) -> Option<f32> {
+///     let limits = a.position_limits()?;
+///     Some((*limits.end() - *limits.start()).radians())
+/// }
+///
+/// fn zero_tick<A: Actuator>(a: &A) -> i32 {
+///     a.position_scale().zero_raw()
+/// }
+/// # let _ = (
+/// #     describe::<dxl_rs_v2::ActuatorKind>,
+/// #     span::<dxl_rs_v2::ActuatorKind>,
+/// #     zero_tick::<dxl_rs_v2::ActuatorKind>,
+/// # );
 /// ```
 ///
-/// What the bus reads from a model (its registers, scale and cache) stays
+/// The trait is sealed: only the crate's model types implement it.
+///
+/// ```compile_fail,E0277
+/// struct Mine;
+///
+/// impl dxl_rs_v2::Actuator for Mine {}
+/// ```
+///
+/// What the bus reads from a model (its registers and its cache) stays
 /// inside the crate:
 ///
 /// ```compile_fail,E0603
@@ -58,15 +84,50 @@ impl fmt::Display for ModelNumber {
 /// ```
 ///
 /// [`ActuatorKind`]: crate::ActuatorKind
-pub trait Actuator {
+pub trait Actuator: sealed::Describe {
     /// Firmware ID of this actuator.
-    fn id(&self) -> Id;
+    fn id(&self) -> Id {
+        self.cache().id()
+    }
 
     /// Model number reported by the actuator (register 0).
-    fn model_number(&self) -> u16;
+    fn model_number(&self) -> u16 {
+        self.data().model_number
+    }
 
     /// Display name, e.g. `"XM430-W350"`.
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &'static str {
+        self.data().name
+    }
+
+    /// How this model maps raw position ticks to radians, from its control
+    /// table.
+    fn position_scale(&self) -> PositionScale {
+        self.data().scale
+    }
+
+    /// The position limits read from the actuator's EEPROM at Setup, in raw
+    /// ticks: Min/Max Position Limit, or CW/CCW Angle Limit. `None` until
+    /// Setup read them; never a control table's default.
+    ///
+    /// They are returned in every operating mode, but goals are checked
+    /// against them only in position (joint) mode. In extended position,
+    /// current-based position and multi-turn mode the firmware ignores them,
+    /// and in velocity, current, PWM and wheel mode goals are refused.
+    fn position_limits_raw(&self) -> Option<RangeInclusive<i32>> {
+        let limits = self.cache().limits()?;
+        Some(limits.min_raw()..=limits.max_raw())
+    }
+
+    /// The limits of [`position_limits_raw`](Actuator::position_limits_raw)
+    /// in radians, through [`position_scale`](Actuator::position_scale). The
+    /// same rule applies: returned in every operating mode, applied to goals
+    /// only in position mode.
+    fn position_limits(&self) -> Option<RangeInclusive<Position>> {
+        let limits = self.position_limits_raw()?;
+        let scale = self.position_scale();
+        Some(scale.to_position(*limits.start())..=scale.to_position(*limits.end()))
+    }
 }
 
 /// Torque and fault state of one actuator. Faulted always means torque off.
@@ -193,7 +254,17 @@ pub(crate) mod sealed {
     ///
     /// It cannot be named outside the crate, so only the crate's own types
     /// implement it.
-    #[allow(dead_code, reason = "implemented by X1's generated code")]
+    #[cfg_attr(
+        not(any(
+            feature = "ax",
+            feature = "mx",
+            feature = "rx",
+            feature = "x-series",
+            feature = "y-series",
+            feature = "pro"
+        )),
+        allow(dead_code, reason = "only generated models construct it")
+    )]
     pub trait Describe {
         /// The model's description, from its control table.
         fn data(&self) -> &'static ModelData;
@@ -206,15 +277,21 @@ pub(crate) mod sealed {
     }
 }
 
-#[allow(unused_imports, reason = "implemented by X1's generated code")]
 pub(crate) use sealed::Describe;
 
 /// What the bus needs to know about one actuator model, from its control
 /// table. One `&'static` value per generated model type.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "built by X1's generated DATA consts; read by bus-1"
+#[cfg_attr(
+    not(any(
+        feature = "ax",
+        feature = "mx",
+        feature = "rx",
+        feature = "x-series",
+        feature = "y-series",
+        feature = "pro"
+    )),
+    allow(dead_code, reason = "only generated models construct it")
 )]
 pub struct ModelData {
     /// Display name, e.g. `"XM430-W350"`.
@@ -264,10 +341,7 @@ pub enum LimitRegisters {
 
 impl LimitRegisters {
     /// The minimum limit: Min Position Limit, or CW Angle Limit.
-    #[allow(
-        dead_code,
-        reason = "built by X1's generated DATA consts; read by bus-1"
-    )]
+    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) const fn min(&self) -> Register {
         match *self {
             Self::MinMax { min, .. } => min,
@@ -276,10 +350,7 @@ impl LimitRegisters {
     }
 
     /// The maximum limit: Max Position Limit, or CCW Angle Limit.
-    #[allow(
-        dead_code,
-        reason = "built by X1's generated DATA consts; read by bus-1"
-    )]
+    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) const fn max(&self) -> Register {
         match *self {
             Self::MinMax { max, .. } => max,
@@ -290,9 +361,16 @@ impl LimitRegisters {
 
 /// The protocols a model's control table is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "built by X1's generated DATA consts; read by bus-1"
+#[cfg_attr(
+    not(any(
+        feature = "ax",
+        feature = "mx",
+        feature = "rx",
+        feature = "x-series",
+        feature = "y-series",
+        feature = "pro"
+    )),
+    allow(dead_code, reason = "only generated models construct it")
 )]
 pub struct Protocols {
     /// Protocol 1.0.
@@ -303,10 +381,7 @@ pub struct Protocols {
 
 impl Protocols {
     /// Whether the table is for `protocol`.
-    #[allow(
-        dead_code,
-        reason = "built by X1's generated DATA consts; read by bus-1"
-    )]
+    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) const fn supports(self, protocol: ProtocolVersion) -> bool {
         match protocol {
             ProtocolVersion::P1 => self.p1,
@@ -374,7 +449,7 @@ impl ModeSource {
 /// (<https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>): `bounded`
 /// `[3]`, `unbounded` `[4, 5]`, `no_position` `[0, 1, 16]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code, reason = "built by X1's generated DATA consts")]
+#[allow(dead_code, reason = "built only from a table's `operating_modes`")]
 pub(crate) struct ModeValues {
     /// Values that give [`LimitMode::Bounded`] (position, joint mode).
     pub(crate) bounded: &'static [u8],
@@ -426,10 +501,7 @@ const fn holds(mut list: &[u8], value: u8) -> bool {
 /// The goal check follows the firmware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
-#[allow(
-    dead_code,
-    reason = "Unbounded and NoPosition are recorded by bus-1 Setup"
-)]
+#[allow(dead_code, reason = "used by bus-1")]
 pub(crate) enum LimitMode {
     /// Position (joint) mode: the goal must lie in the EEPROM limits read at
     /// Setup.
@@ -483,7 +555,7 @@ pub struct Cache {
     /// The actuator's ID. Never changes.
     id: Id,
     /// How goals are checked; `Bounded` until Setup records the mode.
-    #[allow(dead_code, reason = "read by check_goal, called by bus-1")]
+    #[allow(dead_code, reason = "used by bus-1")]
     mode: LimitMode,
     /// The EEPROM limits, or `None` until Setup records them.
     limits: Option<Limits>,
@@ -492,7 +564,17 @@ pub struct Cache {
 impl Cache {
     /// The cache of actuator `id`: limit mode [`LimitMode::Bounded`], limits
     /// unknown.
-    #[allow(dead_code, reason = "used by X1 / bus-1")]
+    #[cfg_attr(
+        not(any(
+            feature = "ax",
+            feature = "mx",
+            feature = "rx",
+            feature = "x-series",
+            feature = "y-series",
+            feature = "pro"
+        )),
+        allow(dead_code, reason = "only generated models construct it")
+    )]
     pub(crate) const fn new(id: Id) -> Self {
         Self {
             id,
@@ -502,13 +584,11 @@ impl Cache {
     }
 
     /// The actuator's ID.
-    #[allow(dead_code, reason = "used by X1 / bus-1")]
     pub(crate) const fn id(&self) -> Id {
         self.id
     }
 
     /// The limits read at Setup, or `None` before Setup read them.
-    #[allow(dead_code, reason = "used by X1 / bus-1")]
     pub(crate) const fn limits(&self) -> Option<Limits> {
         self.limits
     }
@@ -519,7 +599,7 @@ impl Cache {
     ///
     /// [`ValidationError::InvertedLimits`] if `min > max`; the recorded
     /// limits do not change.
-    #[allow(dead_code, reason = "used by X1 / bus-1")]
+    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) fn record_limits(&mut self, min: i32, max: i32) -> Result<Limits, ValidationError> {
         let limits = Limits::new(self.id, min, max)?;
         self.limits = Some(limits);
@@ -527,7 +607,7 @@ impl Cache {
     }
 
     /// Records the limit mode Setup found. The limits do not change.
-    #[allow(dead_code, reason = "used by X1 / bus-1")]
+    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) fn record_mode(&mut self, mode: LimitMode) {
         self.mode = mode;
     }
@@ -547,7 +627,7 @@ impl Cache {
     ///   them.
     /// - [`ValidationError::NotPositionMode`]: the mode ignores goal
     ///   positions, whether limits are known or not.
-    #[allow(dead_code, reason = "used by X1 / bus-1")]
+    #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) fn check_goal(&self, raw: i32) -> Result<i32, ValidationError> {
         match (self.mode, self.limits) {
             (LimitMode::Bounded, None) => Err(ValidationError::LimitsUnknown { id: self.id }),
@@ -577,7 +657,7 @@ mod tests {
 
     use super::*;
     use crate::protocol::ProtocolVersion;
-    use crate::register::Register;
+    use crate::register::{Access, Area, Register};
     use crate::units::{Limits, PositionScale};
 
     fn id(raw: u8) -> Id {
@@ -680,6 +760,21 @@ mod tests {
         assert_eq!(ModelNumber(12).max(number), number);
     }
 
+    /// The register at `addr`, `size` bytes wide, with its e-Manual access
+    /// and area.
+    const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {
+        Register {
+            addr,
+            size,
+            access,
+            area,
+        }
+    }
+
+    /// Operating Mode(11) of the X series, MX(2.0), PRO and RH-P12-RN, and
+    /// Control Mode(11) of the XL-320.
+    const MODE_11: Register = reg(11, 1, Access::RW, Area::Eeprom);
+
     /// XM430-W350 Operating Mode values (e-Manual, Operating Mode(11)).
     const X_MODES: ModeValues = ModeValues {
         bounded: &[3],
@@ -691,16 +786,16 @@ mod tests {
         name: "XM430-W350",
         model_number: 1020,
         protocols: Protocols { p1: true, p2: true },
-        torque_enable: Register::new(64, 1),
-        goal_position: Register::new(116, 4),
-        present_position: Register::new(132, 4),
+        torque_enable: reg(64, 1, Access::RW, Area::Ram),
+        goal_position: reg(116, 4, Access::RW, Area::Ram),
+        present_position: reg(132, 4, Access::R, Area::Ram),
         limits: LimitRegisters::MinMax {
-            min: Register::new(52, 4),
-            max: Register::new(48, 4),
+            min: reg(52, 4, Access::RW, Area::Eeprom),
+            max: reg(48, 4, Access::RW, Area::Eeprom),
         },
-        hardware_error: Some(Register::new(70, 1)),
+        hardware_error: Some(reg(70, 1, Access::R, Area::Ram)),
         mode: ModeSource::Register {
-            register: Register::new(11, 1),
+            register: MODE_11,
             values: X_MODES,
         },
         scale: PositionScale::new(2048, 0, 4095, -PI, PI),
@@ -713,12 +808,12 @@ mod tests {
             p1: true,
             p2: false,
         },
-        torque_enable: Register::new(24, 1),
-        goal_position: Register::new(30, 2),
-        present_position: Register::new(36, 2),
+        torque_enable: reg(24, 1, Access::RW, Area::Ram),
+        goal_position: reg(30, 2, Access::RW, Area::Ram),
+        present_position: reg(36, 2, Access::R, Area::Ram),
         limits: LimitRegisters::CwCcw {
-            cw: Register::new(6, 2),
-            ccw: Register::new(8, 2),
+            cw: reg(6, 2, Access::RW, Area::Eeprom),
+            ccw: reg(8, 2, Access::RW, Area::Eeprom),
         },
         hardware_error: None,
         mode: ModeSource::AngleLimits,
@@ -782,7 +877,7 @@ mod tests {
     fn limit_registers_share_names() {
         assert_eq!((AX12A.limits.min().addr, AX12A.limits.max().addr), (6, 8));
         assert_eq!((XM430.limits.min().addr, XM430.limits.max().addr), (52, 48));
-        assert_eq!(XM430.hardware_error, Some(Register::new(70, 1)));
+        assert_eq!(XM430.hardware_error, Some(reg(70, 1, Access::R, Area::Ram)));
         assert_eq!(AX12A.hardware_error, None);
         assert_eq!(XM430, XM430);
         assert_ne!(XM430, AX12A);
@@ -878,11 +973,11 @@ mod tests {
         #[test]
         fn value_5_differs_by_list() {
             let gripper = ModeSource::Register {
-                register: Register::new(11, 1),
+                register: MODE_11,
                 values: RH_P12_RN_MODES,
             };
             let x = ModeSource::Register {
-                register: Register::new(11, 1),
+                register: MODE_11,
                 values: X_MODES,
             };
             assert_eq!(gripper.limit_mode(5), Some(LimitMode::Bounded));
@@ -892,7 +987,7 @@ mod tests {
         #[test]
         fn control_mode_is_a_register_source() {
             let control_mode = ModeSource::Register {
-                register: Register::new(11, 1),
+                register: MODE_11,
                 values: XL320_MODES,
             };
             for value in 0..=255 {
@@ -908,7 +1003,7 @@ mod tests {
         #[test]
         fn empty_lists_give_no_mode() {
             let source = ModeSource::Register {
-                register: Register::new(11, 1),
+                register: MODE_11,
                 values: NO_MODES,
             };
             for value in 0..=255 {
@@ -929,7 +1024,7 @@ mod tests {
 
         #[test]
         fn register_to_read() {
-            let register = Register::new(11, 1);
+            let register = MODE_11;
             let source = ModeSource::Register {
                 register,
                 values: X_MODES,
@@ -1131,6 +1226,300 @@ mod tests {
                 cache.check_goal(3001),
                 Err(ValidationError::OutOfLimits { .. })
             ));
+        }
+    }
+
+    /// Tests over the generated models: every variant the lookup returns,
+    /// and one named model per family.
+    #[allow(
+        dead_code,
+        unused_macros,
+        reason = "helpers for the named models are unused when their families are off"
+    )]
+    mod generated {
+        use core::mem::discriminant;
+        use core::ops::RangeInclusive;
+
+        use std::vec::Vec;
+
+        use super::*;
+        use crate::models::ActuatorKind;
+        use crate::units::Position;
+
+        /// Every variant [`ActuatorKind::new`] returns for actuator `id`, once
+        /// each: every model number on both protocols, with every firmware
+        /// when the model's table depends on it.
+        fn every_variant(id: Id) -> Vec<ActuatorKind> {
+            let mut found: Vec<ActuatorKind> = Vec::new();
+            for protocol in [ProtocolVersion::P1, ProtocolVersion::P2] {
+                for number in 0..=u16::MAX {
+                    let model = ModelNumber(number);
+                    let firmwares = match ActuatorKind::firmware_register(protocol, model) {
+                        Some(_) => 0..=u8::MAX,
+                        None => 0..=0,
+                    };
+                    for firmware in firmwares {
+                        let Ok(kind) = ActuatorKind::new(protocol, model, firmware, id) else {
+                            continue;
+                        };
+                        if !found.iter().any(|k| discriminant(k) == discriminant(&kind)) {
+                            found.push(kind);
+                        }
+                    }
+                }
+            }
+            found
+        }
+
+        /// What every model answers before Setup, and what its table must
+        /// hold for the mode source.
+        fn check<A: Actuator>(a: &A, id: Id) {
+            let data = a.data();
+            let name = data.name;
+            assert_eq!(a.id(), id, "{name}");
+            assert_eq!(a.model_number(), data.model_number, "{name}");
+            assert_eq!(a.name(), name);
+            assert_eq!(a.position_scale(), data.scale, "{name}");
+            assert_eq!(a.position_limits_raw(), None, "{name}");
+            assert_eq!(a.position_limits(), None, "{name}");
+            match data.mode {
+                ModeSource::Register { register, values } => {
+                    assert_eq!(
+                        (register.size, register.access, register.area),
+                        (1, Access::RW, Area::Eeprom),
+                        "{name}"
+                    );
+                    let lists = [values.bounded, values.unbounded, values.no_position];
+                    for value in 0..=u8::MAX {
+                        let holding = lists.iter().filter(|list| list.contains(&value));
+                        assert!(holding.count() <= 1, "{name}: {value} is in two lists");
+                    }
+                }
+                ModeSource::AngleLimits => assert!(
+                    matches!(data.limits, LimitRegisters::CwCcw { .. }),
+                    "{name}: angle-limit mode without CW/CCW limits"
+                ),
+            }
+        }
+
+        #[test]
+        fn generic_check_passes_for_every_model() {
+            let variants = every_variant(id(7));
+            #[cfg(any(
+                feature = "ax",
+                feature = "mx",
+                feature = "rx",
+                feature = "x-series",
+                feature = "y-series",
+                feature = "pro"
+            ))]
+            assert!(!variants.is_empty());
+            for kind in &variants {
+                check(kind, id(7));
+            }
+        }
+
+        /// Scales whose tick is about one `f32` step of an angle near ±π
+        /// (Y series, from T1's `type_info`), as `(min_raw, max_raw)`: a tick
+        /// read as a [`Position`] can come back up to 3 ticks off. Every other
+        /// scale round-trips every tick exactly.
+        const COARSER_THAN_F32: [(i32, i32); 2] =
+            [(-13_369_344, 13_369_344), (-25_952_256, 25_952_256)];
+
+        #[test]
+        fn every_tick_of_every_model_round_trips() {
+            let mut scales: Vec<PositionScale> = Vec::new();
+            for kind in every_variant(id(1)) {
+                let scale = kind.position_scale();
+                if !scales.contains(&scale) {
+                    scales.push(scale);
+                }
+            }
+            for scale in scales {
+                let range = scale.raw_range();
+                let bound = (*range.start(), *range.end());
+                let allowed = if COARSER_THAN_F32.contains(&bound) {
+                    3
+                } else {
+                    0
+                };
+                for tick in range {
+                    let back = scale.to_raw(scale.to_position(tick));
+                    let off = back.map(|raw| (i64::from(raw) - i64::from(tick)).abs());
+                    assert!(
+                        off.is_ok_and(|off| off <= allowed),
+                        "{scale:?}: tick {tick} came back as {back:?}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn goal_register_per_model() {
+            #[cfg(feature = "x-series")]
+            {
+                let xm = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1020), 0, id(3));
+                let goal = xm.map(|xm| xm.data().goal_position);
+                assert_eq!(goal.map(|r| (r.addr, r.size)), Ok((116, 4)));
+            }
+            #[cfg(feature = "ax")]
+            {
+                let ax = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(12), 0, id(9));
+                let goal = ax.map(|ax| ax.data().goal_position);
+                assert_eq!(goal.map(|r| (r.addr, r.size)), Ok((30, 2)));
+            }
+        }
+
+        #[test]
+        fn limit_registers_share_names() {
+            fn min_max<D: Describe>(d: &D) -> (u16, u16) {
+                let limits = d.data().limits;
+                (limits.min().addr, limits.max().addr)
+            }
+            #[cfg(feature = "ax")]
+            assert_eq!(min_max(&crate::models::Ax12a::new(id(9))), (6, 8));
+            #[cfg(feature = "x-series")]
+            assert_eq!(min_max(&crate::models::Xm430W350::new(id(3))), (52, 48));
+        }
+
+        /// Records limits 1000..=3000 on `a`, then checks both getters in
+        /// every limit mode.
+        fn limits_follow_the_cache<A: Actuator>(a: &mut A) {
+            let scale = a.position_scale();
+            let raw: Option<RangeInclusive<i32>> = Some(1000..=3000);
+            let typed: Option<RangeInclusive<Position>> =
+                Some(scale.to_position(1000)..=scale.to_position(3000));
+            assert_eq!(a.cache_mut().record_limits(1000, 3000).map(|_| ()), Ok(()));
+            for mode in [
+                LimitMode::Bounded,
+                LimitMode::Unbounded,
+                LimitMode::NoPosition,
+            ] {
+                a.cache_mut().record_mode(mode);
+                assert_eq!(a.position_limits_raw(), raw, "{}", a.name());
+                assert_eq!(a.position_limits(), typed, "{}", a.name());
+            }
+        }
+
+        #[test]
+        fn limits_show_after_recording() {
+            for mut kind in every_variant(id(5)) {
+                limits_follow_the_cache(&mut kind);
+            }
+            #[cfg(feature = "x-series")]
+            limits_follow_the_cache(&mut crate::models::Xm430W350::new(id(5)));
+            #[cfg(feature = "ax")]
+            limits_follow_the_cache(&mut crate::models::Ax12a::new(id(5)));
+        }
+
+        /// A mode register at `addr` (1 byte, RW, EEPROM) with these lists.
+        fn mode_register(
+            addr: u16,
+            bounded: &'static [u8],
+            unbounded: &'static [u8],
+            no_position: &'static [u8],
+        ) -> ModeSource {
+            ModeSource::Register {
+                register: reg(addr, 1, Access::RW, Area::Eeprom),
+                values: ModeValues {
+                    bounded,
+                    unbounded,
+                    no_position,
+                },
+            }
+        }
+
+        fn mode_of<D: Describe>(d: &D) -> ModeSource {
+            d.data().mode
+        }
+
+        #[test]
+        fn mode_source_per_model() {
+            #[cfg(feature = "x-series")]
+            {
+                use crate::models::{Xl320, Xm430W350};
+                let xm = mode_register(11, &[3], &[4, 5], &[0, 1, 16]);
+                assert_eq!(mode_of(&Xm430W350::new(id(1))), xm);
+                assert_eq!(
+                    mode_of(&Xl320::new(id(1))),
+                    mode_register(11, &[2], &[], &[1])
+                );
+            }
+            #[cfg(feature = "mx")]
+            {
+                let mx = mode_register(11, &[3], &[4, 5], &[0, 1, 16]);
+                assert_eq!(mode_of(&crate::models::Mx64::new(id(1))), mx);
+            }
+            #[cfg(feature = "pro")]
+            {
+                use crate::models::{H54200S500Ra, RhP12Rn};
+                let h54 = mode_register(11, &[3], &[4], &[0, 1, 16]);
+                assert_eq!(mode_of(&H54200S500Ra::new(id(1))), h54);
+                assert_eq!(
+                    mode_of(&RhP12Rn::new(id(1))),
+                    mode_register(11, &[5], &[], &[0])
+                );
+            }
+            #[cfg(feature = "y-series")]
+            {
+                let ym = mode_register(33, &[3], &[], &[0, 1]);
+                assert_eq!(mode_of(&crate::models::Ym070210M001::new(id(1))), ym);
+            }
+            #[cfg(feature = "ax")]
+            assert_eq!(
+                mode_of(&crate::models::Ax12a::new(id(1))),
+                ModeSource::AngleLimits
+            );
+        }
+
+        /// Every [`Actuator`] answer of `kind` equals that of `inner`.
+        fn same_answers<A: Actuator>(kind: &ActuatorKind, inner: &A) {
+            assert_eq!(kind.id(), inner.id());
+            assert_eq!(kind.model_number(), inner.model_number());
+            assert_eq!(kind.name(), inner.name());
+            assert_eq!(kind.position_scale(), inner.position_scale());
+            assert_eq!(kind.position_limits_raw(), inner.position_limits_raw());
+            assert_eq!(kind.position_limits(), inner.position_limits());
+        }
+
+        /// Looks up `$number` on `$protocol`, expects variant `$variant`, and
+        /// compares the enum with the model inside it before and after
+        /// limits are recorded through the enum.
+        macro_rules! answers_like_inner {
+            ($variant:ident, $protocol:ident, $number:literal) => {{
+                let protocol = ProtocolVersion::$protocol;
+                let found = ActuatorKind::new(protocol, ModelNumber($number), 0, id(6));
+                let Ok(mut kind) = found else {
+                    panic!("{} not found", stringify!($variant));
+                };
+                let ActuatorKind::$variant(inner) = &kind else {
+                    panic!("{} not looked up", stringify!($variant));
+                };
+                same_answers(&kind, inner);
+                assert_eq!(
+                    kind.cache_mut().record_limits(-100, 100).map(|_| ()),
+                    Ok(())
+                );
+                let ActuatorKind::$variant(inner) = &kind else {
+                    panic!("{} changed variant", stringify!($variant));
+                };
+                same_answers(&kind, inner);
+                assert_eq!(inner.position_limits_raw(), Some(-100..=100));
+            }};
+        }
+
+        #[test]
+        fn enum_answers_like_the_inner_model() {
+            #[cfg(feature = "x-series")]
+            answers_like_inner!(Xm430W350, P2, 1020);
+            #[cfg(feature = "ax")]
+            answers_like_inner!(Ax12a, P1, 12);
+            #[cfg(feature = "mx")]
+            answers_like_inner!(Mx64, P2, 311);
+            #[cfg(feature = "pro")]
+            answers_like_inner!(H54200S500Ra, P2, 54025);
+            #[cfg(feature = "y-series")]
+            answers_like_inner!(Ym070210M001, P2, 4000);
         }
     }
 }

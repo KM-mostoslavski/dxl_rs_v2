@@ -4,9 +4,16 @@ use crate::error::ValidationError;
 
 /// Whether a register can be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "RW and Ram are built by X1's generated reg() calls"
+#[cfg_attr(
+    not(any(
+        feature = "ax",
+        feature = "mx",
+        feature = "rx",
+        feature = "x-series",
+        feature = "y-series",
+        feature = "pro"
+    )),
+    allow(dead_code, reason = "only generated models construct it")
 )]
 pub enum Access {
     /// Read only.
@@ -17,9 +24,16 @@ pub enum Access {
 
 /// Which memory area of the control table a register sits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "RW, Ram and Hybrid are built by X1's generated reg() calls"
+#[cfg_attr(
+    not(any(
+        feature = "ax",
+        feature = "mx",
+        feature = "rx",
+        feature = "x-series",
+        feature = "y-series",
+        feature = "pro"
+    )),
+    allow(dead_code, reason = "only generated models construct it")
 )]
 pub enum Area {
     /// Kept across power cycles; writable only with torque off.
@@ -28,6 +42,10 @@ pub enum Area {
     Ram,
     /// Kept across power cycles and writable with torque on (Y series, e-Manual
     /// <https://emanual.robotis.com/docs/en/dxl/y/ym070-210-m001-rh/>).
+    #[cfg_attr(
+        not(feature = "y-series"),
+        allow(dead_code, reason = "built only by the Y-series generated models")
+    )]
     Hybrid,
 }
 
@@ -49,25 +67,6 @@ pub struct Register {
 }
 
 impl Register {
-    /// Register at byte `addr`, `size` bytes wide, with placeholder access
-    /// ([`Access::R`]) and area ([`Area::Eeprom`]).
-    ///
-    /// Kept only so today's generated code builds; generated code builds
-    /// registers with its own `reg()` helper instead.
-    #[doc(hidden)]
-    #[allow(
-        dead_code,
-        reason = "unused once X1 regenerates with reg(); removed in core-2"
-    )]
-    pub(crate) const fn new(addr: u16, size: u8) -> Self {
-        Self {
-            addr,
-            size,
-            access: Access::R,
-            area: Area::Eeprom,
-        }
-    }
-
     /// Writes `raw` little-endian into `out[..size]` and returns those
     /// bytes. A value is never truncated.
     ///
@@ -137,13 +136,75 @@ mod tests {
 
     use super::*;
 
+    /// XM430-W350 Goal Position(116) (e-Manual).
+    const GOAL_POSITION: Register = Register {
+        addr: 116,
+        size: 4,
+        access: Access::RW,
+        area: Area::Ram,
+    };
+
+    /// XM430-W350 Torque Enable(64).
+    const TORQUE_ENABLE: Register = Register {
+        addr: 64,
+        size: 1,
+        access: Access::RW,
+        area: Area::Ram,
+    };
+
+    /// XM430-W350 Present Position(132).
+    const PRESENT_POSITION: Register = Register {
+        addr: 132,
+        size: 4,
+        access: Access::R,
+        area: Area::Ram,
+    };
+
+    /// XM430-W350 Present Temperature(146).
+    const PRESENT_TEMPERATURE: Register = Register {
+        addr: 146,
+        size: 1,
+        access: Access::R,
+        area: Area::Ram,
+    };
+
+    /// XM430-W350 PWM Limit(36).
+    const PWM_LIMIT: Register = Register {
+        addr: 36,
+        size: 2,
+        access: Access::RW,
+        area: Area::Eeprom,
+    };
+
+    /// AX-12A Goal Position(30).
+    const AX_GOAL_POSITION: Register = Register {
+        addr: 30,
+        size: 2,
+        access: Access::RW,
+        area: Area::Ram,
+    };
+
+    /// A register `size` bytes wide; `encode` and `decode` read only the size.
+    const fn sized(size: u8) -> Register {
+        Register {
+            addr: 0,
+            size,
+            access: Access::RW,
+            area: Area::Ram,
+        }
+    }
+
     #[test]
-    fn shim_keeps_address_and_size() {
-        let reg = Register::new(116, 4);
-        assert_eq!(reg.addr, 116);
-        assert_eq!(reg.size, 4);
-        assert_eq!(reg.access, Access::R);
-        assert_eq!(reg.area, Area::Eeprom);
+    fn literal_keeps_every_field() {
+        let Register {
+            addr,
+            size,
+            access,
+            area,
+        } = GOAL_POSITION;
+        assert_eq!((addr, size, access, area), (116, 4, Access::RW, Area::Ram));
+        assert_ne!(GOAL_POSITION, PRESENT_POSITION);
+        assert_eq!(sized(4).size, 4);
     }
 
     #[test]
@@ -164,7 +225,7 @@ mod tests {
     fn encodes_2500_in_four_bytes() {
         let mut out = [0; 4];
         assert_eq!(
-            Register::new(116, 4).encode(2500, &mut out),
+            GOAL_POSITION.encode(2500, &mut out),
             Ok(&[0xC4, 0x09, 0x00, 0x00][..])
         );
     }
@@ -172,28 +233,16 @@ mod tests {
     #[test]
     fn refuses_values_that_do_not_fit() {
         let mut out = [0; 4];
-        assert_eq!(
-            Register::new(116, 2).encode(70_000, &mut out),
-            does_not_fit(70_000, 2)
-        );
+        assert_eq!(sized(2).encode(70_000, &mut out), does_not_fit(70_000, 2));
         for raw in [-1, 256, i32::MIN, i32::MAX] {
-            assert_eq!(
-                Register::new(64, 1).encode(raw, &mut out),
-                does_not_fit(raw, 1)
-            );
+            assert_eq!(TORQUE_ENABLE.encode(raw, &mut out), does_not_fit(raw, 1));
         }
         for raw in [-1, 65_536] {
-            assert_eq!(
-                Register::new(30, 2).encode(raw, &mut out),
-                does_not_fit(raw, 2)
-            );
+            assert_eq!(AX_GOAL_POSITION.encode(raw, &mut out), does_not_fit(raw, 2));
         }
         for size in [0, 3, 5, 8] {
             for raw in [0, 1, -1] {
-                assert_eq!(
-                    Register::new(0, size).encode(raw, &mut out),
-                    does_not_fit(raw, size)
-                );
+                assert_eq!(sized(size).encode(raw, &mut out), does_not_fit(raw, size));
             }
         }
     }
@@ -203,7 +252,7 @@ mod tests {
         let mut out = [0; 4];
         for size in [1, 2, 4] {
             assert_eq!(
-                Register::new(0, size).encode(1, &mut out).map(<[u8]>::len),
+                sized(size).encode(1, &mut out).map(<[u8]>::len),
                 Ok(usize::from(size))
             );
         }
@@ -216,35 +265,29 @@ mod tests {
             (4, i32::MAX, &[0xFF, 0xFF, 0xFF, 0x7F]),
         ];
         for (size, raw, bytes) in cases {
-            assert_eq!(Register::new(0, size).encode(raw, &mut out), Ok(bytes));
+            assert_eq!(sized(size).encode(raw, &mut out), Ok(bytes));
         }
     }
 
     #[test]
     fn decode_sign_rules() {
-        assert_eq!(Register::new(132, 2).decode(&[0xFF, 0xFF]), Ok(65_535));
-        assert_eq!(
-            Register::new(132, 4).decode(&[0xFF, 0xFF, 0xFF, 0xFF]),
-            Ok(-1)
-        );
-        assert_eq!(Register::new(146, 1).decode(&[0x80]), Ok(128));
-        assert_eq!(
-            Register::new(132, 4).decode(&[0xC4, 0x09, 0x00, 0x00]),
-            Ok(2500)
-        );
+        assert_eq!(sized(2).decode(&[0xFF, 0xFF]), Ok(65_535));
+        assert_eq!(PRESENT_POSITION.decode(&[0xFF, 0xFF, 0xFF, 0xFF]), Ok(-1));
+        assert_eq!(PRESENT_TEMPERATURE.decode(&[0x80]), Ok(128));
+        assert_eq!(PRESENT_POSITION.decode(&[0xC4, 0x09, 0x00, 0x00]), Ok(2500));
     }
 
     #[test]
     fn decode_checks_length() {
         assert_eq!(
-            Register::new(132, 4).decode(&[0; 2]),
+            PRESENT_POSITION.decode(&[0; 2]),
             Err(ValidationError::DataLength {
                 expected: 4,
                 got: 2
             })
         );
         assert_eq!(
-            Register::new(36, 2).decode(&[0; 3]),
+            PWM_LIMIT.decode(&[0; 3]),
             Err(ValidationError::DataLength {
                 expected: 2,
                 got: 3
@@ -255,18 +298,18 @@ mod tests {
     #[test]
     fn decode_refuses_other_sizes() {
         assert_eq!(
-            Register::new(0, 3).decode(&[0x01, 0x02, 0x03]),
+            sized(3).decode(&[0x01, 0x02, 0x03]),
             Err(ValidationError::DoesNotFit {
                 raw: 0x03_0201,
                 size: 3
             })
         );
         assert!(matches!(
-            Register::new(0, 8).decode(&[0xFF; 8]),
+            sized(8).decode(&[0xFF; 8]),
             Err(ValidationError::DoesNotFit { size: 8, .. })
         ));
         assert!(matches!(
-            Register::new(0, 0).decode(&[]),
+            sized(0).decode(&[]),
             Err(ValidationError::DoesNotFit { raw: 0, size: 0 })
         ));
     }
@@ -277,7 +320,7 @@ mod tests {
             raw in any::<i32>(),
             size in prop::sample::select(std::vec![1u8, 2, 4]),
         ) {
-            let register = Register::new(0, size);
+            let register = sized(size);
             let mut out = [0; 4];
             if let Ok(bytes) = register.encode(raw, &mut out) {
                 prop_assert_eq!(register.decode(bytes), Ok(raw));
@@ -289,7 +332,7 @@ mod tests {
             bytes in prop::collection::vec(any::<u8>(), 0..12),
             size in any::<u8>(),
         ) {
-            let _ = Register::new(0, size).decode(&bytes);
+            let _ = sized(size).decode(&bytes);
         }
     }
 }
