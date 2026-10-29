@@ -14,21 +14,18 @@ mod actuator;
 mod error;
 mod id;
 pub mod models;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "exchanges are called by the bus module")
-)]
 mod protocol;
 mod register;
 mod transport;
+mod units;
 
-pub use actuator::Actuator;
+pub use actuator::{Actuator, ModelNumber, TorqueState};
 /// The `embedded-io` crate this one builds on, so users can implement and
 /// call [`Transport`] without a version-matched dependency of their own.
 pub use embedded_io;
 pub use error::{
-    Error, P1Flag, P1Flags, P2Code, ProtocolError, StatusError, StatusReport, TransportError,
-    ValidationError,
+    Error, P1Flag, P1Flags, P2Code, ProtocolError, SetupError, StatusError, StatusReport,
+    TransportError, ValidationError,
 };
 pub use id::Id;
 pub use models::ActuatorKind;
@@ -44,3 +41,4 @@ pub use transport::SerialTransport;
 pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
+pub use units::{Position, PositionScale};
