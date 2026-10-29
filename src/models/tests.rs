@@ -2,15 +2,2225 @@
 //! Tests of the generated models and lookup, one or more per model number and
 //! model type of `control_tables/`.
 
+use super::ActuatorKind;
+use crate::actuator::ModelNumber;
+use crate::error::SetupError;
+use crate::id::Id;
+use crate::protocol::ProtocolVersion;
+
+fn id() -> Id {
+    Id::new(1).unwrap()
+}
+
+#[test]
+fn unknown_model_number() {
+    let id = id();
+    for protocol in [ProtocolVersion::P1, ProtocolVersion::P2] {
+        let found = ActuatorKind::new(protocol, ModelNumber(65535), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: 65535,
+            protocol,
+            feature: None,
+        };
+        assert_eq!(found, Err(error));
+        assert_eq!(
+            ActuatorKind::firmware_register(protocol, ModelNumber(65535)),
+            None
+        );
+    }
+}
+
+#[test]
+fn no_tables_on_this_protocol() {
+    let id = id();
+    for (protocol, number) in [
+        (ProtocolVersion::P2, 12),
+        (ProtocolVersion::P2, 18),
+        (ProtocolVersion::P2, 28),
+        (ProtocolVersion::P2, 300),
+        (ProtocolVersion::P1, 350),
+        (ProtocolVersion::P1, 1190),
+        (ProtocolVersion::P1, 1200),
+        (ProtocolVersion::P1, 1210),
+        (ProtocolVersion::P1, 1220),
+        (ProtocolVersion::P1, 1230),
+        (ProtocolVersion::P1, 1240),
+        (ProtocolVersion::P1, 2000),
+        (ProtocolVersion::P1, 2010),
+        (ProtocolVersion::P1, 2020),
+        (ProtocolVersion::P1, 2100),
+        (ProtocolVersion::P1, 2110),
+        (ProtocolVersion::P1, 2120),
+        (ProtocolVersion::P1, 4000),
+        (ProtocolVersion::P1, 4010),
+        (ProtocolVersion::P1, 4020),
+        (ProtocolVersion::P1, 4030),
+        (ProtocolVersion::P1, 4040),
+        (ProtocolVersion::P1, 4050),
+        (ProtocolVersion::P1, 4120),
+        (ProtocolVersion::P1, 4130),
+        (ProtocolVersion::P1, 4140),
+        (ProtocolVersion::P1, 4150),
+        (ProtocolVersion::P1, 4160),
+        (ProtocolVersion::P1, 4170),
+        (ProtocolVersion::P1, 35074),
+        (ProtocolVersion::P1, 43289),
+        (ProtocolVersion::P1, 46097),
+        (ProtocolVersion::P1, 46353),
+        (ProtocolVersion::P1, 51201),
+        (ProtocolVersion::P1, 53769),
+        (ProtocolVersion::P1, 54025),
+    ] {
+        let found = ActuatorKind::new(protocol, ModelNumber(number), 0, id);
+        let error = SetupError::UnsupportedModel {
+            id,
+            model_number: number,
+            protocol,
+            feature: None,
+        };
+        assert_eq!(found, Err(error));
+    }
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn p1_12_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ax12a;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ax12a(Ax12a::new(id))),
+        (255, ActuatorKind::Ax12a(Ax12a::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(12), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(12)),
+        None
+    );
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn p1_18_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ax18a;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ax18a(Ax18a::new(id))),
+        (255, ActuatorKind::Ax18a(Ax18a::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(18), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(18)),
+        None
+    );
+}
+
+#[cfg(feature = "rx")]
+#[test]
+fn p1_28_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Rx28;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Rx28(Rx28::new(id))),
+        (255, ActuatorKind::Rx28(Rx28::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(28), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(28)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p1_30_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx28;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx28(Mx28::new(id))),
+        (255, ActuatorKind::Mx28(Mx28::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(30), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(30)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p2_30_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx28;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx28(Mx28::new(id))),
+        (255, ActuatorKind::Mx28(Mx28::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(30), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(30)),
+        None
+    );
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn p1_300_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ax12w;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ax12w(Ax12w::new(id))),
+        (255, ActuatorKind::Ax12w(Ax12w::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(300), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(300)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p1_311_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx64;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx64(Mx64::new(id))),
+        (255, ActuatorKind::Mx64(Mx64::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(311), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(311)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p2_311_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx64;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx64(Mx64::new(id))),
+        (255, ActuatorKind::Mx64(Mx64::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(311), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(311)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p1_321_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx106;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx106(Mx106::new(id))),
+        (255, ActuatorKind::Mx106(Mx106::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(321), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(321)),
+        None
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn p2_321_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Mx106;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Mx106(Mx106::new(id))),
+        (255, ActuatorKind::Mx106(Mx106::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(321), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(321)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_350_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xl320;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xl320(Xl320::new(id))),
+        (255, ActuatorKind::Xl320(Xl320::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(350), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(350)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1000_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430W350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430W350(Xh430W350::new(id))),
+        (255, ActuatorKind::Xh430W350(Xh430W350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1000), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1000)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1000_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430W350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430W350(Xh430W350::new(id))),
+        (255, ActuatorKind::Xh430W350(Xh430W350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1000), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1000)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1001_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd430T350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd430T350(Xd430T350::new(id))),
+        (255, ActuatorKind::Xd430T350(Xd430T350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1001), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1001)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1001_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd430T350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd430T350(Xd430T350::new(id))),
+        (255, ActuatorKind::Xd430T350(Xd430T350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1001), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1001)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1010_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430W210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430W210(Xh430W210::new(id))),
+        (255, ActuatorKind::Xh430W210(Xh430W210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1010), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1010)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1010_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430W210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430W210(Xh430W210::new(id))),
+        (255, ActuatorKind::Xh430W210(Xh430W210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1010), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1010)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1011_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd430T210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd430T210(Xd430T210::new(id))),
+        (255, ActuatorKind::Xd430T210(Xd430T210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1011), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1011)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1011_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd430T210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd430T210(Xd430T210::new(id))),
+        (255, ActuatorKind::Xd430T210(Xd430T210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1011), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1011)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1020_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm430W350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm430W350(Xm430W350::new(id))),
+        (255, ActuatorKind::Xm430W350(Xm430W350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1020), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1020)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1020_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm430W350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm430W350(Xm430W350::new(id))),
+        (255, ActuatorKind::Xm430W350(Xm430W350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1020), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1020)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1030_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm430W210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm430W210(Xm430W210::new(id))),
+        (255, ActuatorKind::Xm430W210(Xm430W210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1030), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1030)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1030_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm430W210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm430W210(Xm430W210::new(id))),
+        (255, ActuatorKind::Xm430W210(Xm430W210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1030), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1030)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1040_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430V350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430V350(Xh430V350::new(id))),
+        (255, ActuatorKind::Xh430V350(Xh430V350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1040), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1040)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1040_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430V350;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430V350(Xh430V350::new(id))),
+        (255, ActuatorKind::Xh430V350(Xh430V350::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1040), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1040)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1050_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430V210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430V210(Xh430V210::new(id))),
+        (255, ActuatorKind::Xh430V210(Xh430V210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1050), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1050)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1050_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh430V210;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh430V210(Xh430V210::new(id))),
+        (255, ActuatorKind::Xh430V210(Xh430V210::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1050), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1050)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1060_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xl430W250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xl430W250(Xl430W250::new(id))),
+        (255, ActuatorKind::Xl430W250(Xl430W250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1060), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1060)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1060_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xl430W250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xl430W250(Xl430W250::new(id))),
+        (255, ActuatorKind::Xl430W250(Xl430W250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1060), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1060)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1070_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xc430W150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc430W150(Xc430W150::new(id))),
+        (255, ActuatorKind::Xc430W150(Xc430W150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1070), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1070)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1070_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xc430W150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc430W150(Xc430W150::new(id))),
+        (255, ActuatorKind::Xc430W150(Xc430W150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1070), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1070)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1080_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xc430W240;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc430W240(Xc430W240::new(id))),
+        (255, ActuatorKind::Xc430W240(Xc430W240::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1080), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1080)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1080_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xc430W240;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc430W240(Xc430W240::new(id))),
+        (255, ActuatorKind::Xc430W240(Xc430W240::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1080), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1080)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1090_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::TwoXl430W250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::TwoXl430W250(TwoXl430W250::new(id))),
+        (255, ActuatorKind::TwoXl430W250(TwoXl430W250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1090), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1090)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1090_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::TwoXl430W250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::TwoXl430W250(TwoXl430W250::new(id))),
+        (255, ActuatorKind::TwoXl430W250(TwoXl430W250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1090), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1090)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1100_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540W270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540W270(Xh540W270::new(id))),
+        (255, ActuatorKind::Xh540W270(Xh540W270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1100), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1100)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1100_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540W270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540W270(Xh540W270::new(id))),
+        (255, ActuatorKind::Xh540W270(Xh540W270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1100), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1100)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1101_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd540T270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd540T270(Xd540T270::new(id))),
+        (255, ActuatorKind::Xd540T270(Xd540T270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1101), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1101)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1101_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd540T270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd540T270(Xd540T270::new(id))),
+        (255, ActuatorKind::Xd540T270(Xd540T270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1101), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1101)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1110_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540W150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540W150(Xh540W150::new(id))),
+        (255, ActuatorKind::Xh540W150(Xh540W150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1110), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1110)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1110_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540W150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540W150(Xh540W150::new(id))),
+        (255, ActuatorKind::Xh540W150(Xh540W150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1110), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1110)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1111_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd540T150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd540T150(Xd540T150::new(id))),
+        (255, ActuatorKind::Xd540T150(Xd540T150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1111), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1111)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1111_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xd540T150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xd540T150(Xd540T150::new(id))),
+        (255, ActuatorKind::Xd540T150(Xd540T150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1111), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1111)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1120_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm540W270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm540W270(Xm540W270::new(id))),
+        (255, ActuatorKind::Xm540W270(Xm540W270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1120), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1120)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1120_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm540W270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm540W270(Xm540W270::new(id))),
+        (255, ActuatorKind::Xm540W270(Xm540W270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1120), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1120)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1130_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm540W150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm540W150(Xm540W150::new(id))),
+        (255, ActuatorKind::Xm540W150(Xm540W150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1130), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1130)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1130_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xm540W150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xm540W150(Xm540W150::new(id))),
+        (255, ActuatorKind::Xm540W150(Xm540W150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1130), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1130)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1140_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540V270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540V270(Xh540V270::new(id))),
+        (255, ActuatorKind::Xh540V270(Xh540V270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1140), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1140)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1140_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540V270;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540V270(Xh540V270::new(id))),
+        (255, ActuatorKind::Xh540V270(Xh540V270::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1140), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1140)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1150_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540V150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540V150(Xh540V150::new(id))),
+        (255, ActuatorKind::Xh540V150(Xh540V150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1150), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1150)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1150_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xh540V150;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xh540V150(Xh540V150::new(id))),
+        (255, ActuatorKind::Xh540V150(Xh540V150::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1150), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1150)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1160_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::TwoXc430W250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::TwoXc430W250(TwoXc430W250::new(id))),
+        (255, ActuatorKind::TwoXc430W250(TwoXc430W250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1160), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1160)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1160_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::TwoXc430W250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::TwoXc430W250(TwoXc430W250::new(id))),
+        (255, ActuatorKind::TwoXc430W250(TwoXc430W250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1160), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1160)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1170_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw540T260;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw540T260(Xw540T260::new(id))),
+        (255, ActuatorKind::Xw540T260(Xw540T260::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1170), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1170)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1170_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw540T260;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw540T260(Xw540T260::new(id))),
+        (255, ActuatorKind::Xw540T260(Xw540T260::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1170), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1170)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1180_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw540T140;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw540T140(Xw540T140::new(id))),
+        (255, ActuatorKind::Xw540T140(Xw540T140::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1180), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1180)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1180_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw540T140;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw540T140(Xw540T140::new(id))),
+        (255, ActuatorKind::Xw540T140(Xw540T140::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1180), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1180)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1190_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::{Xl330M077, Xl330M077Fw52};
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xl330M077Fw52(Xl330M077Fw52::new(id))),
+        (52, ActuatorKind::Xl330M077Fw52(Xl330M077Fw52::new(id))),
+        (53, ActuatorKind::Xl330M077(Xl330M077::new(id))),
+        (255, ActuatorKind::Xl330M077(Xl330M077::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1190), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1190)),
+        Some(Xl330M077Fw52::FIRMWARE_VERSION)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1200_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::{Xl330M288, Xl330M288Fw52};
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xl330M288Fw52(Xl330M288Fw52::new(id))),
+        (52, ActuatorKind::Xl330M288Fw52(Xl330M288Fw52::new(id))),
+        (53, ActuatorKind::Xl330M288(Xl330M288::new(id))),
+        (255, ActuatorKind::Xl330M288(Xl330M288::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1200), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1200)),
+        Some(Xl330M288Fw52::FIRMWARE_VERSION)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1210_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::{Xc330T181, Xc330T181Fw52};
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc330T181Fw52(Xc330T181Fw52::new(id))),
+        (52, ActuatorKind::Xc330T181Fw52(Xc330T181Fw52::new(id))),
+        (53, ActuatorKind::Xc330T181(Xc330T181::new(id))),
+        (255, ActuatorKind::Xc330T181(Xc330T181::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1210), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1210)),
+        Some(Xc330T181Fw52::FIRMWARE_VERSION)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1220_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::{Xc330T288, Xc330T288Fw52};
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc330T288Fw52(Xc330T288Fw52::new(id))),
+        (52, ActuatorKind::Xc330T288Fw52(Xc330T288Fw52::new(id))),
+        (53, ActuatorKind::Xc330T288(Xc330T288::new(id))),
+        (255, ActuatorKind::Xc330T288(Xc330T288::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1220), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1220)),
+        Some(Xc330T288Fw52::FIRMWARE_VERSION)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1230_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::{Xc330M181, Xc330M181Fw52};
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc330M181Fw52(Xc330M181Fw52::new(id))),
+        (52, ActuatorKind::Xc330M181Fw52(Xc330M181Fw52::new(id))),
+        (53, ActuatorKind::Xc330M181(Xc330M181::new(id))),
+        (255, ActuatorKind::Xc330M181(Xc330M181::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1230), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1230)),
+        Some(Xc330M181Fw52::FIRMWARE_VERSION)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1240_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::{Xc330M288, Xc330M288Fw52};
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xc330M288Fw52(Xc330M288Fw52::new(id))),
+        (52, ActuatorKind::Xc330M288Fw52(Xc330M288Fw52::new(id))),
+        (53, ActuatorKind::Xc330M288(Xc330M288::new(id))),
+        (255, ActuatorKind::Xc330M288(Xc330M288::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1240), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1240)),
+        Some(Xc330M288Fw52::FIRMWARE_VERSION)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1270_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw430T333;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw430T333(Xw430T333::new(id))),
+        (255, ActuatorKind::Xw430T333(Xw430T333::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1270), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1270)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1270_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw430T333;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw430T333(Xw430T333::new(id))),
+        (255, ActuatorKind::Xw430T333(Xw430T333::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1270), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1270)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p1_1310_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw540H260;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw540H260(Xw540H260::new(id))),
+        (255, ActuatorKind::Xw540H260(Xw540H260::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P1));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1310), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(1310)),
+        None
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_1310_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Xw540H260;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Xw540H260(Xw540H260::new(id))),
+        (255, ActuatorKind::Xw540H260(Xw540H260::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1310), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(1310)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_2000_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ph42020S300;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ph42020S300(Ph42020S300::new(id))),
+        (255, ActuatorKind::Ph42020S300(Ph42020S300::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2000), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(2000)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_2010_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ph54100S500;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ph54100S500(Ph54100S500::new(id))),
+        (255, ActuatorKind::Ph54100S500(Ph54100S500::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2010), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(2010)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_2020_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ph54200S500;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ph54200S500(Ph54200S500::new(id))),
+        (255, ActuatorKind::Ph54200S500(Ph54200S500::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2020), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(2020)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_2100_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Pm42010S260;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Pm42010S260(Pm42010S260::new(id))),
+        (255, ActuatorKind::Pm42010S260(Pm42010S260::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2100), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(2100)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_2110_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Pm54040S250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Pm54040S250(Pm54040S250::new(id))),
+        (255, ActuatorKind::Pm54040S250(Pm54040S250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2110), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(2110)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_2120_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Pm54060S250;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Pm54060S250(Pm54060S250::new(id))),
+        (255, ActuatorKind::Pm54060S250(Pm54060S250::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2120), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(2120)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4000_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym070210M001;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym070210M001(Ym070210M001::new(id))),
+        (255, ActuatorKind::Ym070210M001(Ym070210M001::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4000), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4000)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4010_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym070210B001;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym070210B001(Ym070210B001::new(id))),
+        (255, ActuatorKind::Ym070210B001(Ym070210B001::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4010), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4010)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4020_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym070210R051;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym070210R051(Ym070210R051::new(id))),
+        (255, ActuatorKind::Ym070210R051(Ym070210R051::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4020), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4020)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4030_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym070210R099;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym070210R099(Ym070210R099::new(id))),
+        (255, ActuatorKind::Ym070210R099(Ym070210R099::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4030), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4030)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4040_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym070210A051;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym070210A051(Ym070210A051::new(id))),
+        (255, ActuatorKind::Ym070210A051(Ym070210A051::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4040), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4040)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4050_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym070210A099;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym070210A099(Ym070210A099::new(id))),
+        (255, ActuatorKind::Ym070210A099(Ym070210A099::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4050), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4050)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4120_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym080230M001;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym080230M001(Ym080230M001::new(id))),
+        (255, ActuatorKind::Ym080230M001(Ym080230M001::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4120), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4120)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4130_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym080230B001;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym080230B001(Ym080230B001::new(id))),
+        (255, ActuatorKind::Ym080230B001(Ym080230B001::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4130), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4130)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4140_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym080230R051;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym080230R051(Ym080230R051::new(id))),
+        (255, ActuatorKind::Ym080230R051(Ym080230R051::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4140), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4140)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4150_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym080230R099;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym080230R099(Ym080230R099::new(id))),
+        (255, ActuatorKind::Ym080230R099(Ym080230R099::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4150), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4150)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4160_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym080230A051;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym080230A051(Ym080230A051::new(id))),
+        (255, ActuatorKind::Ym080230A051(Ym080230A051::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4160), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4160)),
+        None
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn p2_4170_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::Ym080230A099;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::Ym080230A099(Ym080230A099::new(id))),
+        (255, ActuatorKind::Ym080230A099(Ym080230A099::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4170), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(4170)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_35074_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::RhP12Rn;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::RhP12Rn(RhP12Rn::new(id))),
+        (255, ActuatorKind::RhP12Rn(RhP12Rn::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(35074), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(35074)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_43289_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::M4210S260Ra;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::M4210S260Ra(M4210S260Ra::new(id))),
+        (255, ActuatorKind::M4210S260Ra(M4210S260Ra::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(43289), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(43289)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_46097_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::M5440S250Ra;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::M5440S250Ra(M5440S250Ra::new(id))),
+        (255, ActuatorKind::M5440S250Ra(M5440S250Ra::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(46097), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(46097)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_46353_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::M5460S250Ra;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::M5460S250Ra(M5460S250Ra::new(id))),
+        (255, ActuatorKind::M5460S250Ra(M5460S250Ra::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(46353), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(46353)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_51201_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::H4220S300Ra;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::H4220S300Ra(H4220S300Ra::new(id))),
+        (255, ActuatorKind::H4220S300Ra(H4220S300Ra::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(51201), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(51201)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_53769_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::H54100S500Ra;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::H54100S500Ra(H54100S500Ra::new(id))),
+        (255, ActuatorKind::H54100S500Ra(H54100S500Ra::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(53769), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(53769)),
+        None
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn p2_54025_lookup() {
+    use crate::actuator::Describe;
+    use crate::models::H54200S500Ra;
+
+    let id = id();
+    for (firmware, expected) in [
+        (0, ActuatorKind::H54200S500Ra(H54200S500Ra::new(id))),
+        (255, ActuatorKind::H54200S500Ra(H54200S500Ra::new(id))),
+    ] {
+        assert!(expected.data().protocols.supports(ProtocolVersion::P2));
+        assert_eq!(
+            ActuatorKind::new(ProtocolVersion::P2, ModelNumber(54025), firmware, id),
+            Ok(expected)
+        );
+    }
+    assert_eq!(
+        ActuatorKind::firmware_register(ProtocolVersion::P2, ModelNumber(54025)),
+        None
+    );
+}
+
 #[cfg(feature = "ax")]
 #[test]
 fn ax_12a_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ax12a;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ax12a(Ax12a::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ax12a(Ax12a::new(id));
     assert_eq!(kind.data(), &Ax12a::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ax12a::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -28,9 +2238,10 @@ fn ax_18a_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ax18a;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ax18a(Ax18a::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ax18a(Ax18a::new(id));
     assert_eq!(kind.data(), &Ax18a::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ax18a::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -48,9 +2259,10 @@ fn rx_28_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Rx28;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Rx28(Rx28::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Rx28(Rx28::new(id));
     assert_eq!(kind.data(), &Rx28::DATA);
+    assert_eq!(super::MODEL_NUMBER, Rx28::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -68,9 +2280,10 @@ fn mx_28_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Mx28;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Mx28(Mx28::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Mx28(Mx28::new(id));
     assert_eq!(kind.data(), &Mx28::DATA);
+    assert_eq!(super::MODEL_NUMBER, Mx28::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -88,9 +2301,10 @@ fn ax_12w_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ax12w;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ax12w(Ax12w::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ax12w(Ax12w::new(id));
     assert_eq!(kind.data(), &Ax12w::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ax12w::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -108,9 +2322,10 @@ fn mx_64_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Mx64;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Mx64(Mx64::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Mx64(Mx64::new(id));
     assert_eq!(kind.data(), &Mx64::DATA);
+    assert_eq!(super::MODEL_NUMBER, Mx64::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -128,9 +2343,10 @@ fn mx_106_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Mx106;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Mx106(Mx106::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Mx106(Mx106::new(id));
     assert_eq!(kind.data(), &Mx106::DATA);
+    assert_eq!(super::MODEL_NUMBER, Mx106::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -148,9 +2364,10 @@ fn xl320_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xl320;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xl320(Xl320::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xl320(Xl320::new(id));
     assert_eq!(kind.data(), &Xl320::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xl320::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -168,9 +2385,10 @@ fn xh430_w350_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh430W350;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh430W350(Xh430W350::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh430W350(Xh430W350::new(id));
     assert_eq!(kind.data(), &Xh430W350::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh430W350::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -188,9 +2406,10 @@ fn xd430_t350_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xd430T350;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xd430T350(Xd430T350::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xd430T350(Xd430T350::new(id));
     assert_eq!(kind.data(), &Xd430T350::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xd430T350::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -208,9 +2427,10 @@ fn xh430_w210_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh430W210;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh430W210(Xh430W210::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh430W210(Xh430W210::new(id));
     assert_eq!(kind.data(), &Xh430W210::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh430W210::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -228,9 +2448,10 @@ fn xd430_t210_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xd430T210;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xd430T210(Xd430T210::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xd430T210(Xd430T210::new(id));
     assert_eq!(kind.data(), &Xd430T210::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xd430T210::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -248,9 +2469,10 @@ fn xm430_w350_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xm430W350;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xm430W350(Xm430W350::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xm430W350(Xm430W350::new(id));
     assert_eq!(kind.data(), &Xm430W350::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xm430W350::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -268,9 +2490,10 @@ fn xm430_w210_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xm430W210;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xm430W210(Xm430W210::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xm430W210(Xm430W210::new(id));
     assert_eq!(kind.data(), &Xm430W210::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xm430W210::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -288,9 +2511,10 @@ fn xh430_v350_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh430V350;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh430V350(Xh430V350::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh430V350(Xh430V350::new(id));
     assert_eq!(kind.data(), &Xh430V350::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh430V350::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -308,9 +2532,10 @@ fn xh430_v210_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh430V210;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh430V210(Xh430V210::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh430V210(Xh430V210::new(id));
     assert_eq!(kind.data(), &Xh430V210::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh430V210::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -328,9 +2553,10 @@ fn xl430_w250_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xl430W250;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xl430W250(Xl430W250::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xl430W250(Xl430W250::new(id));
     assert_eq!(kind.data(), &Xl430W250::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xl430W250::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -348,9 +2574,10 @@ fn xc430_w150_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc430W150;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc430W150(Xc430W150::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc430W150(Xc430W150::new(id));
     assert_eq!(kind.data(), &Xc430W150::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc430W150::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -368,9 +2595,10 @@ fn xc430_w240_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc430W240;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc430W240(Xc430W240::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc430W240(Xc430W240::new(id));
     assert_eq!(kind.data(), &Xc430W240::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc430W240::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -388,9 +2616,10 @@ fn two_xl430_w250_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::TwoXl430W250;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::TwoXl430W250(TwoXl430W250::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::TwoXl430W250(TwoXl430W250::new(id));
     assert_eq!(kind.data(), &TwoXl430W250::DATA);
+    assert_eq!(super::MODEL_NUMBER, TwoXl430W250::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -408,9 +2637,10 @@ fn xh540_w270_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh540W270;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh540W270(Xh540W270::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh540W270(Xh540W270::new(id));
     assert_eq!(kind.data(), &Xh540W270::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh540W270::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -428,9 +2658,10 @@ fn xd540_t270_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xd540T270;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xd540T270(Xd540T270::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xd540T270(Xd540T270::new(id));
     assert_eq!(kind.data(), &Xd540T270::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xd540T270::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -448,9 +2679,10 @@ fn xh540_w150_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh540W150;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh540W150(Xh540W150::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh540W150(Xh540W150::new(id));
     assert_eq!(kind.data(), &Xh540W150::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh540W150::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -468,9 +2700,10 @@ fn xd540_t150_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xd540T150;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xd540T150(Xd540T150::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xd540T150(Xd540T150::new(id));
     assert_eq!(kind.data(), &Xd540T150::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xd540T150::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -488,9 +2721,10 @@ fn xm540_w270_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xm540W270;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xm540W270(Xm540W270::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xm540W270(Xm540W270::new(id));
     assert_eq!(kind.data(), &Xm540W270::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xm540W270::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -508,9 +2742,10 @@ fn xm540_w150_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xm540W150;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xm540W150(Xm540W150::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xm540W150(Xm540W150::new(id));
     assert_eq!(kind.data(), &Xm540W150::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xm540W150::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -528,9 +2763,10 @@ fn xh540_v270_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh540V270;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh540V270(Xh540V270::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh540V270(Xh540V270::new(id));
     assert_eq!(kind.data(), &Xh540V270::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh540V270::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -548,9 +2784,10 @@ fn xh540_v150_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xh540V150;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xh540V150(Xh540V150::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xh540V150(Xh540V150::new(id));
     assert_eq!(kind.data(), &Xh540V150::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xh540V150::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -568,9 +2805,10 @@ fn two_xc430_w250_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::TwoXc430W250;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::TwoXc430W250(TwoXc430W250::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::TwoXc430W250(TwoXc430W250::new(id));
     assert_eq!(kind.data(), &TwoXc430W250::DATA);
+    assert_eq!(super::MODEL_NUMBER, TwoXc430W250::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -588,9 +2826,10 @@ fn xw540_t260_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xw540T260;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xw540T260(Xw540T260::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xw540T260(Xw540T260::new(id));
     assert_eq!(kind.data(), &Xw540T260::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xw540T260::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -608,9 +2847,10 @@ fn xw540_t140_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xw540T140;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xw540T140(Xw540T140::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xw540T140(Xw540T140::new(id));
     assert_eq!(kind.data(), &Xw540T140::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xw540T140::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -628,9 +2868,10 @@ fn xl330_m077_fw52_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xl330M077Fw52;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xl330M077Fw52(Xl330M077Fw52::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xl330M077Fw52(Xl330M077Fw52::new(id));
     assert_eq!(kind.data(), &Xl330M077Fw52::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xl330M077Fw52::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -648,9 +2889,10 @@ fn xl330_m077_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xl330M077;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xl330M077(Xl330M077::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xl330M077(Xl330M077::new(id));
     assert_eq!(kind.data(), &Xl330M077::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xl330M077::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -668,9 +2910,10 @@ fn xl330_m288_fw52_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xl330M288Fw52;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xl330M288Fw52(Xl330M288Fw52::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xl330M288Fw52(Xl330M288Fw52::new(id));
     assert_eq!(kind.data(), &Xl330M288Fw52::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xl330M288Fw52::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -688,9 +2931,10 @@ fn xl330_m288_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xl330M288;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xl330M288(Xl330M288::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xl330M288(Xl330M288::new(id));
     assert_eq!(kind.data(), &Xl330M288::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xl330M288::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -708,9 +2952,10 @@ fn xc330_t181_fw52_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330T181Fw52;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330T181Fw52(Xc330T181Fw52::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330T181Fw52(Xc330T181Fw52::new(id));
     assert_eq!(kind.data(), &Xc330T181Fw52::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330T181Fw52::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -728,9 +2973,10 @@ fn xc330_t181_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330T181;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330T181(Xc330T181::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330T181(Xc330T181::new(id));
     assert_eq!(kind.data(), &Xc330T181::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330T181::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -748,9 +2994,10 @@ fn xc330_t288_fw52_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330T288Fw52;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330T288Fw52(Xc330T288Fw52::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330T288Fw52(Xc330T288Fw52::new(id));
     assert_eq!(kind.data(), &Xc330T288Fw52::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330T288Fw52::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -768,9 +3015,10 @@ fn xc330_t288_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330T288;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330T288(Xc330T288::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330T288(Xc330T288::new(id));
     assert_eq!(kind.data(), &Xc330T288::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330T288::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -788,9 +3036,10 @@ fn xc330_m181_fw52_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330M181Fw52;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330M181Fw52(Xc330M181Fw52::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330M181Fw52(Xc330M181Fw52::new(id));
     assert_eq!(kind.data(), &Xc330M181Fw52::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330M181Fw52::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -808,9 +3057,10 @@ fn xc330_m181_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330M181;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330M181(Xc330M181::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330M181(Xc330M181::new(id));
     assert_eq!(kind.data(), &Xc330M181::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330M181::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -828,9 +3078,10 @@ fn xc330_m288_fw52_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330M288Fw52;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330M288Fw52(Xc330M288Fw52::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330M288Fw52(Xc330M288Fw52::new(id));
     assert_eq!(kind.data(), &Xc330M288Fw52::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330M288Fw52::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -848,9 +3099,10 @@ fn xc330_m288_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xc330M288;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xc330M288(Xc330M288::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xc330M288(Xc330M288::new(id));
     assert_eq!(kind.data(), &Xc330M288::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xc330M288::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -868,9 +3120,10 @@ fn xw430_t333_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xw430T333;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xw430T333(Xw430T333::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xw430T333(Xw430T333::new(id));
     assert_eq!(kind.data(), &Xw430T333::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xw430T333::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -888,9 +3141,10 @@ fn xw540_h260_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Xw540H260;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Xw540H260(Xw540H260::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Xw540H260(Xw540H260::new(id));
     assert_eq!(kind.data(), &Xw540H260::DATA);
+    assert_eq!(super::MODEL_NUMBER, Xw540H260::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -908,9 +3162,10 @@ fn ph42_020_s300_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ph42020S300;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ph42020S300(Ph42020S300::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ph42020S300(Ph42020S300::new(id));
     assert_eq!(kind.data(), &Ph42020S300::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ph42020S300::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -928,9 +3183,10 @@ fn ph54_100_s500_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ph54100S500;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ph54100S500(Ph54100S500::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ph54100S500(Ph54100S500::new(id));
     assert_eq!(kind.data(), &Ph54100S500::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ph54100S500::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -948,9 +3204,10 @@ fn ph54_200_s500_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ph54200S500;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ph54200S500(Ph54200S500::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ph54200S500(Ph54200S500::new(id));
     assert_eq!(kind.data(), &Ph54200S500::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ph54200S500::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -968,9 +3225,10 @@ fn pm42_010_s260_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Pm42010S260;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Pm42010S260(Pm42010S260::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Pm42010S260(Pm42010S260::new(id));
     assert_eq!(kind.data(), &Pm42010S260::DATA);
+    assert_eq!(super::MODEL_NUMBER, Pm42010S260::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -988,9 +3246,10 @@ fn pm54_040_s250_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Pm54040S250;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Pm54040S250(Pm54040S250::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Pm54040S250(Pm54040S250::new(id));
     assert_eq!(kind.data(), &Pm54040S250::DATA);
+    assert_eq!(super::MODEL_NUMBER, Pm54040S250::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1008,9 +3267,10 @@ fn pm54_060_s250_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Pm54060S250;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Pm54060S250(Pm54060S250::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Pm54060S250(Pm54060S250::new(id));
     assert_eq!(kind.data(), &Pm54060S250::DATA);
+    assert_eq!(super::MODEL_NUMBER, Pm54060S250::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1028,9 +3288,10 @@ fn ym070_210_m001_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym070210M001;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym070210M001(Ym070210M001::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym070210M001(Ym070210M001::new(id));
     assert_eq!(kind.data(), &Ym070210M001::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym070210M001::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1048,9 +3309,10 @@ fn ym070_210_b001_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym070210B001;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym070210B001(Ym070210B001::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym070210B001(Ym070210B001::new(id));
     assert_eq!(kind.data(), &Ym070210B001::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym070210B001::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1068,9 +3330,10 @@ fn ym070_210_r051_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym070210R051;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym070210R051(Ym070210R051::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym070210R051(Ym070210R051::new(id));
     assert_eq!(kind.data(), &Ym070210R051::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym070210R051::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1088,9 +3351,10 @@ fn ym070_210_r099_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym070210R099;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym070210R099(Ym070210R099::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym070210R099(Ym070210R099::new(id));
     assert_eq!(kind.data(), &Ym070210R099::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym070210R099::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1108,9 +3372,10 @@ fn ym070_210_a051_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym070210A051;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym070210A051(Ym070210A051::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym070210A051(Ym070210A051::new(id));
     assert_eq!(kind.data(), &Ym070210A051::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym070210A051::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1128,9 +3393,10 @@ fn ym070_210_a099_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym070210A099;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym070210A099(Ym070210A099::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym070210A099(Ym070210A099::new(id));
     assert_eq!(kind.data(), &Ym070210A099::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym070210A099::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1148,9 +3414,10 @@ fn ym080_230_m001_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym080230M001;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym080230M001(Ym080230M001::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym080230M001(Ym080230M001::new(id));
     assert_eq!(kind.data(), &Ym080230M001::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym080230M001::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1168,9 +3435,10 @@ fn ym080_230_b001_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym080230B001;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym080230B001(Ym080230B001::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym080230B001(Ym080230B001::new(id));
     assert_eq!(kind.data(), &Ym080230B001::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym080230B001::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1188,9 +3456,10 @@ fn ym080_230_r051_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym080230R051;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym080230R051(Ym080230R051::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym080230R051(Ym080230R051::new(id));
     assert_eq!(kind.data(), &Ym080230R051::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym080230R051::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1208,9 +3477,10 @@ fn ym080_230_r099_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym080230R099;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym080230R099(Ym080230R099::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym080230R099(Ym080230R099::new(id));
     assert_eq!(kind.data(), &Ym080230R099::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym080230R099::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1228,9 +3498,10 @@ fn ym080_230_a051_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym080230A051;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym080230A051(Ym080230A051::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym080230A051(Ym080230A051::new(id));
     assert_eq!(kind.data(), &Ym080230A051::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym080230A051::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1248,9 +3519,10 @@ fn ym080_230_a099_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ym080230A099;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::Ym080230A099(Ym080230A099::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::Ym080230A099(Ym080230A099::new(id));
     assert_eq!(kind.data(), &Ym080230A099::DATA);
+    assert_eq!(super::MODEL_NUMBER, Ym080230A099::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1268,9 +3540,10 @@ fn rh_p12_rn_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::RhP12Rn;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::RhP12Rn(RhP12Rn::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::RhP12Rn(RhP12Rn::new(id));
     assert_eq!(kind.data(), &RhP12Rn::DATA);
+    assert_eq!(super::MODEL_NUMBER, RhP12Rn::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1288,9 +3561,10 @@ fn m42_10_s260_ra_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::M4210S260Ra;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::M4210S260Ra(M4210S260Ra::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::M4210S260Ra(M4210S260Ra::new(id));
     assert_eq!(kind.data(), &M4210S260Ra::DATA);
+    assert_eq!(super::MODEL_NUMBER, M4210S260Ra::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1308,9 +3582,10 @@ fn m54_40_s250_ra_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::M5440S250Ra;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::M5440S250Ra(M5440S250Ra::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::M5440S250Ra(M5440S250Ra::new(id));
     assert_eq!(kind.data(), &M5440S250Ra::DATA);
+    assert_eq!(super::MODEL_NUMBER, M5440S250Ra::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1328,9 +3603,10 @@ fn m54_60_s250_ra_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::M5460S250Ra;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::M5460S250Ra(M5460S250Ra::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::M5460S250Ra(M5460S250Ra::new(id));
     assert_eq!(kind.data(), &M5460S250Ra::DATA);
+    assert_eq!(super::MODEL_NUMBER, M5460S250Ra::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1348,9 +3624,10 @@ fn h42_20_s300_ra_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::H4220S300Ra;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::H4220S300Ra(H4220S300Ra::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::H4220S300Ra(H4220S300Ra::new(id));
     assert_eq!(kind.data(), &H4220S300Ra::DATA);
+    assert_eq!(super::MODEL_NUMBER, H4220S300Ra::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1368,9 +3645,10 @@ fn h54_100_s500_ra_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::H54100S500Ra;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::H54100S500Ra(H54100S500Ra::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::H54100S500Ra(H54100S500Ra::new(id));
     assert_eq!(kind.data(), &H54100S500Ra::DATA);
+    assert_eq!(super::MODEL_NUMBER, H54100S500Ra::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());
@@ -1388,9 +3666,10 @@ fn h54_200_s500_ra_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::H54200S500Ra;
 
-    let id = crate::id::Id::new(1).unwrap();
-    let mut kind = crate::models::ActuatorKind::H54200S500Ra(H54200S500Ra::new(id));
+    let id = id();
+    let mut kind = ActuatorKind::H54200S500Ra(H54200S500Ra::new(id));
     assert_eq!(kind.data(), &H54200S500Ra::DATA);
+    assert_eq!(super::MODEL_NUMBER, H54200S500Ra::MODEL_NUMBER);
     assert_eq!(kind.cache().id(), id);
     kind.cache_mut().record_mode(LimitMode::Unbounded);
     assert!(kind.cache_mut().record_limits(10, 20).is_ok());

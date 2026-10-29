@@ -42,7 +42,6 @@ pub(crate) struct ModelEntry {
     pub(crate) p2: Option<Vec<TableRef>>,
     /// Required and `P2` when both lists exist; absent otherwise.
     #[serde(default)]
-    #[allow(dead_code, reason = "check 4 reads it from US2")]
     pub(crate) default: Option<ProtocolTag>,
 }
 
@@ -159,7 +158,7 @@ pub(crate) struct Row {
 }
 
 /// Register access.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 pub(crate) enum Access {
     /// Read only.
     R,
@@ -168,7 +167,7 @@ pub(crate) enum Access {
 }
 
 /// Register memory area.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 pub(crate) enum Area {
     /// Kept across power cycles.
     #[serde(rename = "EEPROM")]

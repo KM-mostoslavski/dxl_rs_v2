@@ -8,9 +8,10 @@
     reason = "every register is generated but only some are used; with no family enabled some parameters are unused; type_info angles are table data, not uses of π"
 )]
 
-use crate::actuator::{Actuator, Cache, Describe, ModelData};
-use crate::error::Error;
+use crate::actuator::{Actuator, Cache, Describe, ModelData, ModelNumber};
+use crate::error::SetupError;
 use crate::id::Id;
+use crate::protocol::ProtocolVersion;
 use crate::register::{Access, Area, Register};
 
 #[cfg(feature = "ax")]
@@ -307,6 +308,9 @@ const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {
     }
 }
 
+/// Model Number location, the same in every table (codegen checks it). Read on P1 Setup.
+pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);
+
 /// Any supported actuator, one variant per model type.
 ///
 /// Match on it to reach a model's specific features; use the
@@ -527,477 +531,900 @@ pub enum ActuatorKind {
 }
 
 impl ActuatorKind {
-    /// Builds the model type for `model_number`, picking the control table
-    /// that matches `firmware`.
+    /// The variant for `model_number` on `protocol`, using the table whose `from_fw` is the
+    /// highest not above `firmware`.
     ///
-    /// Fails with [`Error::UnsupportedModel`] if the model is unknown or its
-    /// family's Cargo feature is off.
-    pub(crate) fn new(model_number: u16, firmware: u8, id: Id) -> Result<Self, Error> {
-        match model_number {
+    /// Fails with [`SetupError::UnsupportedModel`]: `feature` is the family to enable when the
+    /// model has tables on this protocol but its family is off, and `None` otherwise.
+    pub(crate) fn new(
+        protocol: ProtocolVersion,
+        model_number: ModelNumber,
+        firmware: u8,
+        id: Id,
+    ) -> Result<Self, SetupError> {
+        match (protocol, model_number.get()) {
             #[cfg(feature = "ax")]
-            12 => Ok(Self::Ax12a(Ax12a::new(id))),
+            (ProtocolVersion::P1, 12) => Ok(Self::Ax12a(Ax12a::new(id))),
             #[cfg(not(feature = "ax"))]
-            12 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 12) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 12,
+                protocol,
                 feature: Some("ax"),
             }),
             #[cfg(feature = "ax")]
-            18 => Ok(Self::Ax18a(Ax18a::new(id))),
+            (ProtocolVersion::P1, 18) => Ok(Self::Ax18a(Ax18a::new(id))),
             #[cfg(not(feature = "ax"))]
-            18 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 18) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 18,
+                protocol,
                 feature: Some("ax"),
             }),
             #[cfg(feature = "rx")]
-            28 => Ok(Self::Rx28(Rx28::new(id))),
+            (ProtocolVersion::P1, 28) => Ok(Self::Rx28(Rx28::new(id))),
             #[cfg(not(feature = "rx"))]
-            28 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 28) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 28,
+                protocol,
                 feature: Some("rx"),
             }),
             #[cfg(feature = "mx")]
-            30 => Ok(Self::Mx28(Mx28::new(id))),
+            (ProtocolVersion::P1, 30) => Ok(Self::Mx28(Mx28::new(id))),
             #[cfg(not(feature = "mx"))]
-            30 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 30) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 30,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P2, 30) => Ok(Self::Mx28(Mx28::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P2, 30) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 30,
+                protocol,
                 feature: Some("mx"),
             }),
             #[cfg(feature = "ax")]
-            300 => Ok(Self::Ax12w(Ax12w::new(id))),
+            (ProtocolVersion::P1, 300) => Ok(Self::Ax12w(Ax12w::new(id))),
             #[cfg(not(feature = "ax"))]
-            300 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 300) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 300,
+                protocol,
                 feature: Some("ax"),
             }),
             #[cfg(feature = "mx")]
-            311 => Ok(Self::Mx64(Mx64::new(id))),
+            (ProtocolVersion::P1, 311) => Ok(Self::Mx64(Mx64::new(id))),
             #[cfg(not(feature = "mx"))]
-            311 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 311) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 311,
+                protocol,
                 feature: Some("mx"),
             }),
             #[cfg(feature = "mx")]
-            321 => Ok(Self::Mx106(Mx106::new(id))),
+            (ProtocolVersion::P2, 311) => Ok(Self::Mx64(Mx64::new(id))),
             #[cfg(not(feature = "mx"))]
-            321 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 311) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 311,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 321) => Ok(Self::Mx106(Mx106::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P1, 321) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 321,
+                protocol,
+                feature: Some("mx"),
+            }),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P2, 321) => Ok(Self::Mx106(Mx106::new(id))),
+            #[cfg(not(feature = "mx"))]
+            (ProtocolVersion::P2, 321) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 321,
+                protocol,
                 feature: Some("mx"),
             }),
             #[cfg(feature = "x-series")]
-            350 => Ok(Self::Xl320(Xl320::new(id))),
+            (ProtocolVersion::P2, 350) => Ok(Self::Xl320(Xl320::new(id))),
             #[cfg(not(feature = "x-series"))]
-            350 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 350) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 350,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1000 => Ok(Self::Xh430W350(Xh430W350::new(id))),
+            (ProtocolVersion::P1, 1000) => Ok(Self::Xh430W350(Xh430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1000 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1000,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1001 => Ok(Self::Xd430T350(Xd430T350::new(id))),
+            (ProtocolVersion::P2, 1000) => Ok(Self::Xh430W350(Xh430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1001 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1000,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1010 => Ok(Self::Xh430W210(Xh430W210::new(id))),
+            (ProtocolVersion::P1, 1001) => Ok(Self::Xd430T350(Xd430T350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1010 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1001) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1001,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1011 => Ok(Self::Xd430T210(Xd430T210::new(id))),
+            (ProtocolVersion::P2, 1001) => Ok(Self::Xd430T350(Xd430T350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1011 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1001) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1001,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1020 => Ok(Self::Xm430W350(Xm430W350::new(id))),
+            (ProtocolVersion::P1, 1010) => Ok(Self::Xh430W210(Xh430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1020 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1010,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1030 => Ok(Self::Xm430W210(Xm430W210::new(id))),
+            (ProtocolVersion::P2, 1010) => Ok(Self::Xh430W210(Xh430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1030 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1010,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1040 => Ok(Self::Xh430V350(Xh430V350::new(id))),
+            (ProtocolVersion::P1, 1011) => Ok(Self::Xd430T210(Xd430T210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1040 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1011) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1011,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1050 => Ok(Self::Xh430V210(Xh430V210::new(id))),
+            (ProtocolVersion::P2, 1011) => Ok(Self::Xd430T210(Xd430T210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1050 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1011) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1011,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1060 => Ok(Self::Xl430W250(Xl430W250::new(id))),
+            (ProtocolVersion::P1, 1020) => Ok(Self::Xm430W350(Xm430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1060 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1020,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1070 => Ok(Self::Xc430W150(Xc430W150::new(id))),
+            (ProtocolVersion::P2, 1020) => Ok(Self::Xm430W350(Xm430W350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1070 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1020,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1080 => Ok(Self::Xc430W240(Xc430W240::new(id))),
+            (ProtocolVersion::P1, 1030) => Ok(Self::Xm430W210(Xm430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1080 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1030) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1030,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1090 => Ok(Self::TwoXl430W250(TwoXl430W250::new(id))),
+            (ProtocolVersion::P2, 1030) => Ok(Self::Xm430W210(Xm430W210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1090 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1030) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1030,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1100 => Ok(Self::Xh540W270(Xh540W270::new(id))),
+            (ProtocolVersion::P1, 1040) => Ok(Self::Xh430V350(Xh430V350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1100 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1040) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1040,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1101 => Ok(Self::Xd540T270(Xd540T270::new(id))),
+            (ProtocolVersion::P2, 1040) => Ok(Self::Xh430V350(Xh430V350::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1101 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1040) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1040,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1110 => Ok(Self::Xh540W150(Xh540W150::new(id))),
+            (ProtocolVersion::P1, 1050) => Ok(Self::Xh430V210(Xh430V210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1110 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1050) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1050,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1111 => Ok(Self::Xd540T150(Xd540T150::new(id))),
+            (ProtocolVersion::P2, 1050) => Ok(Self::Xh430V210(Xh430V210::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1111 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1050) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1050,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1120 => Ok(Self::Xm540W270(Xm540W270::new(id))),
+            (ProtocolVersion::P1, 1060) => Ok(Self::Xl430W250(Xl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1120 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1060) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1060,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1130 => Ok(Self::Xm540W150(Xm540W150::new(id))),
+            (ProtocolVersion::P2, 1060) => Ok(Self::Xl430W250(Xl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1130 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1060) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1060,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1140 => Ok(Self::Xh540V270(Xh540V270::new(id))),
+            (ProtocolVersion::P1, 1070) => Ok(Self::Xc430W150(Xc430W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1140 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1070) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1070,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1150 => Ok(Self::Xh540V150(Xh540V150::new(id))),
+            (ProtocolVersion::P2, 1070) => Ok(Self::Xc430W150(Xc430W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1150 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1070) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1070,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1160 => Ok(Self::TwoXc430W250(TwoXc430W250::new(id))),
+            (ProtocolVersion::P1, 1080) => Ok(Self::Xc430W240(Xc430W240::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1160 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1080) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1080,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1170 => Ok(Self::Xw540T260(Xw540T260::new(id))),
+            (ProtocolVersion::P2, 1080) => Ok(Self::Xc430W240(Xc430W240::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1170 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1080) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1080,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1180 => Ok(Self::Xw540T140(Xw540T140::new(id))),
+            (ProtocolVersion::P1, 1090) => Ok(Self::TwoXl430W250(TwoXl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1180 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1090) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1090,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1190 if firmware < 53 => Ok(Self::Xl330M077Fw52(Xl330M077Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1190 => Ok(Self::Xl330M077(Xl330M077::new(id))),
+            (ProtocolVersion::P2, 1090) => Ok(Self::TwoXl430W250(TwoXl430W250::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1190 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1090) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1090,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1200 if firmware < 53 => Ok(Self::Xl330M288Fw52(Xl330M288Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1200 => Ok(Self::Xl330M288(Xl330M288::new(id))),
+            (ProtocolVersion::P1, 1100) => Ok(Self::Xh540W270(Xh540W270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1200 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1100) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1100,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1210 if firmware < 53 => Ok(Self::Xc330T181Fw52(Xc330T181Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1210 => Ok(Self::Xc330T181(Xc330T181::new(id))),
+            (ProtocolVersion::P2, 1100) => Ok(Self::Xh540W270(Xh540W270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1210 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1100) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1100,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1220 if firmware < 53 => Ok(Self::Xc330T288Fw52(Xc330T288Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1220 => Ok(Self::Xc330T288(Xc330T288::new(id))),
+            (ProtocolVersion::P1, 1101) => Ok(Self::Xd540T270(Xd540T270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1220 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1101) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1101,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1230 if firmware < 53 => Ok(Self::Xc330M181Fw52(Xc330M181Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1230 => Ok(Self::Xc330M181(Xc330M181::new(id))),
+            (ProtocolVersion::P2, 1101) => Ok(Self::Xd540T270(Xd540T270::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1230 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1101) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1101,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1240 if firmware < 53 => Ok(Self::Xc330M288Fw52(Xc330M288Fw52::new(id))),
-            #[cfg(feature = "x-series")]
-            1240 => Ok(Self::Xc330M288(Xc330M288::new(id))),
+            (ProtocolVersion::P1, 1110) => Ok(Self::Xh540W150(Xh540W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1240 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1110) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1110,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1270 => Ok(Self::Xw430T333(Xw430T333::new(id))),
+            (ProtocolVersion::P2, 1110) => Ok(Self::Xh540W150(Xh540W150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1270 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 1110) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1110,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "x-series")]
-            1310 => Ok(Self::Xw540H260(Xw540H260::new(id))),
+            (ProtocolVersion::P1, 1111) => Ok(Self::Xd540T150(Xd540T150::new(id))),
             #[cfg(not(feature = "x-series"))]
-            1310 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P1, 1111) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1111,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1111) => Ok(Self::Xd540T150(Xd540T150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1111) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1111,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1120) => Ok(Self::Xm540W270(Xm540W270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1120,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1120) => Ok(Self::Xm540W270(Xm540W270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1120,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1130) => Ok(Self::Xm540W150(Xm540W150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1130) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1130,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1130) => Ok(Self::Xm540W150(Xm540W150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1130) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1130,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1140) => Ok(Self::Xh540V270(Xh540V270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1140) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1140,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1140) => Ok(Self::Xh540V270(Xh540V270::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1140) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1140,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1150) => Ok(Self::Xh540V150(Xh540V150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1150) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1150,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1150) => Ok(Self::Xh540V150(Xh540V150::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1150) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1150,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1160) => Ok(Self::TwoXc430W250(TwoXc430W250::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1160) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1160,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1160) => Ok(Self::TwoXc430W250(TwoXc430W250::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1160) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1160,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1170) => Ok(Self::Xw540T260(Xw540T260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1170) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1170,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1170) => Ok(Self::Xw540T260(Xw540T260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1170) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1170,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1180) => Ok(Self::Xw540T140(Xw540T140::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1180) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1180,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1180) => Ok(Self::Xw540T140(Xw540T140::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1180) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1180,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1190) if firmware < 53 => {
+                Ok(Self::Xl330M077Fw52(Xl330M077Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1190) => Ok(Self::Xl330M077(Xl330M077::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1190) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1190,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1200) if firmware < 53 => {
+                Ok(Self::Xl330M288Fw52(Xl330M288Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1200) => Ok(Self::Xl330M288(Xl330M288::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1200) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1200,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1210) if firmware < 53 => {
+                Ok(Self::Xc330T181Fw52(Xc330T181Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1210) => Ok(Self::Xc330T181(Xc330T181::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1210) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1210,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1220) if firmware < 53 => {
+                Ok(Self::Xc330T288Fw52(Xc330T288Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1220) => Ok(Self::Xc330T288(Xc330T288::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1220) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1220,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1230) if firmware < 53 => {
+                Ok(Self::Xc330M181Fw52(Xc330M181Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1230) => Ok(Self::Xc330M181(Xc330M181::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1230) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1230,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1240) if firmware < 53 => {
+                Ok(Self::Xc330M288Fw52(Xc330M288Fw52::new(id)))
+            }
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1240) => Ok(Self::Xc330M288(Xc330M288::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1240) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1240,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1270) => Ok(Self::Xw430T333(Xw430T333::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1270) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1270,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1270) => Ok(Self::Xw430T333(Xw430T333::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1270) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1270,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P1, 1310) => Ok(Self::Xw540H260(Xw540H260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P1, 1310) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1310,
+                protocol,
+                feature: Some("x-series"),
+            }),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1310) => Ok(Self::Xw540H260(Xw540H260::new(id))),
+            #[cfg(not(feature = "x-series"))]
+            (ProtocolVersion::P2, 1310) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 1310,
+                protocol,
                 feature: Some("x-series"),
             }),
             #[cfg(feature = "pro")]
-            2000 => Ok(Self::Ph42020S300(Ph42020S300::new(id))),
+            (ProtocolVersion::P2, 2000) => Ok(Self::Ph42020S300(Ph42020S300::new(id))),
             #[cfg(not(feature = "pro"))]
-            2000 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2000,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2010 => Ok(Self::Ph54100S500(Ph54100S500::new(id))),
+            (ProtocolVersion::P2, 2010) => Ok(Self::Ph54100S500(Ph54100S500::new(id))),
             #[cfg(not(feature = "pro"))]
-            2010 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2010,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2020 => Ok(Self::Ph54200S500(Ph54200S500::new(id))),
+            (ProtocolVersion::P2, 2020) => Ok(Self::Ph54200S500(Ph54200S500::new(id))),
             #[cfg(not(feature = "pro"))]
-            2020 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2020,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2100 => Ok(Self::Pm42010S260(Pm42010S260::new(id))),
+            (ProtocolVersion::P2, 2100) => Ok(Self::Pm42010S260(Pm42010S260::new(id))),
             #[cfg(not(feature = "pro"))]
-            2100 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2100) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2100,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2110 => Ok(Self::Pm54040S250(Pm54040S250::new(id))),
+            (ProtocolVersion::P2, 2110) => Ok(Self::Pm54040S250(Pm54040S250::new(id))),
             #[cfg(not(feature = "pro"))]
-            2110 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2110) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2110,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            2120 => Ok(Self::Pm54060S250(Pm54060S250::new(id))),
+            (ProtocolVersion::P2, 2120) => Ok(Self::Pm54060S250(Pm54060S250::new(id))),
             #[cfg(not(feature = "pro"))]
-            2120 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 2120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 2120,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "y-series")]
-            4000 => Ok(Self::Ym070210M001(Ym070210M001::new(id))),
+            (ProtocolVersion::P2, 4000) => Ok(Self::Ym070210M001(Ym070210M001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4000 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4000) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4000,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4010 => Ok(Self::Ym070210B001(Ym070210B001::new(id))),
+            (ProtocolVersion::P2, 4010) => Ok(Self::Ym070210B001(Ym070210B001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4010 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4010) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4010,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4020 => Ok(Self::Ym070210R051(Ym070210R051::new(id))),
+            (ProtocolVersion::P2, 4020) => Ok(Self::Ym070210R051(Ym070210R051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4020 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4020) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4020,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4030 => Ok(Self::Ym070210R099(Ym070210R099::new(id))),
+            (ProtocolVersion::P2, 4030) => Ok(Self::Ym070210R099(Ym070210R099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4030 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4030) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4030,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4040 => Ok(Self::Ym070210A051(Ym070210A051::new(id))),
+            (ProtocolVersion::P2, 4040) => Ok(Self::Ym070210A051(Ym070210A051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4040 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4040) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4040,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4050 => Ok(Self::Ym070210A099(Ym070210A099::new(id))),
+            (ProtocolVersion::P2, 4050) => Ok(Self::Ym070210A099(Ym070210A099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4050 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4050) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4050,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4120 => Ok(Self::Ym080230M001(Ym080230M001::new(id))),
+            (ProtocolVersion::P2, 4120) => Ok(Self::Ym080230M001(Ym080230M001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4120 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4120) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4120,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4130 => Ok(Self::Ym080230B001(Ym080230B001::new(id))),
+            (ProtocolVersion::P2, 4130) => Ok(Self::Ym080230B001(Ym080230B001::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4130 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4130) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4130,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4140 => Ok(Self::Ym080230R051(Ym080230R051::new(id))),
+            (ProtocolVersion::P2, 4140) => Ok(Self::Ym080230R051(Ym080230R051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4140 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4140) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4140,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4150 => Ok(Self::Ym080230R099(Ym080230R099::new(id))),
+            (ProtocolVersion::P2, 4150) => Ok(Self::Ym080230R099(Ym080230R099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4150 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4150) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4150,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4160 => Ok(Self::Ym080230A051(Ym080230A051::new(id))),
+            (ProtocolVersion::P2, 4160) => Ok(Self::Ym080230A051(Ym080230A051::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4160 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4160) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4160,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "y-series")]
-            4170 => Ok(Self::Ym080230A099(Ym080230A099::new(id))),
+            (ProtocolVersion::P2, 4170) => Ok(Self::Ym080230A099(Ym080230A099::new(id))),
             #[cfg(not(feature = "y-series"))]
-            4170 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 4170) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 4170,
+                protocol,
                 feature: Some("y-series"),
             }),
             #[cfg(feature = "pro")]
-            35074 => Ok(Self::RhP12Rn(RhP12Rn::new(id))),
+            (ProtocolVersion::P2, 35074) => Ok(Self::RhP12Rn(RhP12Rn::new(id))),
             #[cfg(not(feature = "pro"))]
-            35074 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 35074) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 35074,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            43289 => Ok(Self::M4210S260Ra(M4210S260Ra::new(id))),
+            (ProtocolVersion::P2, 43289) => Ok(Self::M4210S260Ra(M4210S260Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            43289 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 43289) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 43289,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            46097 => Ok(Self::M5440S250Ra(M5440S250Ra::new(id))),
+            (ProtocolVersion::P2, 46097) => Ok(Self::M5440S250Ra(M5440S250Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            46097 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 46097) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 46097,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            46353 => Ok(Self::M5460S250Ra(M5460S250Ra::new(id))),
+            (ProtocolVersion::P2, 46353) => Ok(Self::M5460S250Ra(M5460S250Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            46353 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 46353) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 46353,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            51201 => Ok(Self::H4220S300Ra(H4220S300Ra::new(id))),
+            (ProtocolVersion::P2, 51201) => Ok(Self::H4220S300Ra(H4220S300Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            51201 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 51201) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 51201,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            53769 => Ok(Self::H54100S500Ra(H54100S500Ra::new(id))),
+            (ProtocolVersion::P2, 53769) => Ok(Self::H54100S500Ra(H54100S500Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            53769 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 53769) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 53769,
+                protocol,
                 feature: Some("pro"),
             }),
             #[cfg(feature = "pro")]
-            54025 => Ok(Self::H54200S500Ra(H54200S500Ra::new(id))),
+            (ProtocolVersion::P2, 54025) => Ok(Self::H54200S500Ra(H54200S500Ra::new(id))),
             #[cfg(not(feature = "pro"))]
-            54025 => Err(Error::UnsupportedModel {
-                model_number,
+            (ProtocolVersion::P2, 54025) => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: 54025,
+                protocol,
                 feature: Some("pro"),
             }),
-            _ => Err(Error::UnsupportedModel {
-                model_number,
+            _ => Err(SetupError::UnsupportedModel {
+                id,
+                model_number: model_number.get(),
+                protocol,
                 feature: None,
             }),
+        }
+    }
+
+    /// `Some` when this model's table depends on firmware on this protocol: the Firmware
+    /// Version register to read before calling [`ActuatorKind::new`]. `None` otherwise,
+    /// including when the model's family is off.
+    pub(crate) fn firmware_register(
+        protocol: ProtocolVersion,
+        model_number: ModelNumber,
+    ) -> Option<Register> {
+        match (protocol, model_number.get()) {
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1190) => Some(Xl330M077Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1200) => Some(Xl330M288Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1210) => Some(Xc330T181Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1220) => Some(Xc330T288Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1230) => Some(Xc330M181Fw52::FIRMWARE_VERSION),
+            #[cfg(feature = "x-series")]
+            (ProtocolVersion::P2, 1240) => Some(Xc330M288Fw52::FIRMWARE_VERSION),
+            _ => None,
         }
     }
 }

@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 
 use super::names::const_ident;
-use super::resolve::{GenModel, Limits, LookupList, ModeRole, Resolved};
+use super::resolve::{GenModel, Limits, ModeRole, Resolved};
 use super::schema::{Access, Area, ProtocolTag, Row, TypeInfo};
 use super::{HEADER, MODULE_DIR, MODULE_FILE, render_tests};
 
@@ -211,16 +211,84 @@ fn render_model(model: &GenModel) -> String {
     out
 }
 
-/// The list today's lookup uses for each number: P2 when present, else P1.
-fn default_lists(resolved: &Resolved) -> Vec<&LookupList> {
-    let mut lists: Vec<&LookupList> = Vec::new();
+fn type_of<'a>(resolved: &'a Resolved, ty: &str) -> &'a GenModel {
+    resolved
+        .models
+        .iter()
+        .find(|m| m.type_ident == ty)
+        .unwrap_or_else(|| panic!("lookup names unknown type {ty}"))
+}
+
+/// `impl ActuatorKind { new, firmware_register }` (research R-8, R-9).
+fn render_lookup(out: &mut String, resolved: &Resolved) {
+    out.push_str(
+        "impl ActuatorKind {\n\
+         \x20   /// The variant for `model_number` on `protocol`, using the table whose `from_fw` is the\n\
+         \x20   /// highest not above `firmware`.\n\
+         \x20   ///\n\
+         \x20   /// Fails with [`SetupError::UnsupportedModel`]: `feature` is the family to enable when the\n\
+         \x20   /// model has tables on this protocol but its family is off, and `None` otherwise.\n\
+         \x20   pub(crate) fn new(\n\
+         \x20       protocol: ProtocolVersion,\n\
+         \x20       model_number: ModelNumber,\n\
+         \x20       firmware: u8,\n\
+         \x20       id: Id,\n\
+         \x20   ) -> Result<Self, SetupError> {\n\
+         \x20       match (protocol, model_number.get()) {\n",
+    );
     for list in &resolved.lookups {
-        match lists.last_mut() {
-            Some(last) if last.number == list.number => *last = list,
-            _ => lists.push(list),
+        let cfg = cfg_attr(&list.family);
+        let key = format!(
+            "(ProtocolVersion::{}, {})",
+            list.protocol.variant(),
+            list.number
+        );
+        for (i, (_, ty)) in list.variants.iter().enumerate() {
+            let guard = list
+                .variants
+                .get(i + 1)
+                .map_or_else(String::new, |next| format!(" if firmware < {}", next.0));
+            let _ = writeln!(
+                out,
+                "            {cfg}\n            {key}{guard} => Ok(Self::{ty}({ty}::new(id))),"
+            );
         }
+        let _ = writeln!(
+            out,
+            "            #[cfg(not(feature = \"{family}\"))]\n            {key} => Err(SetupError::UnsupportedModel {{ id, model_number: {number}, protocol, feature: Some(\"{family}\") }}),",
+            family = list.family,
+            number = list.number,
+        );
     }
-    lists
+    out.push_str(
+        "            _ => Err(SetupError::UnsupportedModel { id, model_number: model_number.get(), protocol, feature: None }),\n        }\n    }\n\n",
+    );
+
+    out.push_str(
+        "    /// `Some` when this model's table depends on firmware on this protocol: the Firmware\n\
+         \x20   /// Version register to read before calling [`ActuatorKind::new`]. `None` otherwise,\n\
+         \x20   /// including when the model's family is off.\n\
+         \x20   pub(crate) fn firmware_register(\n\
+         \x20       protocol: ProtocolVersion,\n\
+         \x20       model_number: ModelNumber,\n\
+         \x20   ) -> Option<Register> {\n\
+         \x20       match (protocol, model_number.get()) {\n",
+    );
+    for list in resolved.lookups.iter().filter(|l| l.firmware_dependent()) {
+        let Some((_, first)) = list.variants.first() else {
+            continue;
+        };
+        let _ = writeln!(
+            out,
+            "            {}\n            (ProtocolVersion::{}, {}) => Some({}::{}),",
+            cfg_attr(&list.family),
+            list.protocol.variant(),
+            list.number,
+            first,
+            const_ident(&type_of(resolved, first).roles.firmware_version.data_name)
+        );
+    }
+    out.push_str("            _ => None,\n        }\n    }\n}\n\n");
 }
 
 fn render_module(resolved: &Resolved, has_tests: bool) -> String {
@@ -230,9 +298,10 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
          #![allow(\n    dead_code,\n    unused_variables,\n    clippy::approx_constant,\n    reason = \"every register is generated but only some are used; \
          with no family enabled some parameters are unused; \
          type_info angles are table data, not uses of π\"\n)]\n\n\
-         use crate::actuator::{Actuator, Cache, Describe, ModelData};\n\
-         use crate::error::Error;\n\
+         use crate::actuator::{Actuator, Cache, Describe, ModelData, ModelNumber};\n\
+         use crate::error::SetupError;\n\
          use crate::id::Id;\n\
+         use crate::protocol::ProtocolVersion;\n\
          use crate::register::{Access, Area, Register};\n\n",
     );
 
@@ -252,6 +321,14 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
         "\n/// Builds one register row. Private to `models`; model files call `super::reg`.\n\
          const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {\n\
          \x20   Register { addr, size, access, area }\n}\n",
+    );
+    let (mn_access, mn_area) = resolved.model_number.unwrap_or((Access::R, Area::Eeprom));
+    let _ = writeln!(
+        out,
+        "\n/// Model Number location, the same in every table (codegen checks it). Read on P1 Setup.\n\
+         pub(crate) const MODEL_NUMBER: Register = reg(0, 2, {}, {});",
+        access(mn_access),
+        area(mn_area)
     );
 
     out.push_str(
@@ -273,39 +350,7 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
     }
     out.push_str("}\n\n");
 
-    out.push_str(
-        "impl ActuatorKind {\n\
-         \x20   /// Builds the model type for `model_number`, picking the control table\n\
-         \x20   /// that matches `firmware`.\n\
-         \x20   ///\n\
-         \x20   /// Fails with [`Error::UnsupportedModel`] if the model is unknown or its\n\
-         \x20   /// family's Cargo feature is off.\n\
-         \x20   pub(crate) fn new(model_number: u16, firmware: u8, id: Id) -> Result<Self, Error> {\n\
-         \x20       match model_number {\n",
-    );
-    for list in default_lists(resolved) {
-        let cfg = cfg_attr(&list.family);
-        let number = list.number;
-        for (i, (_, ty)) in list.variants.iter().enumerate() {
-            let guard = list
-                .variants
-                .get(i + 1)
-                .map_or_else(String::new, |next| format!(" if firmware < {}", next.0));
-            let _ = writeln!(
-                out,
-                "            {cfg}\n            {number}{guard} => Ok(Self::{ty}({ty}::new(id))),"
-            );
-        }
-        let _ = writeln!(
-            out,
-            "            #[cfg(not(feature = \"{}\"))]\n            {number} => Err(Error::UnsupportedModel {{ model_number, feature: Some(\"{}\") }}),",
-            list.family, list.family
-        );
-    }
-    out.push_str(
-        "            _ => Err(Error::UnsupportedModel { model_number, feature: None }),\n        }\n    }\n}\n\n",
-    );
-
+    render_lookup(&mut out, resolved);
     out.push_str("impl Describe for ActuatorKind {\n");
     for (method, receiver, ret, binding) in [
         ("data", "&self", "&'static ModelData", "ref"),
@@ -489,5 +534,63 @@ mod tests {
             assert!(!text.contains("ModeSource::OperatingMode"), "{name}");
             assert!(!text.contains("ModeSource::ControlMode"), "{name}");
         }
+    }
+
+    fn lookup_files() -> Vec<(String, String)> {
+        files_for(
+            &Map::new()
+                .model(12, "ax", "AX-12A")
+                .p1(&[(0, "ax")])
+                .model(1020, "x-series", "XM430-W350")
+                .p1(&[(0, "xm")])
+                .p2(&[(0, "xm")])
+                .default_p2()
+                .model(1190, "x-series", "XL330-M077")
+                .p2(&[(0, "fw52"), (53, "new")]),
+            &[
+                ("ax", Table::ax()),
+                ("xm", Table::xm()),
+                ("fw52", Table::xm().protocols("[P2]")),
+                ("new", Table::xm().protocols("[P2]")),
+            ],
+        )
+    }
+
+    #[test]
+    fn lookup_per_protocol() {
+        let files = lookup_files();
+        let module = file(&files, "models.rs");
+        let c = compact(module);
+        assert!(c.contains("pub(crate)fnnew(protocol:ProtocolVersion,model_number:ModelNumber,firmware:u8,id:Id,)->Result<Self,SetupError>{match(protocol,model_number.get()){"));
+        let fw52 = module
+            .find("(ProtocolVersion::P2, 1190) if firmware < 53 => Ok(Self::Fw52(Fw52::new(id))),")
+            .unwrap();
+        let new = module
+            .find("(ProtocolVersion::P2, 1190) => Ok(Self::New(New::new(id))),")
+            .unwrap();
+        assert!(fw52 < new);
+        assert!(c.contains("#[cfg(not(feature=\"x-series\"))](ProtocolVersion::P2,1190)=>Err(SetupError::UnsupportedModel{id,model_number:1190,protocol,feature:Some(\"x-series\")}),"));
+        assert!(c.contains("_=>Err(SetupError::UnsupportedModel{id,model_number:model_number.get(),protocol,feature:None}),"));
+        let p1 = module.find("(ProtocolVersion::P1, 1020) =>").unwrap();
+        let p2 = module.find("(ProtocolVersion::P2, 1020) =>").unwrap();
+        assert!(p1 < p2);
+        assert!(c.contains("(ProtocolVersion::P2,1190)=>Some(Fw52::FIRMWARE_VERSION),"));
+        assert!(!c.contains("(ProtocolVersion::P2,1020)=>Some("));
+        assert!(module.contains(
+            "pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);"
+        ));
+        assert_eq!(
+            uses(module),
+            [
+                "usecrate::actuator::{Actuator,Cache,Describe,ModelData,ModelNumber}",
+                "usecrate::error::SetupError",
+                "usecrate::id::Id",
+                "usecrate::protocol::ProtocolVersion",
+                "usecrate::register::{Access,Area,Register}",
+            ]
+        );
+        assert!(
+            compact(file(&files, "models/ax.rs")).contains("protocols:Protocols{p1:true,p2:false}")
+        );
     }
 }

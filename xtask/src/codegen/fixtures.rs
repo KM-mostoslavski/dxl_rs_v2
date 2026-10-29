@@ -512,6 +512,115 @@ fn xm_root(table: Table) -> Root {
 pub(crate) fn failing() -> Vec<Failing> {
     vec![
         Failing {
+            check: 2,
+            root: Root::new(
+                &Map::new()
+                    .model(1020, "x-series", "XM430-W350")
+                    .p2(&[(1, "xm")]),
+                &[("xm", Table::xm().protocols("[P2]"))],
+            ),
+            file: "dynamixel",
+            keywords: &["model 1020", "p2 from_fw must start at 0"],
+        },
+        Failing {
+            check: 3,
+            root: Root::new(
+                &Map::new()
+                    .model(1020, "x-series", "XM430-W350")
+                    .p2(&[(0, "xm")])
+                    .model(1030, "x-series", "XM430-W210"),
+                &[("xm", Table::xm().protocols("[P2]"))],
+            ),
+            file: "dynamixel",
+            keywords: &["model 1030", "no p1 or p2 list"],
+        },
+        Failing {
+            check: 4,
+            root: Root::new(
+                &Map::new()
+                    .model(1020, "x-series", "XM430-W350")
+                    .p1(&[(0, "xm")])
+                    .p2(&[(0, "xm")]),
+                &[("xm", Table::xm())],
+            ),
+            file: "dynamixel",
+            keywords: &["model 1020", "default: P2 is required"],
+        },
+        Failing {
+            check: 6,
+            root: Root::new(
+                &Map::new()
+                    .model(1020, "x-series", "XM430-W350")
+                    .p2(&[(0, "xm")])
+                    .model(1030, "x-series", "XM430-W210")
+                    .p2(&[(0, "xm")]),
+                &[("xm", Table::xm().protocols("[P2]"))],
+            ),
+            file: "dynamixel",
+            keywords: &["table xm", "model 1020", "model 1030"],
+        },
+        Failing {
+            check: 8,
+            root: xm_root(Table::xm().omit_field("protocols")),
+            file: "xm",
+            keywords: &["protocols"],
+        },
+        Failing {
+            check: 9,
+            root: Root::new(
+                &Map::new()
+                    .model(1020, "x-series", "XM430-W350")
+                    .p1(&[(0, "xm")]),
+                &[("xm", Table::xm().protocols("[P2]"))],
+            ),
+            file: "xm",
+            keywords: &["listed under p1", "lack P1"],
+        },
+        Failing {
+            check: 12,
+            root: xm_root(Table::xm().without("Model Number").with_row(
+                2,
+                2,
+                "Model Number",
+                "R",
+                "EEPROM",
+            )),
+            file: "xm",
+            keywords: &["Model Number must be at address 0, size 2"],
+        },
+        Failing {
+            check: 13,
+            root: Root::new(
+                &Map::new()
+                    .model(1190, "x-series", "XL330-M077")
+                    .p2(&[(0, "old"), (53, "new")]),
+                &[
+                    ("old", Table::xm().protocols("[P2]")),
+                    (
+                        "new",
+                        Table::xm()
+                            .protocols("[P2]")
+                            .without("Firmware Version")
+                            .with_row(2, 1, "Firmware Version", "R", "EEPROM"),
+                    ),
+                ],
+            ),
+            file: "dynamixel",
+            keywords: &["model 1190", "old", "new", "Firmware Version"],
+        },
+        Failing {
+            check: 14,
+            root: xm_root(Table::xm().without("Goal Position").with_row(
+                564,
+                4,
+                "Goal Position",
+                "RW",
+                "RAM",
+            )),
+            file: "xm",
+            keywords: &["listed under p1 but Goal Position is at address 564 (> 255)"],
+        },
+        Failing {
             check: 10,
             root: xm_root(Table::xm().without("Goal Position")),
             file: "xm",

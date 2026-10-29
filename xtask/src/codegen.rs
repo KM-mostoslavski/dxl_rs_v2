@@ -533,4 +533,62 @@ mod tests {
             matches!(&ym.roles.mode, ModeRole::Register { row, .. } if row.data_name == "Operating Mode" && row.address == 33)
         );
     }
+
+    #[test]
+    fn real_tables_lookup_and_protocols() {
+        let real = real();
+        let module = file(&real.files, "models.rs");
+        for model in &real.resolved.models {
+            let table = &real.tables[&model.file];
+            let mn = find(table, "Model Number").unwrap();
+            assert_eq!((mn.address, mn.size), (0, 2), "{}", model.file);
+            assert!(module.contains(&format!(
+                "pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::{:?}, Area::{:?});",
+                mn.access, mn.area
+            )));
+            let p = |tag| table.protocols.contains(&tag);
+            assert!(
+                real.text(&model.file).contains(&format!(
+                    "protocols: Protocols {{ p1: {}, p2: {} }},",
+                    p(schema::ProtocolTag::P1),
+                    p(schema::ProtocolTag::P2)
+                )),
+                "{}",
+                model.file
+            );
+        }
+        for (&number, entry) in &real.map.models {
+            for (variant, list) in [("P1", &entry.p1), ("P2", &entry.p2)] {
+                let Some(list) = list else { continue };
+                for (i, t) in list.iter().enumerate() {
+                    let ty = names::type_ident(&t.file);
+                    let guard = list.get(i + 1).map_or_else(String::new, |next| {
+                        format!(" if firmware < {}", next.from_fw)
+                    });
+                    let arm = format!(
+                        "(ProtocolVersion::{variant}, {number}){guard} => Ok(Self::{ty}({ty}::new(id))),"
+                    );
+                    assert!(module.contains(&arm), "{arm}");
+                }
+                let dependent = format!("(ProtocolVersion::{variant}, {number}) => Some(");
+                assert_eq!(module.contains(&dependent), list.len() > 1, "{dependent}");
+            }
+        }
+
+        assert!(module.contains(
+            "(ProtocolVersion::P2, 1190) if firmware < 53 => Ok(Self::Xl330M077Fw52(Xl330M077Fw52::new(id))),"
+        ));
+        assert!(
+            module
+                .contains("(ProtocolVersion::P2, 1190) => Some(Xl330M077Fw52::FIRMWARE_VERSION),")
+        );
+        assert!(!module.contains("(ProtocolVersion::P2, 1020) => Some("));
+        assert!(!module.contains("(ProtocolVersion::P1, 1020) => Some("));
+        assert!(
+            real.text("ax_12a")
+                .contains("protocols: Protocols { p1: true, p2: false },")
+        );
+        assert!(!module.contains("(ProtocolVersion::P1, 350)"));
+        assert!(module.contains("(ProtocolVersion::P1, 28) => Ok(Self::Rx28(Rx28::new(id))),"));
+    }
 }

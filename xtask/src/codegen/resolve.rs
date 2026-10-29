@@ -7,8 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::Diagnostic;
 use super::names::{const_ident, module_ident, type_ident};
 use super::schema::{
-    Access, Area, ControlTable, ModelMap, OperatingModes, ProtocolTag, Row, Source, TypeInfo,
+    Access, Area, ControlTable, ModelEntry, ModelMap, OperatingModes, ProtocolTag, Row, Source,
+    TableRef, TypeInfo,
 };
+
+/// The family names, each a Cargo feature (FR-005, plus `rx` since T1).
+pub(crate) const FAMILIES: [&str; 6] = ["ax", "mx", "rx", "x-series", "y-series", "pro"];
 
 impl ProtocolTag {
     /// `p1` / `p2`, as the map's list names.
@@ -20,7 +24,6 @@ impl ProtocolTag {
     }
 
     /// `P1` / `P2`, as the generated `ProtocolVersion` variant.
-    #[allow(dead_code, reason = "the lookup uses it from US2")]
     pub(crate) const fn variant(self) -> &'static str {
         match self {
             Self::P1 => "P1",
@@ -133,7 +136,6 @@ pub(crate) struct LookupList {
 
 impl LookupList {
     /// Whether Setup must read the firmware version to pick the table.
-    #[allow(dead_code, reason = "firmware_register uses it from US2")]
     pub(crate) fn firmware_dependent(&self) -> bool {
         self.variants.len() > 1
     }
@@ -146,6 +148,9 @@ pub(crate) struct Resolved {
     pub(crate) models: Vec<GenModel>,
     /// By model number, P1 before P2.
     pub(crate) lookups: Vec<LookupList>,
+    /// The access and area every table gives Model Number, `None` with no
+    /// model.
+    pub(crate) model_number: Option<(Access, Area)>,
 }
 
 /// The resolved input and every problem found.
@@ -162,8 +167,33 @@ pub(crate) struct Outcome {
 /// One mapped file before its table is read.
 struct Mapping<'a> {
     number: u16,
-    entry: &'a super::schema::ModelEntry,
+    entry: &'a ModelEntry,
     appearances: Vec<(ProtocolTag, u8, Option<u8>)>,
+}
+
+/// Checks 3 and 4: the lists present, non-empty, and `default` set exactly
+/// when both exist, to P2.
+fn check_lists(number: u16, entry: &ModelEntry, errors: &mut Vec<Diagnostic>) {
+    let mut fail = |message: String| {
+        errors.push(Diagnostic::new(
+            "dynamixel",
+            format!("model {number}: {message}"),
+        ));
+    };
+    if entry.p1.is_none() && entry.p2.is_none() {
+        fail("no p1 or p2 list".to_string());
+    }
+    for (protocol, list) in [(ProtocolTag::P1, &entry.p1), (ProtocolTag::P2, &entry.p2)] {
+        if list.as_ref().is_some_and(Vec::is_empty) {
+            fail(format!("{} list is empty", protocol.list()));
+        }
+    }
+    match (entry.p1.is_some() && entry.p2.is_some(), entry.default) {
+        (true, None) => fail("default: P2 is required with both p1 and p2".to_string()),
+        (true, Some(ProtocolTag::P1)) => fail("default must be P2, found P1".to_string()),
+        (false, Some(_)) => fail("default is only allowed with both p1 and p2".to_string()),
+        _ => {}
+    }
 }
 
 /// Resolves `map` against the parsed `tables` (a table that failed to parse
@@ -176,9 +206,23 @@ pub(crate) fn resolve(
     let mut out = Outcome::default();
     let mut mapped: BTreeMap<&str, Mapping> = BTreeMap::new();
 
+    let mut reported: BTreeSet<(&str, u16)> = BTreeSet::new();
     for (&number, entry) in &map.models {
+        check_lists(number, entry, &mut out.errors);
+        if !FAMILIES.contains(&entry.family.as_str()) {
+            out.errors.push(Diagnostic::new(
+                "dynamixel",
+                format!(
+                    "model {number}: unknown family {:?} (expected {})",
+                    entry.family,
+                    FAMILIES.join(", ")
+                ),
+            ));
+        }
         for (protocol, list) in [(ProtocolTag::P1, &entry.p1), (ProtocolTag::P2, &entry.p2)] {
-            let Some(list) = list else { continue };
+            let Some(list) = list.as_ref().filter(|l| !l.is_empty()) else {
+                continue;
+            };
             check_order(number, protocol, list, &mut out.errors);
             for (i, table) in list.iter().enumerate() {
                 let until = list.get(i + 1).map(|next| next.from_fw);
@@ -189,6 +233,14 @@ pub(crate) fn resolve(
                 });
                 if mapping.number == number {
                     mapping.appearances.push((protocol, table.from_fw, until));
+                } else if reported.insert((&table.file, number)) {
+                    out.errors.push(Diagnostic::new(
+                        "dynamixel",
+                        format!(
+                            "table {} is listed under model {} and model {number}",
+                            table.file, mapping.number
+                        ),
+                    ));
                 }
             }
             out.resolved.lookups.push(LookupList {
@@ -215,6 +267,21 @@ pub(crate) fn resolve(
         let Some(table) = tables.get(file) else {
             continue;
         };
+        if table.protocols.is_empty() {
+            out.errors.push(Diagnostic::new(file, "protocols is empty"));
+        }
+        for &(protocol, _, _) in &mapping.appearances {
+            if !table.protocols.contains(&protocol) {
+                out.errors.push(Diagnostic::new(
+                    file,
+                    format!(
+                        "listed under {} but its protocols lack {}",
+                        protocol.list(),
+                        protocol.variant()
+                    ),
+                ));
+            }
+        }
         let registers = registers(file, table, &mut out.errors);
         check_scale(file, &table.type_info, &mut out.errors);
         let Some(roles) = roles(file, table, &mut out.errors) else {
@@ -240,6 +307,11 @@ pub(crate) fn resolve(
         let first = |m: &GenModel| m.appearances.iter().map(|a| a.1).min();
         (a.number, first(a), &a.file).cmp(&(b.number, first(b), &b.file))
     });
+    out.resolved.model_number = check_model_number(&out.resolved.models, &mut out.errors);
+    check_firmware_version(&out.resolved, &mut out.errors);
+    for model in &out.resolved.models {
+        check_p1_addresses(model, &mut out.errors);
+    }
 
     let not_mapped: BTreeSet<&str> = map.not_mapped.iter().map(|n| n.file.as_str()).collect();
     for stem in on_disk {
@@ -257,7 +329,7 @@ pub(crate) fn resolve(
 fn check_order(
     number: u16,
     protocol: ProtocolTag,
-    list: &[super::schema::TableRef],
+    list: &[TableRef],
     errors: &mut Vec<Diagnostic>,
 ) {
     if list.first().is_some_and(|first| first.from_fw != 0) {
@@ -546,11 +618,118 @@ fn check_scale(file: &str, scale: &TypeInfo, errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Check 12: Model Number at (0, 2) in every table, with one access and
+/// area. Returns the agreed access and area.
+fn check_model_number(models: &[GenModel], errors: &mut Vec<Diagnostic>) -> Option<(Access, Area)> {
+    let mut counts: BTreeMap<(Access, Area), usize> = BTreeMap::new();
+    for model in models {
+        let row = &model.roles.model_number;
+        if (row.address, row.size) != (0, 2) {
+            errors.push(Diagnostic::new(
+                model.file.as_str(),
+                format!(
+                    "Model Number must be at address 0, size 2, found address {}, size {}",
+                    row.address, row.size
+                ),
+            ));
+        }
+        *counts.entry((row.access, row.area)).or_default() += 1;
+    }
+    let (&(access, area), _) = counts.iter().max_by_key(|&(_, &n)| n)?;
+    for model in models {
+        let row = &model.roles.model_number;
+        if (row.access, row.area) != (access, area) {
+            errors.push(Diagnostic::new(
+                model.file.as_str(),
+                format!(
+                    "Model Number is {}/{} here but {}/{} in the other tables",
+                    access_name(row.access),
+                    area_name(row.area),
+                    access_name(access),
+                    area_name(area)
+                ),
+            ));
+        }
+    }
+    Some((access, area))
+}
+
+/// Check 13: one Firmware Version location across the tables of one
+/// (model number, protocol).
+fn check_firmware_version(resolved: &Resolved, errors: &mut Vec<Diagnostic>) {
+    for list in resolved.lookups.iter().filter(|l| l.firmware_dependent()) {
+        let rows: Vec<(&str, &Row)> = list
+            .variants
+            .iter()
+            .filter_map(|(_, ty)| resolved.models.iter().find(|m| m.type_ident == *ty))
+            .map(|m| (m.file.as_str(), &m.roles.firmware_version))
+            .collect();
+        let Some(&(first, row)) = rows.first() else {
+            continue;
+        };
+        for &(other, other_row) in &rows[1..] {
+            if (other_row.address, other_row.size) != (row.address, row.size) {
+                errors.push(Diagnostic::new(
+                    "dynamixel",
+                    format!(
+                        "model {}: {} tables {first} and {other} have Firmware Version at different locations ({}/{} and {}/{})",
+                        list.number,
+                        list.protocol.list(),
+                        row.address,
+                        row.size,
+                        other_row.address,
+                        other_row.size
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Check 14: a table listed under `p1` keeps every role within P1's 8-bit
+/// addresses.
+fn check_p1_addresses(model: &GenModel, errors: &mut Vec<Diagnostic>) {
+    if !model.appearances.iter().any(|a| a.0 == ProtocolTag::P1) {
+        return;
+    }
+    let roles = &model.roles;
+    let (limit_a, limit_b) = match &roles.limits {
+        Limits::MinMax { min, max } => (min, max),
+        Limits::CwCcw { cw, ccw } => (cw, ccw),
+    };
+    let mode = match &roles.mode {
+        ModeRole::Register { row, .. } => Some(row),
+        ModeRole::AngleLimits => None,
+    };
+    let rows = [
+        Some(&roles.model_number),
+        Some(&roles.firmware_version),
+        Some(&roles.torque_enable),
+        Some(&roles.goal_position),
+        Some(&roles.present_position),
+        Some(limit_a),
+        Some(limit_b),
+        roles.hardware_error.as_ref(),
+        mode,
+    ];
+    for row in rows.into_iter().flatten() {
+        if row.address > 255 {
+            errors.push(Diagnostic::new(
+                model.file.as_str(),
+                format!(
+                    "listed under p1 but {} is at address {} (> 255)",
+                    row.data_name, row.address
+                ),
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::codegen::fixtures::{Map, Table, outcome};
-    use crate::codegen::schema::OperatingModes;
+    use crate::codegen::schema::{OperatingModes, parse_table_str};
 
     fn single(table: Table) -> Outcome {
         let map = Map::single(1020, "x-series", "T", "t", &table);
@@ -863,5 +1042,266 @@ mod tests {
                 &["role Operating Mode must be 1 byte RW/EEPROM"],
             );
         }
+    }
+
+    #[track_caller]
+    fn assert_map_fails(map: &Map, tables: &[(&str, Table)], file: &str, keywords: &[&str]) {
+        let out = outcome(map, tables);
+        assert!(
+            out.errors
+                .iter()
+                .any(|d| d.file == file && keywords.iter().all(|k| d.message.contains(k))),
+            "no {file} error with {keywords:?} in {:?}",
+            out.errors
+        );
+    }
+
+    fn p2(table: Table) -> Table {
+        table.protocols("[P2]")
+    }
+
+    #[test]
+    fn check02_first_not_zero() {
+        assert_map_fails(
+            &Map::new().model(1190, "x-series", "X").p2(&[(1, "a")]),
+            &[("a", p2(Table::xm()))],
+            "dynamixel",
+            &["model 1190: p2 from_fw must start at 0"],
+        );
+    }
+
+    #[test]
+    fn check02_not_increasing() {
+        assert_map_fails(
+            &Map::new()
+                .model(1190, "x-series", "X")
+                .p2(&[(0, "a"), (60, "b"), (53, "c")]),
+            &[
+                ("a", p2(Table::xm())),
+                ("b", p2(Table::xm())),
+                ("c", p2(Table::xm())),
+            ],
+            "dynamixel",
+            &["model 1190: p2 from_fw must strictly increase"],
+        );
+    }
+
+    #[test]
+    fn check03_no_lists() {
+        assert_map_fails(
+            &Map::new().model(1020, "x-series", "X"),
+            &[],
+            "dynamixel",
+            &["model 1020: no p1 or p2 list"],
+        );
+    }
+
+    #[test]
+    fn check03_empty_list() {
+        assert_map_fails(
+            &Map::new().model(1020, "x-series", "X").p1(&[]),
+            &[],
+            "dynamixel",
+            &["model 1020: p1 list is empty"],
+        );
+    }
+
+    fn both(map: Map) -> Map {
+        map.p1(&[(0, "xm")]).p2(&[(0, "xm")])
+    }
+
+    #[test]
+    fn check04_missing_default() {
+        assert_map_fails(
+            &both(Map::new().model(1020, "x-series", "X")),
+            &[("xm", Table::xm())],
+            "dynamixel",
+            &["model 1020: default: P2 is required with both p1 and p2"],
+        );
+    }
+
+    #[test]
+    fn check04_default_p1() {
+        assert_map_fails(
+            &both(Map::new().model(1020, "x-series", "X")).default_p1(),
+            &[("xm", Table::xm())],
+            "dynamixel",
+            &["model 1020: default must be P2, found P1"],
+        );
+    }
+
+    #[test]
+    fn check04_default_with_one_list() {
+        assert_map_fails(
+            &Map::new()
+                .model(1020, "x-series", "X")
+                .p2(&[(0, "xm")])
+                .default_p2(),
+            &[("xm", p2(Table::xm()))],
+            "dynamixel",
+            &["model 1020: default is only allowed with both p1 and p2"],
+        );
+    }
+
+    #[test]
+    fn check06_file_under_two_numbers() {
+        assert_map_fails(
+            &Map::new()
+                .model(1020, "x-series", "A")
+                .p2(&[(0, "xm")])
+                .model(1030, "x-series", "B")
+                .p2(&[(0, "xm")]),
+            &[("xm", p2(Table::xm()))],
+            "dynamixel",
+            &["table xm is listed under model 1020 and model 1030"],
+        );
+    }
+
+    #[test]
+    fn check08_missing_protocols() {
+        let text = Table::xm().omit_field("protocols").render();
+        let d = parse_table_str(&text, "xm").unwrap_err();
+        assert_eq!(d.file, "xm");
+        assert!(d.message.contains("protocols"), "{}", d.message);
+    }
+
+    #[test]
+    fn check08_missing_source() {
+        let text = Table::xm().omit_field("source").render();
+        let d = parse_table_str(&text, "xm").unwrap_err();
+        assert_eq!(d.file, "xm");
+        assert!(d.message.contains("source"), "{}", d.message);
+    }
+
+    #[test]
+    fn check08_empty_protocols() {
+        assert_map_fails(
+            &Map::new().model(1020, "x-series", "X").p2(&[(0, "xm")]),
+            &[("xm", Table::xm().protocols("[]"))],
+            "xm",
+            &["protocols is empty"],
+        );
+    }
+
+    #[test]
+    fn check09_p1_list_without_p1() {
+        assert_map_fails(
+            &Map::new().model(1020, "x-series", "X").p1(&[(0, "xm")]),
+            &[("xm", p2(Table::xm()))],
+            "xm",
+            &["listed under p1 but its protocols lack P1"],
+        );
+    }
+
+    #[test]
+    fn check12_model_number_address() {
+        assert_fails(
+            replaced(Table::xm(), (0, 4, "Model Number", "R", "EEPROM")),
+            &["Model Number must be at address 0, size 2, found address 0, size 4"],
+        );
+    }
+
+    #[test]
+    fn check12_model_number_access() {
+        assert_map_fails(
+            &Map::new()
+                .model(12, "ax", "A")
+                .p1(&[(0, "a")])
+                .model(18, "ax", "B")
+                .p1(&[(0, "b")])
+                .model(300, "ax", "C")
+                .p1(&[(0, "c")]),
+            &[
+                ("a", Table::ax()),
+                ("b", Table::ax()),
+                (
+                    "c",
+                    replaced(Table::ax(), (0, 2, "Model Number", "RW", "EEPROM")),
+                ),
+            ],
+            "c",
+            &["Model Number is RW/EEPROM here but R/EEPROM in the other tables"],
+        );
+    }
+
+    #[test]
+    fn check13_firmware_version_moves() {
+        assert_map_fails(
+            &Map::new()
+                .model(1190, "x-series", "X")
+                .p2(&[(0, "old"), (53, "new")]),
+            &[
+                ("old", p2(Table::xm())),
+                (
+                    "new",
+                    p2(replaced(
+                        Table::xm(),
+                        (2, 1, "Firmware Version", "R", "EEPROM"),
+                    )),
+                ),
+            ],
+            "dynamixel",
+            &[
+                "model 1190",
+                "old",
+                "new",
+                "Firmware Version at different locations",
+            ],
+        );
+    }
+
+    #[test]
+    fn check14_p1_role_above_255() {
+        assert_fails(
+            replaced(Table::xm(), (564, 4, "Goal Position", "RW", "RAM")),
+            &["listed under p1 but Goal Position is at address 564 (> 255)"],
+        );
+        let out = single(p2(replaced(
+            Table::xm(),
+            (564, 4, "Goal Position", "RW", "RAM"),
+        )));
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+    }
+
+    #[test]
+    fn lookup_lists_per_protocol() {
+        let out = outcome(
+            &Map::new()
+                .model(1190, "x-series", "X")
+                .p2(&[(0, "fw52"), (53, "new")]),
+            &[("fw52", p2(Table::xm())), ("new", p2(Table::xm()))],
+        );
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+        let lookups = &out.resolved.lookups;
+        assert_eq!(lookups.len(), 1);
+        assert_eq!(lookups[0].protocol, ProtocolTag::P2);
+        assert_eq!(
+            lookups[0].variants,
+            [(0, "Fw52".to_string()), (53, "New".to_string())]
+        );
+        assert!(lookups[0].firmware_dependent());
+        assert_eq!(
+            out.resolved.models[0].appearances,
+            [(ProtocolTag::P2, 0, Some(53))]
+        );
+    }
+
+    #[test]
+    fn same_file_under_p1_and_p2() {
+        let out = single(Table::xm());
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+        assert_eq!(out.resolved.models.len(), 1);
+        assert_eq!(
+            out.resolved.models[0].appearances,
+            [(ProtocolTag::P1, 0, None), (ProtocolTag::P2, 0, None)]
+        );
+        let lookups = &out.resolved.lookups;
+        assert_eq!(lookups.len(), 2);
+        assert_eq!(
+            (lookups[0].protocol, lookups[1].protocol),
+            (ProtocolTag::P1, ProtocolTag::P2)
+        );
+        assert!(!lookups[0].firmware_dependent());
+        assert_eq!(out.resolved.model_number, Some((Access::R, Area::Eeprom)));
     }
 }
