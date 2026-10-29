@@ -42,3 +42,6 @@ pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
 pub use units::{Position, PositionScale};
+
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+pub fn alloc_only() {}
