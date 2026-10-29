@@ -37,10 +37,34 @@ use super::wire::Wire;
 ///
 /// It implements [`Actuator`] for what the bus read at Setup, and
 /// [`kind`](ActuatorRef::kind) gives the model itself.
+#[cfg_attr(
+    not(feature = "raw-registers"),
+    doc = r#"
+Reading or writing a register by address needs the `raw-registers`
+feature:
+
+```compile_fail,E0599
+use dxl_rs_v2::{ActuatorRef, Clock, P2, Transport};
+
+fn peek<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) {
+    let mut out = [0; 4];
+    let _ = xm.read_raw(132, &mut out);
+}
+```
+
+```compile_fail,E0599
+use dxl_rs_v2::{ActuatorRef, Clock, P2, Transport};
+
+fn poke<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) {
+    let _ = xm.write_raw(116, &[0x00, 0x08, 0x00, 0x00]);
+}
+```
+"#
+)]
 pub struct ActuatorRef<'b, P: Protocol, T: Transport, C: Clock> {
-    kind: &'b mut ActuatorKind,
-    state: &'b mut TorqueState,
-    wire: Wire<'b, P, T, C>,
+    pub(super) kind: &'b mut ActuatorKind,
+    pub(super) state: &'b mut TorqueState,
+    pub(super) wire: Wire<'b, P, T, C>,
 }
 
 impl<'b, P: Protocol, T: Transport, C: Clock> ActuatorRef<'b, P, T, C> {

@@ -72,6 +72,10 @@ mod group;
 mod id_set;
 mod multi;
 mod observe;
+#[cfg(feature = "partial-reads")]
+mod partial;
+#[cfg(feature = "raw-registers")]
+mod raw;
 #[cfg(feature = "std")]
 mod serial;
 mod setup;
@@ -217,6 +221,21 @@ impl Default for Config {
 /// returning microseconds is a [`Clock`]. With the `std` feature the clock
 /// defaults to `StdClock`; without it the bus must name one, so
 /// [`DefaultClock`] is [`NoClock`] and a bus without a clock cannot be built.
+#[cfg_attr(
+    not(feature = "partial-reads"),
+    doc = r#"
+Reads with one result per actuator need the `partial-reads` feature:
+
+```compile_fail,E0599
+use dxl_rs_v2::{Bus, Clock, Error, Id, P2, Position, Transport};
+
+fn read<T: Transport, C: Clock>(bus: &mut Bus<P2, T, C>, ids: [Id; 2]) {
+    let mut out: [Result<Position, Error>; 2] = [Ok(Position::ZERO); 2];
+    let _ = bus.read_positions_partial(ids, &mut out);
+}
+```
+"#
+)]
 #[cfg_attr(
     feature = "std",
     doc = r#"
