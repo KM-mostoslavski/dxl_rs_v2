@@ -99,16 +99,4 @@ impl Describe for Xl320 {
     }
 }
 
-impl Actuator for Xl320 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        350
-    }
-
-    fn name(&self) -> &'static str {
-        "XL-320"
-    }
-}
+impl Actuator for Xl320 {}

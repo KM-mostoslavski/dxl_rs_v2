@@ -131,16 +131,4 @@ impl Describe for H4220S300Ra {
     }
 }
 
-impl Actuator for H4220S300Ra {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        51201
-    }
-
-    fn name(&self) -> &'static str {
-        "H42-20-S300-RA"
-    }
-}
+impl Actuator for H4220S300Ra {}

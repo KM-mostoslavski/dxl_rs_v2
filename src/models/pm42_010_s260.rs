@@ -134,16 +134,4 @@ impl Describe for Pm42010S260 {
     }
 }
 
-impl Actuator for Pm42010S260 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        2100
-    }
-
-    fn name(&self) -> &'static str {
-        "PM42-010-S260"
-    }
-}
+impl Actuator for Pm42010S260 {}

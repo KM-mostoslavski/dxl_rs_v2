@@ -117,16 +117,4 @@ impl Describe for Xw540T140 {
     }
 }
 
-impl Actuator for Xw540T140 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1180
-    }
-
-    fn name(&self) -> &'static str {
-        "XW540-T140"
-    }
-}
+impl Actuator for Xw540T140 {}

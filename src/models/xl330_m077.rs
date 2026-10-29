@@ -122,16 +122,4 @@ impl Describe for Xl330M077 {
     }
 }
 
-impl Actuator for Xl330M077 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1190
-    }
-
-    fn name(&self) -> &'static str {
-        "XL330-M077"
-    }
-}
+impl Actuator for Xl330M077 {}

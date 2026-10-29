@@ -99,16 +99,4 @@ impl Describe for Mx64P1 {
     }
 }
 
-impl Actuator for Mx64P1 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        310
-    }
-
-    fn name(&self) -> &'static str {
-        "MX-64"
-    }
-}
+impl Actuator for Mx64P1 {}

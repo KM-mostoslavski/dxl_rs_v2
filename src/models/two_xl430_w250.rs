@@ -116,16 +116,4 @@ impl Describe for TwoXl430W250 {
     }
 }
 
-impl Actuator for TwoXl430W250 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1090
-    }
-
-    fn name(&self) -> &'static str {
-        "2XL430-W250"
-    }
-}
+impl Actuator for TwoXl430W250 {}

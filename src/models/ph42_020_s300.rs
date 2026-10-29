@@ -134,16 +134,4 @@ impl Describe for Ph42020S300 {
     }
 }
 
-impl Actuator for Ph42020S300 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        2000
-    }
-
-    fn name(&self) -> &'static str {
-        "PH42-020-S300"
-    }
-}
+impl Actuator for Ph42020S300 {}

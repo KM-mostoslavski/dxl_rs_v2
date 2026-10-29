@@ -116,16 +116,4 @@ impl Describe for Xc430W240 {
     }
 }
 
-impl Actuator for Xc430W240 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1080
-    }
-
-    fn name(&self) -> &'static str {
-        "XC430-W240"
-    }
-}
+impl Actuator for Xc430W240 {}

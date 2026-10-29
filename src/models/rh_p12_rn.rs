@@ -131,16 +131,4 @@ impl Describe for RhP12Rn {
     }
 }
 
-impl Actuator for RhP12Rn {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        35074
-    }
-
-    fn name(&self) -> &'static str {
-        "RH-P12-RN(A)"
-    }
-}
+impl Actuator for RhP12Rn {}

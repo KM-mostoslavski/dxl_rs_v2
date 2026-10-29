@@ -118,16 +118,4 @@ impl Describe for Xh430V350 {
     }
 }
 
-impl Actuator for Xh430V350 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1040
-    }
-
-    fn name(&self) -> &'static str {
-        "XH430-V350"
-    }
-}
+impl Actuator for Xh430V350 {}

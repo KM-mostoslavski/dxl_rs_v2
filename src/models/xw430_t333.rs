@@ -117,16 +117,4 @@ impl Describe for Xw430T333 {
     }
 }
 
-impl Actuator for Xw430T333 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1270
-    }
-
-    fn name(&self) -> &'static str {
-        "XW430-T333"
-    }
-}
+impl Actuator for Xw430T333 {}

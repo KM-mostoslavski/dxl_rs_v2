@@ -258,11 +258,7 @@ fn render_model(model: &GenModel) -> String {
          \x20   fn cache(&self) -> &Cache {{\n        &self.cache\n    }}\n\n\
          \x20   fn cache_mut(&mut self) -> &mut Cache {{\n        &mut self.cache\n    }}\n}}\n"
     );
-    let _ = writeln!(
-        out,
-        "impl Actuator for {ty} {{\n    fn id(&self) -> Id {{\n        self.cache.id()\n    }}\n\n    fn model_number(&self) -> u16 {{\n        {}\n    }}\n\n    fn name(&self) -> &'static str {{\n        {:?}\n    }}\n}}",
-        model.number, model.name
-    );
+    let _ = writeln!(out, "impl Actuator for {ty} {{}}");
     out
 }
 
@@ -437,27 +433,7 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
     }
     out.push_str("}\n\n");
 
-    out.push_str("impl Actuator for ActuatorKind {\n");
-    for (method, ret) in [
-        ("id", "Id"),
-        ("model_number", "u16"),
-        ("name", "&'static str"),
-    ] {
-        let _ = writeln!(
-            out,
-            "    fn {method}(&self) -> {ret} {{\n        match *self {{"
-        );
-        for model in &resolved.models {
-            let _ = writeln!(
-                out,
-                "            {}\n            Self::{}(ref m) => m.{method}(),",
-                cfg_attr(&model.family),
-                model.type_ident
-            );
-        }
-        out.push_str("        }\n    }\n\n");
-    }
-    out.push_str("}\n");
+    out.push_str("impl Actuator for ActuatorKind {}\n");
     out
 }
 
@@ -514,7 +490,7 @@ mod tests {
             "hardware_error:Some(Self::HARDWARE_ERROR_STATUS)",
             "mode:ModeSource::Register{register:Self::OPERATING_MODE,values:ModeValues{bounded:&[3],unbounded:&[4,5],no_position:&[0,1,16]}}",
             "protocols:Protocols{p1:true,p2:true}",
-            "fnid(&self)->Id{self.cache.id()}",
+            "implActuatorforXm{}",
             "implDescribeforXm{fndata(&self)->&'staticModelData{&Self::DATA}fncache(&self)->&Cache{&self.cache}fncache_mut(&mutself)->&mutCache{&mutself.cache}}",
         ] {
             assert!(c.contains(part), "{part}");
@@ -591,8 +567,12 @@ mod tests {
         );
         assert!(module.contains("Self::Xm(ref m) => m.data(),"));
         assert!(module.contains("Self::Xm(ref mut m) => m.cache_mut(),"));
+        assert!(module.contains("impl Actuator for ActuatorKind {}"));
         assert!(module.contains("#[cfg(test)]\nmod tests;"));
         for (name, text) in &files {
+            for method in ["fn id(&self", "fn model_number(&self", "fn name(&self"] {
+                assert!(!text.contains(method), "{name}: {method}");
+            }
             assert!(!text.contains("Register::new"), "{name}");
             assert!(!text.contains("use crate::{"), "{name}");
             assert!(!text.contains("ModeSource::OperatingMode"), "{name}");
@@ -691,7 +671,7 @@ mod tests {
                     assert_eq!(lines[arm], off, "line {line}");
                 }
             }
-            assert!(gated >= 10, "{family}: {gated}");
+            assert!(gated >= 7, "{family}: {gated}");
         }
         let header: String = uses(module).concat();
         for name in [

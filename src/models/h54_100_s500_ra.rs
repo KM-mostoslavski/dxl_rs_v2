@@ -131,16 +131,4 @@ impl Describe for H54100S500Ra {
     }
 }
 
-impl Actuator for H54100S500Ra {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        53769
-    }
-
-    fn name(&self) -> &'static str {
-        "H54-100-S500-RA"
-    }
-}
+impl Actuator for H54100S500Ra {}

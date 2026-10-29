@@ -124,16 +124,4 @@ impl Describe for Xd540T150 {
     }
 }
 
-impl Actuator for Xd540T150 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1111
-    }
-
-    fn name(&self) -> &'static str {
-        "XD540-T150"
-    }
-}
+impl Actuator for Xd540T150 {}

@@ -134,16 +134,4 @@ impl Describe for Ph54100S500 {
     }
 }
 
-impl Actuator for Ph54100S500 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        2010
-    }
-
-    fn name(&self) -> &'static str {
-        "PH54-100-S500"
-    }
-}
+impl Actuator for Ph54100S500 {}

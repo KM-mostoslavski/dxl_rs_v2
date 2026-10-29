@@ -124,16 +124,4 @@ impl Describe for Xh540V150 {
     }
 }
 
-impl Actuator for Xh540V150 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1150
-    }
-
-    fn name(&self) -> &'static str {
-        "XH540-V150"
-    }
-}
+impl Actuator for Xh540V150 {}

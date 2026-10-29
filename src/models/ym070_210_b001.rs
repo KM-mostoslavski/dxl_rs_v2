@@ -174,16 +174,4 @@ impl Describe for Ym070210B001 {
     }
 }
 
-impl Actuator for Ym070210B001 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        4010
-    }
-
-    fn name(&self) -> &'static str {
-        "YM070-210-B001"
-    }
-}
+impl Actuator for Ym070210B001 {}

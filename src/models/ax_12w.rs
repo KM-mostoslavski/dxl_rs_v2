@@ -93,16 +93,4 @@ impl Describe for Ax12w {
     }
 }
 
-impl Actuator for Ax12w {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        300
-    }
-
-    fn name(&self) -> &'static str {
-        "AX-12W"
-    }
-}
+impl Actuator for Ax12w {}

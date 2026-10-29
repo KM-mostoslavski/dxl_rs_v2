@@ -118,16 +118,4 @@ impl Describe for Xd430T210 {
     }
 }
 
-impl Actuator for Xd430T210 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        1011
-    }
-
-    fn name(&self) -> &'static str {
-        "XD430-T210"
-    }
-}
+impl Actuator for Xd430T210 {}

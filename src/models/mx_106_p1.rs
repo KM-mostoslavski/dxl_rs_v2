@@ -100,16 +100,4 @@ impl Describe for Mx106P1 {
     }
 }
 
-impl Actuator for Mx106P1 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        320
-    }
-
-    fn name(&self) -> &'static str {
-        "MX-106"
-    }
-}
+impl Actuator for Mx106P1 {}

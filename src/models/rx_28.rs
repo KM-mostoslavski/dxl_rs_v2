@@ -93,16 +93,4 @@ impl Describe for Rx28 {
     }
 }
 
-impl Actuator for Rx28 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        28
-    }
-
-    fn name(&self) -> &'static str {
-        "RX-28"
-    }
-}
+impl Actuator for Rx28 {}

@@ -131,16 +131,4 @@ impl Describe for M5460S250Ra {
     }
 }
 
-impl Actuator for M5460S250Ra {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        46353
-    }
-
-    fn name(&self) -> &'static str {
-        "M54-60-S250-RA"
-    }
-}
+impl Actuator for M5460S250Ra {}

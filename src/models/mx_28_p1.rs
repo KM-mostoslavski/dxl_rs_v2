@@ -96,16 +96,4 @@ impl Describe for Mx28P1 {
     }
 }
 
-impl Actuator for Mx28P1 {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        29
-    }
-
-    fn name(&self) -> &'static str {
-        "MX-28"
-    }
-}
+impl Actuator for Mx28P1 {}

@@ -131,16 +131,4 @@ impl Describe for M4210S260Ra {
     }
 }
 
-impl Actuator for M4210S260Ra {
-    fn id(&self) -> Id {
-        self.cache.id()
-    }
-
-    fn model_number(&self) -> u16 {
-        43289
-    }
-
-    fn name(&self) -> &'static str {
-        "M42-10-S260-RA"
-    }
-}
+impl Actuator for M4210S260Ra {}
