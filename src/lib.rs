@@ -11,6 +11,7 @@ extern crate alloc;
 extern crate std;
 
 mod actuator;
+mod bus;
 mod error;
 mod id;
 pub mod models;
@@ -20,6 +21,7 @@ mod transport;
 mod units;
 
 pub use actuator::{Actuator, ModelNumber, TorqueState};
+pub use bus::{ActuatorRef, Bus, Config, DefaultClock, NoClock};
 /// The `embedded-io` crate this one builds on, so users can implement and
 /// call [`Transport`] without a version-matched dependency of their own.
 pub use embedded_io;
