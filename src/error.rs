@@ -61,20 +61,6 @@ pub enum Error {
     #[error(transparent)]
     Validation(#[from] ValidationError),
 
-    /// Kept for today's generated code; use
-    /// [`SetupError::UnsupportedModel`]. Removed in core-2.
-    ///
-    /// `feature` names the Cargo feature that would add the model, or is
-    /// `None` if no feature does.
-    #[doc(hidden)]
-    #[error("unsupported model number {model_number}{}", FeatureHint(*feature))]
-    UnsupportedModel {
-        /// The model number the actuator reported.
-        model_number: u16,
-        /// The Cargo feature that adds this model, if any.
-        feature: Option<&'static str>,
-    },
-
     /// The serial line failed, or a reply did not arrive in time.
     #[error(transparent)]
     Transport(#[from] TransportError),
@@ -291,6 +277,16 @@ pub enum ValidationError {
 ///         | S::NotOnBus { .. }
 ///         | S::UnknownOperatingMode { .. } => true,
 ///     }
+/// }
+/// ```
+///
+/// An unsupported model is a setup error, matched as
+/// `Error::Setup(SetupError::UnsupportedModel { .. })`; [`Error`] has no
+/// variant of its own for it:
+///
+/// ```compile_fail,E0599
+/// fn unsupported(err: dxl_rs_v2::Error) -> bool {
+///     matches!(err, dxl_rs_v2::Error::UnsupportedModel { .. })
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
