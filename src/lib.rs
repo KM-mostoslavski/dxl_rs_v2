@@ -42,3 +42,7 @@ pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
 pub use units::{Position, PositionScale};
+
+/// Seeded fault.
+#[cfg(feature = "ax")]
+pub const SEEDED: usize = core::mem::size_of::<crate::models::Mx28>();
