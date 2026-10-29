@@ -8,15 +8,20 @@ use crate::protocol::{Clock, Protocol};
 
 use super::wire::Wire;
 
+/// Whether `err` is a reply that reports a hardware fault.
+pub(crate) fn is_hardware_fault(err: &Error) -> bool {
+    matches!(err, Error::Status(status) if status.is_hardware_fault())
+}
+
 /// Whether `result` carries a reply that reports a hardware fault.
-fn is_hardware_fault<V>(result: &Result<V, Error>) -> bool {
-    matches!(result, Err(Error::Status(err)) if err.is_hardware_fault())
+fn is_fault<V>(result: &Result<V, Error>) -> bool {
+    result.as_ref().is_err_and(is_hardware_fault)
 }
 
 /// Marks the actuator `Faulted` when `result` is a reply reporting a
 /// hardware fault. Any other result leaves the state as it is.
 pub(crate) fn observe<V>(state: &mut TorqueState, result: &Result<V, Error>) {
-    if is_hardware_fault(result) {
+    if is_fault(result) {
         *state = state.fault();
     }
 }
@@ -31,7 +36,7 @@ pub(crate) fn after_torque_write(
 ) {
     *state = match result {
         Ok(()) => wanted,
-        Err(_) if is_hardware_fault(result) => state.fault(),
+        Err(_) if is_fault(result) => state.fault(),
         Err(_) => state.disable(),
     };
 }

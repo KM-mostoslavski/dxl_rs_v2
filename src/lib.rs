@@ -23,7 +23,7 @@ mod units;
 pub use actuator::{Actuator, ModelNumber, TorqueState};
 #[cfg(feature = "std")]
 pub use bus::SerialBus;
-pub use bus::{ActuatorRef, Bus, Config, DefaultClock, NoClock};
+pub use bus::{ActuatorRef, Bus, Config, DefaultClock, IdSet, IdSetIter, NoClock, field};
 /// The `embedded-io` crate this one builds on, so users can implement and
 /// call [`Transport`] without a version-matched dependency of their own.
 pub use embedded_io;

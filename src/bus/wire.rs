@@ -87,6 +87,21 @@ impl<'b, P: Protocol, T: Transport, C: Clock> Wire<'b, P, T, C> {
         P::scan(&mut link, on_reply)
     }
 
+    /// Writes `size` bytes at `addr` on every actuator in `entries` with one
+    /// Sync Write. No reply, so never retried; the timeout only bounds the
+    /// drain of stale input.
+    pub(crate) fn sync_write<'d, I>(&mut self, addr: u16, size: u8, entries: I) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, &'d [u8])> + Clone,
+    {
+        let mut link = Link {
+            transport: &mut *self.transport,
+            clock: &mut *self.clock,
+            timeout: self.config.timeout,
+        };
+        P::sync_write(&mut link, addr, u16::from(size), entries)
+    }
+
     /// Reads register `reg` of `id` and decodes it.
     pub(crate) fn read_value(&mut self, id: Id, reg: Register) -> Result<i32, Error> {
         let mut buf = [0; 4];
