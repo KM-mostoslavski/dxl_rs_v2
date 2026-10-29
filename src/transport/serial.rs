@@ -11,6 +11,8 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 type NativePort = serialport::TTYPort;
 #[cfg(windows)]
 type NativePort = serialport::COMPort;
+#[cfg(windows)]
+const SEEDED: u8 = "x";
 
 /// The port timeout `open` sets. It bounds a read that races an empty
 /// buffer, the wait for the OS to accept written bytes (the whole write on
