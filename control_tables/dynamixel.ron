@@ -28,6 +28,7 @@
     300: (family: "ax", name: "AX-12W", p1: [(from_fw: 0, file: "ax_12w")], tables: [(from_fw: 0, file: "ax_12w")]),
     28: (family: "rx", name: "RX-28", p1: [(from_fw: 0, file: "rx_28")], tables: [(from_fw: 0, file: "rx_28")]),
     30: (family: "mx", name: "MX-28(2.0)", p1: [(from_fw: 0, file: "mx_28")], p2: [(from_fw: 0, file: "mx_28")], default: P2, tables: [(from_fw: 0, file: "mx_28")]),
+    310: (family: "mx", name: "MX-64", p1: [(from_fw: 0, file: "mx_64_p1")], tables: [(from_fw: 0, file: "mx_64_p1")]),
     311: (family: "mx", name: "MX-64(2.0)", p1: [(from_fw: 0, file: "mx_64")], p2: [(from_fw: 0, file: "mx_64")], default: P2, tables: [(from_fw: 0, file: "mx_64")]),
     321: (family: "mx", name: "MX-106(2.0)", p1: [(from_fw: 0, file: "mx_106")], p2: [(from_fw: 0, file: "mx_106")], default: P2, tables: [(from_fw: 0, file: "mx_106")]),
     350: (family: "x-series", name: "XL-320", p2: [(from_fw: 0, file: "xl320")], tables: [(from_fw: 0, file: "xl320")]),

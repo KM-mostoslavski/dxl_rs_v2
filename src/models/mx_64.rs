@@ -13,7 +13,7 @@ use crate::units::PositionScale;
 /// Protocol 1, all firmware. Protocol 2, all firmware.
 ///
 /// Source table: `control_tables/mx_64.ron`.
-/// Unverified: not yet checked against the ROBOTIS e-Manual.
+/// Verified against <https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/> on 2026-10-29.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mx64 {
     cache: Cache,
@@ -103,10 +103,6 @@ impl Mx64 {
     pub(crate) const PRESENT_TEMPERATURE: Register = super::reg(146, 1, Access::R, Area::Ram);
     pub(crate) const INDIRECT_ADDRESS_1: Register = super::reg(168, 2, Access::RW, Area::Ram);
     pub(crate) const INDIRECT_DATA_1: Register = super::reg(224, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_WRITE: Register = super::reg(168, 2, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_DATA_WRITE: Register = super::reg(224, 1, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_ADDRESS_READ: Register = super::reg(578, 2, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_DATA_READ: Register = super::reg(634, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for Mx64 {
