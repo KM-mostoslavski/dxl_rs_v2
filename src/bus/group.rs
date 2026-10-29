@@ -227,26 +227,49 @@ pub(crate) fn stage_reads<F: Field>(
     Ok(())
 }
 
+/// What a multi-actuator read does when the instruction of one register
+/// layout fails (an invalid request or a failing transport).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OnFailedGroup {
+    /// Return that error at once; later layouts are not read (strict
+    /// reads).
+    Abort,
+    /// Give that error to every target of the layout still waiting for its
+    /// reply, then read the next layout (`partial-reads`).
+    #[cfg(feature = "partial-reads")]
+    Share,
+}
+
 /// Reads field `F` of every staged target: one `R::run` per register
 /// layout, replies mapped to their stages in target order (the e-Manual
-/// Sync Read reply order). Each decoded tick goes into its stage, and every
-/// target's result passes `observe`.
-///
-/// Returns the first hardware fault in target order, else the first error.
-/// A failing `R::run` (an invalid request or a failing transport) aborts
-/// at once.
-pub(crate) fn read_stages<P, T, C, F, R>(
+/// Sync Read reply order). Each target's decoded tick, or its error, passes
+/// `observe`, then goes to `on_target(target index, actuator, stage,
+/// result)`. A failing `R::run` is handled as `failed` says.
+pub(crate) fn read_each<P, T, C, F, R, G>(
     wire: &mut Wire<'_, P, T, C>,
     kinds: &[ActuatorKind],
     states: &mut [TorqueState],
     stages: &mut [Stage],
+    failed: OnFailedGroup,
+    mut on_target: G,
 ) -> Result<(), Error>
 where
     F: Field,
     R: ReadMany<P, T, C>,
+    G: FnMut(usize, &ActuatorKind, &Cell<Stage>, Result<i32, Error>),
 {
     let cells = Cell::from_mut(stages).as_slice_of_cells();
-    let mut first = FirstError::default();
+    let mut deliver = |target: usize, member: &Cell<Stage>, reply: Result<&[u8], Error>| {
+        let slot = usize::from(member.get().slot);
+        let Some(kind) = kinds.get(slot) else {
+            return;
+        };
+        let result = reply.and_then(|bytes| Ok(F::register(kind.data()).decode(bytes)?));
+        if let Some(state) = states.get_mut(slot) {
+            observe(state, &result);
+        }
+        on_target(target, kind, member, result);
+    };
     for (index, cell) in cells.iter().enumerate() {
         let key = cell.get().key();
         if cells.iter().take(index).any(|seen| seen.get().key() == key) {
@@ -261,26 +284,57 @@ where
             .filter_map(|(_, member)| Some(kinds.get(usize::from(member.get().slot))?.id()));
         let mut cursor = members;
         let mut scratch = [0; 4];
-        R::run(wire, key.0, key.1, ids, &mut scratch, |_, reply| {
-            let Some((target, member)) = cursor.next() else {
-                return;
-            };
-            let mut stage = member.get();
-            let slot = usize::from(stage.slot);
-            let Some(kind) = kinds.get(slot) else {
-                return;
-            };
-            let result = reply.and_then(|bytes| Ok(F::register(kind.data()).decode(bytes)?));
+        let run = R::run(wire, key.0, key.1, ids, &mut scratch, |_, reply| {
+            if let Some((target, member)) = cursor.next() {
+                deliver(target, member, reply);
+            }
+        });
+        match (run, failed) {
+            (Ok(()), _) => {}
+            (Err(err), OnFailedGroup::Abort) => return Err(err),
+            #[cfg(feature = "partial-reads")]
+            (Err(err), OnFailedGroup::Share) => {
+                for (target, member) in cursor {
+                    deliver(target, member, Err(err));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reads field `F` of every staged target, strictly: each decoded tick goes
+/// into its stage, and every target's result passes `observe`.
+///
+/// Returns the first hardware fault in target order, else the first error.
+/// A failing `R::run` (an invalid request or a failing transport) aborts
+/// at once.
+pub(crate) fn read_stages<P, T, C, F, R>(
+    wire: &mut Wire<'_, P, T, C>,
+    kinds: &[ActuatorKind],
+    states: &mut [TorqueState],
+    stages: &mut [Stage],
+) -> Result<(), Error>
+where
+    F: Field,
+    R: ReadMany<P, T, C>,
+{
+    let mut first = FirstError::default();
+    read_each::<P, T, C, F, R, _>(
+        wire,
+        kinds,
+        states,
+        stages,
+        OnFailedGroup::Abort,
+        |target, _, member, result| {
             if let Ok(raw) = result {
+                let mut stage = member.get();
                 stage.bytes = raw.to_le_bytes();
                 member.set(stage);
             }
-            if let Some(state) = states.get_mut(slot) {
-                observe(state, &result);
-            }
             first.note(target, &result);
-        })?;
-    }
+        },
+    )?;
     first.into_result()
 }
 

@@ -67,12 +67,24 @@ impl<'b, P: Protocol, T: Transport, C: Clock> Wire<'b, P, T, C> {
 
     /// Reads `out.len()` bytes at `reg`'s address on `id`.
     pub(crate) fn read(&mut self, id: Id, reg: Register, out: &mut [u8]) -> Result<(), Error> {
-        self.unicast(|link| P::read(link, id, reg.addr, out))
+        self.read_at(id, reg.addr, out)
     }
 
     /// Writes `bytes` at `reg`'s address on `id` and waits for the status.
     pub(crate) fn write(&mut self, id: Id, reg: Register, bytes: &[u8]) -> Result<(), Error> {
-        self.unicast(|link| P::write(link, id, reg.addr, bytes))
+        self.write_at(id, reg.addr, bytes)
+    }
+
+    /// Reads `out.len()` bytes at `addr` on `id`, whatever register is
+    /// there.
+    pub(crate) fn read_at(&mut self, id: Id, addr: u16, out: &mut [u8]) -> Result<(), Error> {
+        self.unicast(|link| P::read(link, id, addr, out))
+    }
+
+    /// Writes `bytes` at `addr` on `id`, whatever register is there, and
+    /// waits for the status.
+    pub(crate) fn write_at(&mut self, id: Id, addr: u16, bytes: &[u8]) -> Result<(), Error> {
+        self.unicast(|link| P::write(link, id, addr, bytes))
     }
 
     /// Finds every actuator answering at this baud rate (P2 broadcast ping,
