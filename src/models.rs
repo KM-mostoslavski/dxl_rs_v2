@@ -17,6 +17,10 @@ pub use ax_12a::Ax12a;
 mod ax_18a;
 #[cfg(feature = "ax")]
 pub use ax_18a::Ax18a;
+#[cfg(feature = "rx")]
+mod rx_28;
+#[cfg(feature = "rx")]
+pub use rx_28::Rx28;
 #[cfg(feature = "mx")]
 mod mx_28;
 #[cfg(feature = "mx")]
@@ -299,6 +303,9 @@ pub enum ActuatorKind {
     /// AX-18A.
     #[cfg(feature = "ax")]
     Ax18a(Ax18a),
+    /// RX-28.
+    #[cfg(feature = "rx")]
+    Rx28(Rx28),
     /// MX-28(2.0).
     #[cfg(feature = "mx")]
     Mx28(Mx28),
@@ -523,6 +530,13 @@ impl ActuatorKind {
             18 => Err(Error::UnsupportedModel {
                 model_number,
                 feature: Some("ax"),
+            }),
+            #[cfg(feature = "rx")]
+            28 => Ok(Self::Rx28(Rx28::new(id))),
+            #[cfg(not(feature = "rx"))]
+            28 => Err(Error::UnsupportedModel {
+                model_number,
+                feature: Some("rx"),
             }),
             #[cfg(feature = "mx")]
             30 => Ok(Self::Mx28(Mx28::new(id))),
@@ -978,6 +992,8 @@ impl Actuator for ActuatorKind {
             Self::Ax12a(ref a) => a.id(),
             #[cfg(feature = "ax")]
             Self::Ax18a(ref a) => a.id(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref a) => a.id(),
             #[cfg(feature = "mx")]
             Self::Mx28(ref a) => a.id(),
             #[cfg(feature = "ax")]
@@ -1121,6 +1137,8 @@ impl Actuator for ActuatorKind {
             Self::Ax12a(ref a) => a.model_number(),
             #[cfg(feature = "ax")]
             Self::Ax18a(ref a) => a.model_number(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref a) => a.model_number(),
             #[cfg(feature = "mx")]
             Self::Mx28(ref a) => a.model_number(),
             #[cfg(feature = "ax")]
@@ -1264,6 +1282,8 @@ impl Actuator for ActuatorKind {
             Self::Ax12a(ref a) => a.name(),
             #[cfg(feature = "ax")]
             Self::Ax18a(ref a) => a.name(),
+            #[cfg(feature = "rx")]
+            Self::Rx28(ref a) => a.name(),
             #[cfg(feature = "mx")]
             Self::Mx28(ref a) => a.name(),
             #[cfg(feature = "ax")]
