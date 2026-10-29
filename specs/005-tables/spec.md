@@ -60,6 +60,21 @@ operating mode" (`specs/ideas/module-interfaces.md` §2.4b): the tables give the
   default Cargo feature `rx`. This is T1's only generated change. The constitution's feature list
   and the SRS gain `rx` through the architect.
 
+### Session 2026-10-29 (provisional, taken by the agent to keep T1 moving; architect may overturn at review of PR #9)
+
+- Q: PRO/PRO+/RH pages give External Port Data 1–4 access `R/RW` (read-only as an input, writable
+  as an output). → A: Record `RW`. The actuator rejects a write in input mode with a status error,
+  which the bus reports; the page's `R/RW` is noted in the findings.
+- Q: Y pages define a third area, `Hybrid` (kept after power-off, writable with torque on). → A:
+  `area` gains the value `Hybrid`, taken from the page's Area column; core's `Area` gains `Hybrid`
+  (added to core-1, PR #8).
+- Q: X330 firmware-52 tables have no control table of their own on the e-Manual, only a note on
+  the indirect address ranges. → A: Their `access`/`area` come from the current X330 page with
+  that note applied; still e-Manual only (constitution IV), recorded in the findings.
+- Q: "Indirect Address Read" (180) and "Indirect Data Read" (230) in the current X330 tables sit in
+  rows the page elides with "…". → A: They take the access/area of the elided block; T2 decides
+  whether they are renamed or removed.
+
 ## User Scenarios & Testing *(mandatory)*
 
 The "users" of this module are the crate maintainer who adds or fixes actuator models, the

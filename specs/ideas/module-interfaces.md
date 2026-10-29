@@ -958,5 +958,12 @@ Open:
 - AX-18F is recorded as `SameNumberAs(18)` (tables plan, deviation 2): the AX-18A page covers
   "AX-18F, AX-18A", number 18, same layout. Data only; confirm.
 - `cache_mut` misuse (core research R-12): generic user code bounded on `A: Actuator` can call
-  `cache_mut()` and copy one actuator's `Cache` (Id, mode, limits) over another's. Fix if wanted: a
-  crate-private token argument on `cache_mut`. It changes X1's emitted impl, so decide before X1.
+  `cache_mut()` and copy one actuator's `Cache` (Id, mode, limits) over another's. Provisional
+  (2026-10-29, agent, to unblock X1): no token; `cache_mut` stays as specified and its doc says it
+  is for the bus. A token can still be added before 1.0 (breaking changes allowed in alpha).
+- Provisional 2026-10-29 (tables spec, Session 2026-10-29): `Area` gains `Hybrid` (Y series),
+  added to core-1; X1 maps `area: Hybrid` to it. PRO External Port Data `R/RW` is recorded `RW`.
+- Integration (user, 2026-10-29): agents no longer wait for merges. Finished branches are merged
+  into branch `integration` (worktree `../dxl_rs_v2-int`); each next branch starts from it and its
+  PR into `main` says which PRs it is stacked on. "Merged into `main`" in the task lists reads
+  "merged into `integration`".

@@ -59,7 +59,7 @@ a review error, not a state.
 | `size` | u8 | yes | unchanged |
 | `data_name` | string | yes | the name the model's own page uses |
 | `access` | `R` or `RW` | yes (new) | from the page's Access column |
-| `area` | `EEPROM` or `RAM` | yes (new) | from the page heading the row sits under |
+| `area` | `EEPROM`, `RAM` or `Hybrid` | yes (new) | from the page heading the row sits under, or the page's Area column (Y series); `Hybrid` only where the page says so |
 
 Validation:
 - Any other `access` value (e.g. `W`) stops the work and is raised (contract 3.1).
