@@ -42,3 +42,11 @@ pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
 pub use units::{Position, PositionScale};
+
+#[cfg(all(test, not(feature = "ax")))]
+mod seeded {
+    #[test]
+    fn family_off() {
+        panic!("seeded");
+    }
+}
