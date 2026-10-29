@@ -1,8 +1,9 @@
 //! Fields of the explicit multi-actuator calls (research R-15).
 //!
 //! A field names one register of every model, and the type its values have:
-//! [`Bus::sync_write`](crate::Bus::sync_write) takes a [`WriteField`]. The
-//! field is passed as a value, so no turbofish is needed:
+//! [`Bus::sync_write`](crate::Bus::sync_write) takes a [`WriteField`],
+//! [`Bus::sync_read`](crate::Bus::sync_read) (Protocol 2) a [`ReadField`].
+//! The field is passed as a value, so no turbofish is needed:
 //!
 //! ```
 //! use dxl_rs_v2::field::{GoalPosition, Raw, WriteField};
@@ -44,6 +45,10 @@ pub(crate) mod sealed {
         /// [`ValidationError::NotFinite`] or [`ValidationError::DoesNotFit`]
         /// for an angle that maps to no tick.
         fn to_raw(self, scale: &PositionScale) -> Result<i32, ValidationError>;
+
+        /// The value of register value (tick) `raw`, given the model's
+        /// `scale`.
+        fn from_raw(raw: i32, scale: &PositionScale) -> Self;
     }
 }
 
@@ -110,10 +115,18 @@ impl sealed::Value for Position {
     fn to_raw(self, scale: &PositionScale) -> Result<i32, ValidationError> {
         scale.to_raw(self)
     }
+
+    fn from_raw(raw: i32, scale: &PositionScale) -> Self {
+        scale.to_position(raw)
+    }
 }
 
 impl sealed::Value for i32 {
     fn to_raw(self, _: &PositionScale) -> Result<i32, ValidationError> {
         Ok(self)
+    }
+
+    fn from_raw(raw: i32, _: &PositionScale) -> Self {
+        raw
     }
 }

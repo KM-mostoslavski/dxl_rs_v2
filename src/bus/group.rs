@@ -8,11 +8,14 @@ use crate::actuator::{Actuator, Describe, TorqueState};
 use crate::error::{Error, SetupError, ValidationError};
 use crate::models::ActuatorKind;
 
+use core::cell::Cell;
+
 use super::field::WriteField;
-use super::field::sealed::Value;
+use super::field::sealed::{Field, Value};
 use super::id_set::IdSet;
-use super::observe::is_hardware_fault;
+use super::observe::{is_hardware_fault, observe};
 use super::slots::find;
+use super::wire::{ReadMany, Wire};
 
 /// One target of a multi-actuator call, staged before anything is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,6 +42,11 @@ impl Stage {
     /// The register layout this stage is sent with.
     fn key(&self) -> (u16, u8) {
         (self.addr, self.size)
+    }
+
+    /// The tick a read staged.
+    pub(crate) fn raw(&self) -> i32 {
+        i32::from_le_bytes(self.bytes)
     }
 
     /// The `size` staged bytes.
@@ -161,28 +169,119 @@ pub(crate) fn entries<'s>(
         .filter_map(|stage| Some((kinds.get(usize::from(stage.slot))?.id(), stage.data())))
 }
 
-/// The error a call over several targets returns: the first hardware
-/// fault, else the first error.
+/// The error a call over several targets returns: the first hardware fault
+/// in target order, else the first error in target order.
 #[derive(Debug, Default)]
-pub(crate) struct FirstError(Option<Error>);
+pub(crate) struct FirstError(Option<(usize, Error)>);
 
 impl FirstError {
-    /// Notes the result of one target.
-    pub(crate) fn note<V>(&mut self, result: &Result<V, Error>) {
+    /// Notes the result of target `index`.
+    pub(crate) fn note<V>(&mut self, index: usize, result: &Result<V, Error>) {
         let Err(err) = result else { return };
-        let replace = match &self.0 {
+        let better = match &self.0 {
             None => true,
-            Some(kept) => !is_hardware_fault(kept) && is_hardware_fault(err),
+            Some((kept_at, kept)) => match (is_hardware_fault(kept), is_hardware_fault(err)) {
+                (false, true) => true,
+                (true, false) => false,
+                _ => index < *kept_at,
+            },
         };
-        if replace {
-            self.0 = Some(*err);
+        if better {
+            self.0 = Some((index, *err));
         }
     }
 
     /// `Ok` if no target failed, else the kept error.
     pub(crate) fn into_result(self) -> Result<(), Error> {
-        self.0.map_or(Ok(()), Err)
+        self.0.map_or(Ok(()), |(_, err)| Err(err))
     }
+}
+
+/// Checks that a read has a slot of `out` for every target; extra slots
+/// stay untouched.
+///
+/// # Errors
+///
+/// [`ValidationError::BufferLength`] when `got < targets`.
+pub(crate) fn check_out(targets: usize, got: usize) -> Result<(), ValidationError> {
+    if got >= targets {
+        Ok(())
+    } else {
+        Err(ValidationError::BufferLength { targets, got })
+    }
+}
+
+/// Stages a read of field `F`: each target's register layout.
+pub(crate) fn stage_reads<F: Field>(
+    kinds: &[ActuatorKind],
+    stages: &mut [Stage],
+) -> Result<(), Error> {
+    for stage in stages {
+        let kind = kinds
+            .get(usize::from(stage.slot))
+            .ok_or_else(|| lost(kinds))?;
+        let reg = F::register(kind.data());
+        stage.addr = reg.addr;
+        stage.size = reg.size;
+    }
+    Ok(())
+}
+
+/// Reads field `F` of every staged target: one `R::run` per register
+/// layout, replies mapped to their stages in target order (the e-Manual
+/// Sync Read reply order). Each decoded tick goes into its stage, and every
+/// target's result passes `observe`.
+///
+/// Returns the first hardware fault in target order, else the first error.
+/// A failing `R::run` (an invalid request or a failing transport) aborts
+/// at once.
+pub(crate) fn read_stages<P, T, C, F, R>(
+    wire: &mut Wire<'_, P, T, C>,
+    kinds: &[ActuatorKind],
+    states: &mut [TorqueState],
+    stages: &mut [Stage],
+) -> Result<(), Error>
+where
+    F: Field,
+    R: ReadMany<P, T, C>,
+{
+    let cells = Cell::from_mut(stages).as_slice_of_cells();
+    let mut first = FirstError::default();
+    for (index, cell) in cells.iter().enumerate() {
+        let key = cell.get().key();
+        if cells.iter().take(index).any(|seen| seen.get().key() == key) {
+            continue;
+        }
+        let members = cells
+            .iter()
+            .enumerate()
+            .filter(move |(_, member)| member.get().key() == key);
+        let ids = members
+            .clone()
+            .filter_map(|(_, member)| Some(kinds.get(usize::from(member.get().slot))?.id()));
+        let mut cursor = members;
+        let mut scratch = [0; 4];
+        R::run(wire, key.0, key.1, ids, &mut scratch, |_, reply| {
+            let Some((target, member)) = cursor.next() else {
+                return;
+            };
+            let mut stage = member.get();
+            let slot = usize::from(stage.slot);
+            let Some(kind) = kinds.get(slot) else {
+                return;
+            };
+            let result = reply.and_then(|bytes| Ok(F::register(kind.data()).decode(bytes)?));
+            if let Ok(raw) = result {
+                stage.bytes = raw.to_le_bytes();
+                member.set(stage);
+            }
+            if let Some(state) = states.get_mut(slot) {
+                observe(state, &result);
+            }
+            first.note(target, &result);
+        })?;
+    }
+    first.into_result()
 }
 
 #[cfg(test)]
@@ -270,18 +369,35 @@ mod tests {
     #[test]
     fn first_error_prefers_a_hardware_fault() {
         let mut first = FirstError::default();
-        first.note(&Ok::<(), Error>(()));
+        first.note(0, &Ok::<(), Error>(()));
         assert_eq!(FirstError::default().into_result(), Ok(()));
-        first.note(&timeout());
-        first.note(&alert(2));
-        first.note(&alert(3));
-        first.note(&timeout());
+        first.note(1, &timeout());
+        first.note(3, &alert(3));
+        first.note(2, &alert(2));
+        first.note(4, &alert(4));
+        first.note(0, &timeout());
         assert_eq!(first.into_result(), alert(2));
 
         let mut first = FirstError::default();
-        first.note(&timeout());
-        first.note(&Err::<(), _>(TransportError::Timeout { id: None }.into()));
+        first.note(5, &timeout());
+        first.note(
+            6,
+            &Err::<(), _>(TransportError::Timeout { id: None }.into()),
+        );
         assert_eq!(first.into_result(), timeout());
+
+        let mut first = FirstError::default();
+        first.note(
+            5,
+            &Err::<(), _>(TransportError::Timeout { id: None }.into()),
+        );
+        first.note(2, &timeout());
+        assert_eq!(first.into_result(), timeout());
+        assert_eq!(check_out(2, 3), Ok(()));
+        assert_eq!(
+            check_out(2, 1),
+            Err(ValidationError::BufferLength { targets: 2, got: 1 })
+        );
     }
 
     #[cfg(feature = "x-series")]

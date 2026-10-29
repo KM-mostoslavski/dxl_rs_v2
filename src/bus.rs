@@ -214,6 +214,28 @@ impl Default for Config {
 /// defaults to `StdClock`; without it the bus must name one, so
 /// [`DefaultClock`] is [`NoClock`] and a bus without a clock cannot be built.
 #[cfg_attr(
+    feature = "std",
+    doc = r#"
+On a desktop, from a port name to a moving actuator:
+
+```no_run
+use dxl_rs_v2::{Id, P2, Position, SerialBus};
+
+const ID: Id = match Id::new(1) {
+    Ok(id) => id,
+    Err(_) => panic!("1 is a valid ID"),
+};
+let mut bus = SerialBus::<P2>::open("/dev/ttyUSB0", 1_000_000)?;
+bus.autoscan()?;
+bus.enable_torque([ID])?;
+bus.actuator(ID).ok_or("ID 1 not found")?.set_goal_position(Position::from_radians(0.5))?;
+let present = bus.actuator(ID).ok_or("ID 1 not found")?.present_position()?;
+# let _ = present;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
+#[cfg_attr(
     not(feature = "std"),
     doc = r#"
 ```compile_fail,E0277

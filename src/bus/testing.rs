@@ -157,6 +157,7 @@ pub(crate) fn hold<P: Protocol, const N: usize>(
 pub(crate) const PING: u8 = 0x01;
 pub(crate) const READ: u8 = 0x02;
 pub(crate) const WRITE: u8 = 0x03;
+pub(crate) const SYNC_READ: u8 = 0x82;
 pub(crate) const SYNC_WRITE: u8 = 0x83;
 /// The broadcast ID of both protocols.
 pub(crate) const BROADCAST: u8 = 0xFE;
@@ -244,6 +245,14 @@ pub(crate) fn p2_sync_write(addr: u16, size: u16, entries: &[(u8, &[u8])]) -> Ve
         params.extend_from_slice(data);
     }
     p2_instruction(BROADCAST, SYNC_WRITE, &params)
+}
+
+/// A Protocol 2 Sync Read of `size` bytes at `addr` from `ids`, in order.
+pub(crate) fn p2_sync_read(addr: u16, size: u16, ids: &[u8]) -> Vec<u8> {
+    let mut params = addr.to_le_bytes().to_vec();
+    params.extend_from_slice(&size.to_le_bytes());
+    params.extend_from_slice(ids);
+    p2_instruction(BROADCAST, SYNC_READ, &params)
 }
 
 /// A Protocol 1 packet: `FF FF ID LEN <head> params CHECKSUM`.
@@ -484,6 +493,17 @@ mod tests {
             [
                 0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x11, 0x00, 0x83, 0x74, 0x00, 0x04, 0x00, 0x01, 0x96,
                 0x00, 0x00, 0x00, 0x02, 0xAA, 0x00, 0x00, 0x00, 0x82, 0x87
+            ]
+        );
+    }
+
+    #[test]
+    fn p2_sync_read_matches_the_e_manual() {
+        assert_eq!(
+            p2_sync_read(132, 4, &[1, 2]),
+            [
+                0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x09, 0x00, 0x82, 0x84, 0x00, 0x04, 0x00, 0x01, 0x02,
+                0xCE, 0xFA
             ]
         );
     }

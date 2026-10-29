@@ -1,19 +1,21 @@
 //! Commands to many actuators in one call (research R-7, R-8): the Easy
-//! tier (`enable_torque`, `disable_torque`, `write_goal_positions[_raw]`)
-//! and the explicit `sync_write`.
+//! tier (`enable_torque`, `disable_torque`, `write_goal_positions[_raw]`,
+//! `read_positions[_raw]`) and the explicit `sync_write` and, on Protocol
+//! 2, `sync_read`.
 
 use crate::actuator::{Actuator, Describe, TorqueState};
 use crate::error::Error;
-use crate::protocol::{Clock, Protocol};
+use crate::protocol::{Clock, P2, Protocol};
 use crate::units::Position;
 use crate::{Id, Transport};
 
 use super::Bus;
-use super::field::{GoalPosition, Raw, WriteField};
+use super::field::sealed::Value;
+use super::field::{GoalPosition, PresentPosition, Raw, ReadField, WriteField};
 use super::group::{self, FirstError, Stage};
 use super::observe::after_torque_write;
 use super::slots::Slots;
-use super::wire::Wire;
+use super::wire::{AnyProtocol, ReadMany, SyncRead, Wire};
 
 /// Enables torque on every target, in target order, after checking that
 /// none is faulted. Stops at the first error.
@@ -63,12 +65,12 @@ where
     let (kinds, states) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     let mut first = FirstError::default();
-    for stage in stages.iter() {
+    for (index, stage) in stages.iter().enumerate() {
         let (kind, state) = group::held(kinds, states, stage)?;
         let wanted = state.disable();
         let result = wire.write_value(kind.id(), kind.data().torque_enable, 0);
         after_torque_write(state, wanted, &result);
-        first.note(&result);
+        first.note(index, &result);
     }
     first.into_result()
 }
@@ -96,6 +98,37 @@ where
     group::validate_writes::<F>(kinds, states, stages, values)?;
     for (addr, size) in group::groups(stages) {
         wire.sync_write(addr, size, group::entries(kinds, stages, (addr, size)))?;
+    }
+    Ok(())
+}
+
+/// Reads field `F` of every target into `out[..targets]`, one `R::run` per
+/// register layout. `out` changes only when every target answered.
+fn read_field<P, T, C, S, F, R, I>(
+    wire: &mut Wire<'_, P, T, C>,
+    slots: &mut S,
+    stages: &mut [Stage],
+    ids: I,
+    out: &mut [F::Value],
+) -> Result<(), Error>
+where
+    P: Protocol,
+    T: Transport,
+    C: Clock,
+    S: Slots,
+    F: ReadField,
+    R: ReadMany<P, T, C>,
+    I: IntoIterator<Item = Id>,
+{
+    let (kinds, states) = slots.split_mut();
+    let stages = group::resolve(kinds, ids, stages)?;
+    group::check_out(stages.len(), out.len())?;
+    group::stage_reads::<F>(kinds, stages)?;
+    group::read_stages::<P, T, C, F, R>(wire, kinds, states, stages)?;
+    for (value, stage) in out.iter_mut().zip(stages.iter()) {
+        if let Some(kind) = kinds.get(usize::from(stage.slot)) {
+            *value = F::Value::from_raw(stage.raw(), &kind.data().scale);
+        }
     }
     Ok(())
 }
@@ -197,7 +230,7 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     #[cfg_attr(
         all(feature = "mock", feature = "rx"),
         doc = r#"
-Two RX-28 on Protocol 1, moved together:
+Two RX-28 on Protocol 1, moved and read together:
 
 ```
 use dxl_rs_v2::{Bus, Config, Error, Id, MockTime, MockTransport, ModelNumber, P1, Position};
@@ -213,7 +246,9 @@ use dxl_rs_v2::{Bus, Config, Error, Id, MockTime, MockTransport, ModelNumber, P1
 #     .reply_to(7, &[0xFF, 0xFF, 0x02, 0x04, 0x00, 0x00, 0x00, 0xF9])
 #     .reply_to(8, &[0xFF, 0xFF, 0x02, 0x04, 0x00, 0xFF, 0x03, 0xF7])
 #     .reply_to(9, &[0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC])
-#     .reply_to(10, &[0xFF, 0xFF, 0x02, 0x02, 0x00, 0xFB]);
+#     .reply_to(10, &[0xFF, 0xFF, 0x02, 0x02, 0x00, 0xFB])
+#     .reply_to(12, &[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x00, 0x02, 0xF8])
+#     .reply_to(13, &[0xFF, 0xFF, 0x02, 0x04, 0x00, 0x64, 0x02, 0x93]);
 let mut bus = Bus::<P1, _, _>::new(line, time.ticker(10), Config::new());
 let (left, right) = (Id::new(1)?, Id::new(2)?);
 bus.declare([(left, ModelNumber(28)), (right, ModelNumber(28))])?;
@@ -224,6 +259,11 @@ assert!(bus.write_goal_positions([left, right], &goals).is_err());
 
 bus.enable_torque(bus.ids())?;
 bus.write_goal_positions([left, right], &goals)?;
+
+// One Read per actuator on Protocol 1, into a buffer the caller owns.
+let mut present = [0; 2];
+bus.read_positions_raw(bus.ids(), &mut present)?;
+assert_eq!(present, [512, 612]);
 # let (line, _) = bus.into_parts();
 # line.assert_done();
 # Ok::<(), Error>(())
@@ -291,6 +331,103 @@ bus.write_goal_positions([left, right], &goals)?;
         let mut stages = [Stage::EMPTY; N];
         let (mut wire, mut slots) = self.split();
         write_field::<P, T, C, _, F, I>(&mut wire, &mut slots, &mut stages, ids, values)
+    }
+
+    /// Reads Present Position of every target, in radians: `out[i]` is
+    /// target `i`. Protocol 2 sends one Sync Read per register layout,
+    /// Protocol 1 one Read per target.
+    ///
+    /// Strict: `out` changes only if every target answered. Extra slots of
+    /// `out` stay untouched. Every reply passes the fault check, so a target
+    /// reporting a hardware fault is [`Faulted`](TorqueState::Faulted) when
+    /// the call returns. Not retried, whatever [`Config::retries`] says.
+    ///
+    /// # Errors
+    ///
+    /// Refused with nothing sent:
+    /// - [`SetupError::NotOnBus`], [`ValidationError::DuplicateId`].
+    /// - [`ValidationError::BufferLength`]: `out` is shorter than the
+    ///   target count.
+    ///
+    /// On the wire, with `out` unchanged: the first reply reporting a
+    /// hardware fault in target order, else the first error in target order
+    /// (a timeout, a corrupted reply, a status error). A failing transport
+    /// stops the call at once.
+    ///
+    /// [`Config::retries`]: crate::Config::retries
+    /// [`SetupError::NotOnBus`]: crate::SetupError::NotOnBus
+    /// [`ValidationError::DuplicateId`]: crate::ValidationError::DuplicateId
+    /// [`ValidationError::BufferLength`]: crate::ValidationError::BufferLength
+    pub fn read_positions<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        out: &mut [Position],
+    ) -> Result<(), Error> {
+        self.read::<PresentPosition, AnyProtocol, I>(ids, out)
+    }
+
+    /// Reads Present Position of every target, in ticks: `out[i]` is target
+    /// `i`. Same rules as [`read_positions`](Bus::read_positions).
+    ///
+    /// # Errors
+    ///
+    /// As [`read_positions`](Bus::read_positions).
+    pub fn read_positions_raw<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        out: &mut [i32],
+    ) -> Result<(), Error> {
+        self.read::<Raw<PresentPosition>, AnyProtocol, I>(ids, out)
+    }
+
+    /// Reads field `F` of `ids` into `out` through `R`.
+    fn read<F: ReadField, R: ReadMany<P, T, C>, I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        out: &mut [F::Value],
+    ) -> Result<(), Error> {
+        let mut stages = [Stage::EMPTY; N];
+        let (mut wire, mut slots) = self.split();
+        read_field::<P, T, C, _, F, R, I>(&mut wire, &mut slots, &mut stages, ids, out)
+    }
+}
+
+/// The Protocol 2 explicit tier.
+impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
+    /// Reads field `F` of every target with Sync Read: `out[i]` is target
+    /// `i`, one instruction per register layout. Protocol 2 only.
+    ///
+    /// The same rules as [`read_positions`](Bus::read_positions):
+    /// `bus.sync_read(PresentPosition, ids, &mut out)` is `read_positions`,
+    /// and `bus.sync_read(Raw(PresentPosition), ids, &mut ticks)` is
+    /// `read_positions_raw`. Strict: `out` changes only if every target
+    /// answered; a hardware fault marks its target `Faulted`.
+    ///
+    /// Protocol 1 has no Sync Read, so the method does not exist there:
+    ///
+    /// ```compile_fail,E0599
+    /// use dxl_rs_v2::field::PresentPosition;
+    /// use dxl_rs_v2::{Bus, Clock, Id, P1, Position, Transport};
+    ///
+    /// fn read<T: Transport, C: Clock>(bus: &mut Bus<P1, T, C>, ids: [Id; 2]) {
+    ///     let mut out = [Position::ZERO; 2];
+    ///     let _ = bus.sync_read(PresentPosition, ids, &mut out);
+    /// }
+    /// ```
+    ///
+    /// Use [`read_positions`](Bus::read_positions) on either protocol.
+    ///
+    /// # Errors
+    ///
+    /// As [`read_positions`](Bus::read_positions).
+    pub fn sync_read<F: ReadField, I: IntoIterator<Item = Id>>(
+        &mut self,
+        field: F,
+        ids: I,
+        out: &mut [F::Value],
+    ) -> Result<(), Error> {
+        let _ = field;
+        self.read::<F, SyncRead, I>(ids, out)
     }
 }
 
@@ -763,6 +900,253 @@ mod tests {
             assert_eq!(
                 bus.enable_torque(bus.ids()),
                 Err(crate::ValidationError::ActuatorFaulted { id: id(2) }.into())
+            );
+        }
+    }
+
+    #[cfg(feature = "x-series")]
+    mod x_series_reads {
+        use super::super::*;
+        use super::*;
+        use crate::error::{StatusError, StatusReport, TransportError};
+        use crate::field::{PresentPosition, Raw};
+
+        const SENTINEL: i32 = -7;
+
+        /// XM430-W350 at IDs 1, 2 and 3, torque off.
+        fn three_xm(time: &MockTime) -> TestBus<'_, P2> {
+            let mut bus = test_bus(time);
+            for n in [1, 2, 3] {
+                hold(&mut bus, XM430, n, (0, 4095), BOUNDED, OFF);
+            }
+            bus
+        }
+
+        fn present(n: u8, raw: i32) -> std::vec::Vec<u8> {
+            p2_status(n, 0, &raw.to_le_bytes())
+        }
+
+        extern crate std;
+
+        #[test]
+        fn one_sync_read_fills_out_in_target_order() {
+            let time = MockTime::new();
+            let mut bus = three_xm(&time);
+            line(&mut bus)
+                .reply_to(1, &present(3, 300))
+                .reply_to(1, &present(1, -100))
+                .reply_to(1, &present(2, 4000));
+            let mut out = [SENTINEL; 4];
+            bus.read_positions_raw([id(3), id(1), id(2)], &mut out)
+                .unwrap();
+            assert_eq!(out, [300, -100, 4000, SENTINEL]);
+            assert_eq!(sent(&bus), p2_sync_read(132, 4, &[3, 1, 2]));
+            assert_done(&bus);
+        }
+
+        #[test]
+        fn typed_reads_are_radians() {
+            let time = MockTime::new();
+            let mut bus = three_xm(&time);
+            line(&mut bus)
+                .reply_to(1, &present(1, 2048))
+                .reply_to(1, &present(2, 3072));
+            let scale = bus.actuators()[0].position_scale();
+            let mut out = [Position::from_radians(9.0); 2];
+            bus.read_positions([id(1), id(2)], &mut out).unwrap();
+            assert_eq!(out, [scale.to_position(2048), scale.to_position(3072)]);
+        }
+
+        #[test]
+        fn explicit_sync_read_is_the_easy_tier() {
+            let time = MockTime::new();
+            let mut bus = three_xm(&time);
+            line(&mut bus)
+                .reply_to(1, &present(2, 1000))
+                .reply_to(2, &present(2, 1000));
+            let mut typed = [Position::ZERO; 1];
+            bus.sync_read(PresentPosition, [id(2)], &mut typed).unwrap();
+            let mut raw = [0; 1];
+            bus.sync_read(Raw(PresentPosition), [id(2)], &mut raw)
+                .unwrap();
+            assert_eq!(raw, [1000]);
+            assert_eq!(
+                typed,
+                [bus.actuators()[1].position_scale().to_position(1000)]
+            );
+            let one = p2_sync_read(132, 4, &[2]);
+            assert_eq!(sent(&bus), concat(&[one.clone(), one]));
+        }
+
+        #[test]
+        fn mixed_layouts_are_one_sync_read_each() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            hold(&mut bus, XM430, 1, (0, 4095), BOUNDED, ON);
+            hold(&mut bus, XL320, 3, (0, 1023), BOUNDED, ON);
+            line(&mut bus)
+                .reply_to(1, &p2_status(3, 0, &700u16.to_le_bytes()))
+                .reply_to(2, &present(1, 2100));
+            let mut out = [SENTINEL; 2];
+            bus.read_positions_raw([id(3), id(1)], &mut out).unwrap();
+            assert_eq!(out, [700, 2100]);
+            assert_eq!(
+                sent(&bus),
+                concat(&[p2_sync_read(37, 2, &[3]), p2_sync_read(132, 4, &[1])])
+            );
+        }
+
+        #[test]
+        fn a_timeout_leaves_out_unchanged() {
+            let time = MockTime::new();
+            let mut bus = three_xm(&time);
+            line(&mut bus)
+                .reply_to(1, &present(1, 10))
+                .reply_to(1, &present(3, 30));
+            let mut out = [SENTINEL; 3];
+            assert_eq!(
+                bus.read_positions_raw(bus.ids(), &mut out),
+                Err(TransportError::Timeout { id: Some(id(2)) }.into())
+            );
+            assert_eq!(out, [SENTINEL; 3]);
+            assert_eq!(bus.torque_states(), [OFF; 3]);
+        }
+
+        #[test]
+        fn a_hardware_fault_wins_over_an_earlier_timeout() {
+            let time = MockTime::new();
+            let mut bus = three_xm(&time);
+            line(&mut bus)
+                .reply_to(1, &present(2, 20))
+                .reply_to(1, &p2_status(3, 0x80, &30i32.to_le_bytes()));
+            let mut out = [SENTINEL; 3];
+            assert_eq!(
+                bus.read_positions_raw(bus.ids(), &mut out),
+                Err(StatusError {
+                    id: id(3),
+                    report: StatusReport::P2 {
+                        alert: true,
+                        code: None
+                    }
+                }
+                .into())
+            );
+            assert_eq!(out, [SENTINEL; 3]);
+            assert_eq!(bus.torque_states(), [OFF, OFF, FAULTED]);
+        }
+
+        #[test]
+        fn faults_are_noted_across_layouts_in_target_order() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            hold(&mut bus, XM430, 1, (0, 4095), BOUNDED, ON);
+            hold(&mut bus, XL320, 2, (0, 1023), BOUNDED, ON);
+            hold(&mut bus, XM430, 3, (0, 4095), BOUNDED, ON);
+            line(&mut bus)
+                .reply_to(1, &present(1, 1))
+                .reply_to(1, &p2_status(3, 0x80, &3i32.to_le_bytes()))
+                .reply_to(2, &p2_status(2, 0x80, &2u16.to_le_bytes()));
+            let mut out = [SENTINEL; 3];
+            let result = bus.read_positions_raw(bus.ids(), &mut out);
+            assert_eq!(
+                sent(&bus),
+                concat(&[p2_sync_read(132, 4, &[1, 3]), p2_sync_read(37, 2, &[2])])
+            );
+            assert!(
+                matches!(result, Err(Error::Status(StatusError { id, .. })) if id.get() == 2),
+                "{result:?}"
+            );
+            assert_eq!(bus.torque_states(), [ON, FAULTED, FAULTED]);
+            assert_eq!(out, [SENTINEL; 3]);
+        }
+
+        #[test]
+        fn refusals_send_nothing() {
+            let time = MockTime::new();
+            let mut bus = three_xm(&time);
+            let mark = mark(&bus);
+            let mut out = [SENTINEL; 2];
+            assert_eq!(
+                bus.read_positions_raw(bus.ids(), &mut out),
+                Err(ValidationError::BufferLength { targets: 3, got: 2 }.into())
+            );
+            assert_eq!(
+                bus.read_positions_raw([id(1), id(9)], &mut out),
+                Err(SetupError::NotOnBus { id: id(9) }.into())
+            );
+            assert_eq!(
+                bus.sync_read(PresentPosition, [id(1), id(1)], &mut [Position::ZERO; 2]),
+                Err(ValidationError::DuplicateId { id: id(1) }.into())
+            );
+            assert_eq!(bus.read_positions([], &mut []), Ok(()));
+            assert_eq!(bus.read_positions_raw([], &mut out), Ok(()));
+            assert_eq!(out, [SENTINEL; 2]);
+            assert_quiet(&bus, mark);
+        }
+
+        #[test]
+        fn a_failing_transport_aborts() {
+            let time = MockTime::new();
+            let mut bus = three_xm(&time);
+            line(&mut bus).fail_with(embedded_io::ErrorKind::BrokenPipe);
+            let mut out = [SENTINEL; 3];
+            assert_eq!(
+                bus.read_positions_raw(bus.ids(), &mut out),
+                Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+            );
+            assert_eq!(out, [SENTINEL; 3]);
+        }
+    }
+
+    #[cfg(feature = "ax")]
+    mod ax_reads {
+        use super::super::*;
+        use super::*;
+        use crate::error::TransportError;
+        use crate::protocol::P1;
+
+        #[test]
+        fn p1_reads_each_target_in_order() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            for n in [1, 2, 3] {
+                hold(&mut bus, AX12, n, (0, 1023), BOUNDED, ON);
+            }
+            line(&mut bus)
+                .reply_to(1, &p1_status(3, 0, &300u16.to_le_bytes()))
+                .reply_to(2, &p1_status(1, 0, &100u16.to_le_bytes()))
+                .reply_to(3, &p1_status(2, 0, &200u16.to_le_bytes()));
+            let mut out = [0; 3];
+            bus.read_positions_raw([id(3), id(1), id(2)], &mut out)
+                .unwrap();
+            assert_eq!(out, [300, 100, 200]);
+            assert_eq!(
+                sent(&bus),
+                concat(&[p1_read(3, 36, 2), p1_read(1, 36, 2), p1_read(2, 36, 2)])
+            );
+        }
+
+        #[test]
+        fn p1_silent_target_then_overload() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            for n in [1, 2, 3] {
+                hold(&mut bus, AX12, n, (0, 1023), BOUNDED, ON);
+            }
+            line(&mut bus)
+                .reply_to(2, &p1_status(2, 0, &200u16.to_le_bytes()))
+                .reply_to(3, &p1_status(3, 0x20, &300u16.to_le_bytes()));
+            let mut out = [Position::ZERO; 3];
+            let result = bus.read_positions(bus.ids(), &mut out);
+            assert!(matches!(result, Err(Error::Status(_))), "{result:?}");
+            assert_eq!(bus.torque_states(), [ON, ON, FAULTED]);
+            assert_eq!(out, [Position::ZERO; 3]);
+            assert_eq!(line(&mut bus).flushes(), 3);
+
+            line(&mut bus).reply_to(5, &p1_status(2, 0, &200u16.to_le_bytes()));
+            assert_eq!(
+                bus.read_positions(bus.ids(), &mut out),
+                Err(TransportError::Timeout { id: Some(id(1)) }.into())
             );
         }
     }
