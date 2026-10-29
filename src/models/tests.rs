@@ -2429,6 +2429,916 @@ fn y_series_off() {
 
 #[cfg(feature = "ax")]
 #[test]
+fn ax_12a_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ax12a;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(12), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ax12a(m)) if m.id() == id && m.name() == Ax12a::DATA.name && m.model_number() == Ax12a::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_18a_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ax18a;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(18), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ax18a(m)) if m.id() == id && m.name() == Ax18a::DATA.name && m.model_number() == Ax18a::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "rx")]
+#[test]
+fn rx_28_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Rx28;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(28), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Rx28(m)) if m.id() == id && m.name() == Rx28::DATA.name && m.model_number() == Rx28::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_28_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Mx28;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(30), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Mx28(m)) if m.id() == id && m.name() == Mx28::DATA.name && m.model_number() == Mx28::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_12w_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ax12w;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(300), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ax12w(m)) if m.id() == id && m.name() == Ax12w::DATA.name && m.model_number() == Ax12w::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_64_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Mx64;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(311), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Mx64(m)) if m.id() == id && m.name() == Mx64::DATA.name && m.model_number() == Mx64::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_106_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Mx106;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(321), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Mx106(m)) if m.id() == id && m.name() == Mx106::DATA.name && m.model_number() == Mx106::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl320_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xl320;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(350), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xl320(m)) if m.id() == id && m.name() == Xl320::DATA.name && m.model_number() == Xl320::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_w350_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh430W350;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1000), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh430W350(m)) if m.id() == id && m.name() == Xh430W350::DATA.name && m.model_number() == Xh430W350::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd430_t350_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xd430T350;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1001), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xd430T350(m)) if m.id() == id && m.name() == Xd430T350::DATA.name && m.model_number() == Xd430T350::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_w210_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh430W210;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1010), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh430W210(m)) if m.id() == id && m.name() == Xh430W210::DATA.name && m.model_number() == Xh430W210::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd430_t210_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xd430T210;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1011), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xd430T210(m)) if m.id() == id && m.name() == Xd430T210::DATA.name && m.model_number() == Xd430T210::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm430_w350_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xm430W350;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1020), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xm430W350(m)) if m.id() == id && m.name() == Xm430W350::DATA.name && m.model_number() == Xm430W350::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm430_w210_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xm430W210;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1030), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xm430W210(m)) if m.id() == id && m.name() == Xm430W210::DATA.name && m.model_number() == Xm430W210::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_v350_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh430V350;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1040), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh430V350(m)) if m.id() == id && m.name() == Xh430V350::DATA.name && m.model_number() == Xh430V350::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_v210_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh430V210;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1050), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh430V210(m)) if m.id() == id && m.name() == Xh430V210::DATA.name && m.model_number() == Xh430V210::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl430_w250_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xl430W250;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1060), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xl430W250(m)) if m.id() == id && m.name() == Xl430W250::DATA.name && m.model_number() == Xl430W250::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc430_w150_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc430W150;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1070), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc430W150(m)) if m.id() == id && m.name() == Xc430W150::DATA.name && m.model_number() == Xc430W150::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc430_w240_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc430W240;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1080), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc430W240(m)) if m.id() == id && m.name() == Xc430W240::DATA.name && m.model_number() == Xc430W240::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn two_xl430_w250_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::TwoXl430W250;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1090), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::TwoXl430W250(m)) if m.id() == id && m.name() == TwoXl430W250::DATA.name && m.model_number() == TwoXl430W250::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_w270_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh540W270;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1100), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh540W270(m)) if m.id() == id && m.name() == Xh540W270::DATA.name && m.model_number() == Xh540W270::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd540_t270_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xd540T270;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1101), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xd540T270(m)) if m.id() == id && m.name() == Xd540T270::DATA.name && m.model_number() == Xd540T270::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_w150_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh540W150;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1110), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh540W150(m)) if m.id() == id && m.name() == Xh540W150::DATA.name && m.model_number() == Xh540W150::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd540_t150_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xd540T150;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1111), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xd540T150(m)) if m.id() == id && m.name() == Xd540T150::DATA.name && m.model_number() == Xd540T150::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm540_w270_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xm540W270;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1120), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xm540W270(m)) if m.id() == id && m.name() == Xm540W270::DATA.name && m.model_number() == Xm540W270::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm540_w150_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xm540W150;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1130), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xm540W150(m)) if m.id() == id && m.name() == Xm540W150::DATA.name && m.model_number() == Xm540W150::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_v270_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh540V270;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1140), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh540V270(m)) if m.id() == id && m.name() == Xh540V270::DATA.name && m.model_number() == Xh540V270::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_v150_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xh540V150;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1150), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xh540V150(m)) if m.id() == id && m.name() == Xh540V150::DATA.name && m.model_number() == Xh540V150::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn two_xc430_w250_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::TwoXc430W250;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1160), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::TwoXc430W250(m)) if m.id() == id && m.name() == TwoXc430W250::DATA.name && m.model_number() == TwoXc430W250::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_t260_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xw540T260;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1170), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xw540T260(m)) if m.id() == id && m.name() == Xw540T260::DATA.name && m.model_number() == Xw540T260::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_t140_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xw540T140;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1180), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xw540T140(m)) if m.id() == id && m.name() == Xw540T140::DATA.name && m.model_number() == Xw540T140::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m077_fw52_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xl330M077Fw52;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1190), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xl330M077Fw52(m)) if m.id() == id && m.name() == Xl330M077Fw52::DATA.name && m.model_number() == Xl330M077Fw52::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m077_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xl330M077;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1190), 53, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xl330M077(m)) if m.id() == id && m.name() == Xl330M077::DATA.name && m.model_number() == Xl330M077::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m288_fw52_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xl330M288Fw52;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1200), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xl330M288Fw52(m)) if m.id() == id && m.name() == Xl330M288Fw52::DATA.name && m.model_number() == Xl330M288Fw52::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m288_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xl330M288;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1200), 53, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xl330M288(m)) if m.id() == id && m.name() == Xl330M288::DATA.name && m.model_number() == Xl330M288::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t181_fw52_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330T181Fw52;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1210), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330T181Fw52(m)) if m.id() == id && m.name() == Xc330T181Fw52::DATA.name && m.model_number() == Xc330T181Fw52::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t181_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330T181;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1210), 53, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330T181(m)) if m.id() == id && m.name() == Xc330T181::DATA.name && m.model_number() == Xc330T181::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t288_fw52_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330T288Fw52;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1220), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330T288Fw52(m)) if m.id() == id && m.name() == Xc330T288Fw52::DATA.name && m.model_number() == Xc330T288Fw52::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t288_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330T288;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1220), 53, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330T288(m)) if m.id() == id && m.name() == Xc330T288::DATA.name && m.model_number() == Xc330T288::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m181_fw52_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330M181Fw52;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1230), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330M181Fw52(m)) if m.id() == id && m.name() == Xc330M181Fw52::DATA.name && m.model_number() == Xc330M181Fw52::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m181_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330M181;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1230), 53, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330M181(m)) if m.id() == id && m.name() == Xc330M181::DATA.name && m.model_number() == Xc330M181::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m288_fw52_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330M288Fw52;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1240), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330M288Fw52(m)) if m.id() == id && m.name() == Xc330M288Fw52::DATA.name && m.model_number() == Xc330M288Fw52::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m288_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xc330M288;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(1240), 53, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xc330M288(m)) if m.id() == id && m.name() == Xc330M288::DATA.name && m.model_number() == Xc330M288::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw430_t333_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xw430T333;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1270), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xw430T333(m)) if m.id() == id && m.name() == Xw430T333::DATA.name && m.model_number() == Xw430T333::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_h260_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Xw540H260;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P1, ModelNumber(1310), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Xw540H260(m)) if m.id() == id && m.name() == Xw540H260::DATA.name && m.model_number() == Xw540H260::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph42_020_s300_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ph42020S300;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2000), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ph42020S300(m)) if m.id() == id && m.name() == Ph42020S300::DATA.name && m.model_number() == Ph42020S300::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph54_100_s500_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ph54100S500;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2010), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ph54100S500(m)) if m.id() == id && m.name() == Ph54100S500::DATA.name && m.model_number() == Ph54100S500::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph54_200_s500_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ph54200S500;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2020), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ph54200S500(m)) if m.id() == id && m.name() == Ph54200S500::DATA.name && m.model_number() == Ph54200S500::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm42_010_s260_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Pm42010S260;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2100), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Pm42010S260(m)) if m.id() == id && m.name() == Pm42010S260::DATA.name && m.model_number() == Pm42010S260::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm54_040_s250_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Pm54040S250;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2110), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Pm54040S250(m)) if m.id() == id && m.name() == Pm54040S250::DATA.name && m.model_number() == Pm54040S250::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm54_060_s250_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Pm54060S250;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(2120), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Pm54060S250(m)) if m.id() == id && m.name() == Pm54060S250::DATA.name && m.model_number() == Pm54060S250::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_m001_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym070210M001;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4000), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym070210M001(m)) if m.id() == id && m.name() == Ym070210M001::DATA.name && m.model_number() == Ym070210M001::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_b001_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym070210B001;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4010), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym070210B001(m)) if m.id() == id && m.name() == Ym070210B001::DATA.name && m.model_number() == Ym070210B001::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_r051_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym070210R051;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4020), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym070210R051(m)) if m.id() == id && m.name() == Ym070210R051::DATA.name && m.model_number() == Ym070210R051::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_r099_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym070210R099;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4030), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym070210R099(m)) if m.id() == id && m.name() == Ym070210R099::DATA.name && m.model_number() == Ym070210R099::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_a051_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym070210A051;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4040), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym070210A051(m)) if m.id() == id && m.name() == Ym070210A051::DATA.name && m.model_number() == Ym070210A051::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_a099_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym070210A099;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4050), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym070210A099(m)) if m.id() == id && m.name() == Ym070210A099::DATA.name && m.model_number() == Ym070210A099::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_m001_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym080230M001;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4120), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym080230M001(m)) if m.id() == id && m.name() == Ym080230M001::DATA.name && m.model_number() == Ym080230M001::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_b001_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym080230B001;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4130), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym080230B001(m)) if m.id() == id && m.name() == Ym080230B001::DATA.name && m.model_number() == Ym080230B001::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_r051_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym080230R051;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4140), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym080230R051(m)) if m.id() == id && m.name() == Ym080230R051::DATA.name && m.model_number() == Ym080230R051::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_r099_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym080230R099;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4150), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym080230R099(m)) if m.id() == id && m.name() == Ym080230R099::DATA.name && m.model_number() == Ym080230R099::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_a051_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym080230A051;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4160), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym080230A051(m)) if m.id() == id && m.name() == Ym080230A051::DATA.name && m.model_number() == Ym080230A051::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_a099_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::Ym080230A099;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(4170), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::Ym080230A099(m)) if m.id() == id && m.name() == Ym080230A099::DATA.name && m.model_number() == Ym080230A099::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn rh_p12_rn_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::RhP12Rn;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(35074), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::RhP12Rn(m)) if m.id() == id && m.name() == RhP12Rn::DATA.name && m.model_number() == RhP12Rn::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m42_10_s260_ra_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::M4210S260Ra;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(43289), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::M4210S260Ra(m)) if m.id() == id && m.name() == M4210S260Ra::DATA.name && m.model_number() == M4210S260Ra::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m54_40_s250_ra_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::M5440S250Ra;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(46097), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::M5440S250Ra(m)) if m.id() == id && m.name() == M5440S250Ra::DATA.name && m.model_number() == M5440S250Ra::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m54_60_s250_ra_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::M5460S250Ra;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(46353), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::M5460S250Ra(m)) if m.id() == id && m.name() == M5460S250Ra::DATA.name && m.model_number() == M5460S250Ra::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h42_20_s300_ra_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::H4220S300Ra;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(51201), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::H4220S300Ra(m)) if m.id() == id && m.name() == H4220S300Ra::DATA.name && m.model_number() == H4220S300Ra::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h54_100_s500_ra_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::H54100S500Ra;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(53769), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::H54100S500Ra(m)) if m.id() == id && m.name() == H54100S500Ra::DATA.name && m.model_number() == H54100S500Ra::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h54_200_s500_ra_concrete_match() {
+    use crate::actuator::Actuator;
+    use crate::models::H54200S500Ra;
+
+    let id = id();
+    let kind = ActuatorKind::new(ProtocolVersion::P2, ModelNumber(54025), 0, id);
+    assert!(
+        matches!(&kind, Ok(ActuatorKind::H54200S500Ra(m)) if m.id() == id && m.name() == H54200S500Ra::DATA.name && m.model_number() == H54200S500Ra::DATA.model_number)
+    );
+}
+
+#[cfg(feature = "ax")]
+#[test]
 fn ax_12a_describe_round_trip() {
     use crate::actuator::{Cache, Describe, LimitMode};
     use crate::models::Ax12a;

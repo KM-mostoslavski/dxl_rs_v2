@@ -315,6 +315,15 @@ pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);
 ///
 /// Match on it to reach a model's own features; use the [`Actuator`] trait for what every
 /// model has in common.
+///
+/// The enum is `#[non_exhaustive]`: models are added without a breaking change, so a
+/// `match` outside this crate needs a wildcard arm.
+///
+/// ```compile_fail,E0004
+/// fn f(kind: dxl_rs_v2::ActuatorKind) {
+///     match kind {}
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ActuatorKind {

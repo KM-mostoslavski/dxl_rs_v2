@@ -391,6 +391,15 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
          ///\n\
          /// Match on it to reach a model's own features; use the [`Actuator`] trait for what every\n\
          /// model has in common.\n\
+         ///\n\
+         /// The enum is `#[non_exhaustive]`: models are added without a breaking change, so a\n\
+         /// `match` outside this crate needs a wildcard arm.\n\
+         ///\n\
+         /// ```compile_fail,E0004\n\
+         /// fn f(kind: dxl_rs_v2::ActuatorKind) {\n\
+         ///     match kind {}\n\
+         /// }\n\
+         /// ```\n\
          #[derive(Debug, Clone, PartialEq, Eq)]\n#[non_exhaustive]\npub enum ActuatorKind {\n",
     );
     for model in &resolved.models {
@@ -764,5 +773,29 @@ mod tests {
         assert_eq!(firmware_range(0, Some(53)), "firmware up to v52");
         assert_eq!(firmware_range(53, None), "firmware v53 and later");
         assert_eq!(firmware_range(53, Some(61)), "firmware v53 to v60");
+    }
+
+    #[test]
+    fn visibility() {
+        let files = lookup_files();
+        let module = file(&files, "models.rs");
+        let c = compact(module);
+        assert!(
+            c.contains("#[derive(Debug,Clone,PartialEq,Eq)]#[non_exhaustive]pubenumActuatorKind{")
+        );
+        assert!(module.contains(
+            "/// ```compile_fail,E0004\n/// fn f(kind: dxl_rs_v2::ActuatorKind) {\n///     match kind {}\n/// }\n/// ```"
+        ));
+        assert!(module.contains("Any supported actuator, one variant per model type."));
+        for (module_name, ty) in [("ax", "Ax"), ("xm", "Xm"), ("fw52", "Fw52"), ("new", "New")] {
+            assert!(module.contains(&format!("pub use {module_name}::{ty};")));
+            let text = file(&files, &format!("models/{module_name}.rs"));
+            let at = text.find(&format!("pub struct {ty} {{")).unwrap();
+            assert!(text[..at].trim_end().lines().any(|l| l.starts_with("/// ")));
+            assert!(!text.contains("pub const"), "{module_name}");
+            assert!(!text.contains("pub fn"), "{module_name}");
+            assert!(text.contains("pub(crate) const fn new(id: Id) -> Self"));
+            assert!(text.contains("pub(crate) const DATA: ModelData"));
+        }
     }
 }

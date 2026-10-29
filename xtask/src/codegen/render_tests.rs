@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::HEADER;
-use super::resolve::{LookupList, Resolved};
+use super::resolve::{GenModel, LookupList, Resolved};
 use super::schema::ProtocolTag;
 
 /// The text of `src/models/tests.rs`, or `None` with no model.
@@ -32,6 +32,9 @@ pub(crate) fn render_tests(resolved: &Resolved) -> Option<String> {
         render_lookup(&mut out, list);
     }
     render_family_off(&mut out, resolved);
+    for model in &resolved.models {
+        render_concrete_match(&mut out, model);
+    }
     for model in &resolved.models {
         let ty = &model.type_ident;
         let _ = writeln!(
@@ -60,6 +63,31 @@ pub(crate) fn render_tests(resolved: &Resolved) -> Option<String> {
         );
     }
     Some(out)
+}
+
+/// The model type reached through its first lookup, as user code matches
+/// it.
+fn render_concrete_match(out: &mut String, model: &GenModel) {
+    let Some(&(protocol, from_fw, _)) = model.appearances.first() else {
+        return;
+    };
+    let ty = &model.type_ident;
+    let _ = writeln!(
+        out,
+        "#[cfg(feature = \"{family}\")]\n\
+         #[test]\n\
+         fn {module}_concrete_match() {{\n\
+         \x20   use crate::actuator::Actuator;\n\
+         \x20   use crate::models::{ty};\n\n\
+         \x20   let id = id();\n\
+         \x20   let kind = ActuatorKind::new(ProtocolVersion::{p}, ModelNumber({number}), {from_fw}, id);\n\
+         \x20   assert!(matches!(&kind, Ok(ActuatorKind::{ty}(m)) if m.id() == id && m.name() == {ty}::DATA.name && m.model_number() == {ty}::DATA.model_number));\n\
+         }}\n",
+        family = model.family,
+        module = model.module_ident,
+        p = protocol.variant(),
+        number = model.number,
+    );
 }
 
 /// An unknown number on both protocols, and every known number on a
@@ -347,5 +375,15 @@ mod tests {
         ));
         assert!(c.contains("feature:Some(\"x-series\")};assert_eq!(found,Err(error));assert_eq!(ActuatorKind::firmware_register(protocol,ModelNumber(number)),None);"));
         assert!(c.contains("#[cfg(not(feature=\"ax\"))]#[test]fnax_off(){letid=id();for(protocol,number)in[(ProtocolVersion::P1,12)]{"));
+    }
+
+    #[test]
+    fn concrete_match_per_model_type() {
+        let c = compact(&render_tests(&firmware_model()).unwrap());
+        assert!(c.contains(
+            "#[cfg(feature=\"x-series\")]#[test]fnnew_concrete_match(){usecrate::actuator::Actuator;usecrate::models::New;letid=id();letkind=ActuatorKind::new(ProtocolVersion::P2,ModelNumber(1190),53,id);assert!(matches!(&kind,Ok(ActuatorKind::New(m))ifm.id()==id&&m.name()==New::DATA.name&&m.model_number()==New::DATA.model_number));}"
+        ));
+        assert!(c.contains("fnfw52_concrete_match()"));
+        assert!(c.contains("ActuatorKind::new(ProtocolVersion::P2,ModelNumber(350),0,id)"));
     }
 }
