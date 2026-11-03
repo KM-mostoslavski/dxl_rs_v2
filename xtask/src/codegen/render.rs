@@ -251,11 +251,13 @@ fn unit_phrase(value: f64, unit: &str, modes: fr9::Modes, profile: Option<&str>)
 fn role_doc(role: &GenRole) -> String {
     let mut doc = if role.def.quantity == Quantity::Raw {
         format!("/// {}: in register units, no scale.", role.row.data_name)
-    } else if role.scales.is_empty() {
+    } else if role.scales.is_empty() && role.untyped.is_empty() {
         format!(
             "/// {}: raw only, no unit in the table.",
             role.row.data_name
         )
+    } else if role.scales.is_empty() {
+        format!("/// {}: raw only.", role.row.data_name)
     } else {
         let parts: Vec<String> = role
             .scales
@@ -284,6 +286,20 @@ fn role_doc(role: &GenRole) -> String {
             role.def.field.replace('_', " ")
         );
     }
+    for scale in &role.scales {
+        if role.def.quantity == Quantity::Load
+            && let SignKind::DirectionBit(n) = scale.sign
+        {
+            let _ = write!(
+                doc,
+                "\n/// One raw step is 1/{} of the maximum: the full magnitude below direction bit {n} is 100 %.",
+                (1u32 << n) - 1
+            );
+        }
+    }
+    if let Some((min, max)) = role.row_range {
+        let _ = write!(doc, "\n/// Raw range {min} to {max}.");
+    }
     if role.scales.iter().any(|s| s.profile.is_some()) {
         doc.push_str(
             "\n/// The scale holds only with that Drive Mode profile; Setup does not read Drive Mode.",
@@ -310,6 +326,7 @@ fn render_role(out: &mut String, ty: &str, role: &GenRole) {
          \x20       scales: &[{scales}],\n\
          \x20       bounded_by: {bounded_by},\n\
          \x20       from_fw: {from_fw},\n\
+         \x20       row_range: {row_range},\n\
          \x20   }};\n}}\n",
         doc = role_doc(role),
         has = role.def.has,
@@ -317,6 +334,10 @@ fn render_role(out: &mut String, ty: &str, role: &GenRole) {
         register = self::role(&role.row),
         scales = scales.join(", "),
         from_fw = role.from_fw,
+        row_range = role.row_range.map_or_else(
+            || "None".to_string(),
+            |(min, max)| format!("Some(({min}, {max}))"),
+        ),
     );
 }
 
@@ -703,7 +724,7 @@ mod tests {
             "hardware_error:Some(Self::HARDWARE_ERROR_STATUS)",
             "mode:ModeSource::Register{register:Self::OPERATING_MODE,values:ModeValues{bounded:&[3],unbounded:&[4,5],no_position:&[0,1,16],current:&[],velocity:&[],pwm:&[],current_position:&[]}}",
             "roles:Roles{hardware_error_status:Some(<SelfasHasHardwareErrorStatus>::ROLE),..Roles::NONE},",
-            "implHasHardwareErrorStatusforXm{constROLE:RoleRegister=RoleRegister{name:\"HardwareErrorStatus\",register:Self::HARDWARE_ERROR_STATUS,scales:&[],bounded_by:None,from_fw:0,};}",
+            "implHasHardwareErrorStatusforXm{constROLE:RoleRegister=RoleRegister{name:\"HardwareErrorStatus\",register:Self::HARDWARE_ERROR_STATUS,scales:&[],bounded_by:None,from_fw:0,row_range:None,};}",
             "protocols:Protocols{p1:true,p2:true}",
             "implActuatorforXm{}",
             "implDescribeforXm{fndata(&self)->&'staticModelData{&Self::DATA}fncache(&self)->&Cache{&self.cache}fncache_mut(&mutself)->&mutCache{&mutself.cache}}",
@@ -762,19 +783,23 @@ mod tests {
             "roles:Roles{present_temperature:Some(<SelfasHasPresentTemperature>::ROLE),",
             "speed_limit:Some(<SelfasHasSpeedLimit>::ROLE),",
             "..Roles::NONE}",
-            "implHasSpeedLimitforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[ModeScale{modes:ModeSet::of(&[LimitMode::Bounded]),scale:RegisterScale::new(0.011623893,Sign::Unsigned,2,true),range:Some((0,1023))}],bounded_by:None,from_fw:0,};}",
+            "implHasSpeedLimitforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[ModeScale{modes:ModeSet::of(&[LimitMode::Bounded]),scale:RegisterScale::new(0.011623893,Sign::Unsigned,2,true),range:Some((0,1023))}],bounded_by:None,from_fw:0,row_range:None,};}",
             "implHasGoalVelocityforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[],",
-            "scale:RegisterScale::new(0.001,Sign::DirectionBit(10),2,false),range:Some((0,2047))",
+            "scale:RegisterScale::new(0.0009775171,Sign::DirectionBit(10),2,false),range:Some((0,2047))",
+            "implHasCwComplianceSlopeforAx{constROLE:RoleRegister=RoleRegister{name:\"CWComplianceSlope\",register:Self::CW_COMPLIANCE_SLOPE,scales:&[],bounded_by:None,from_fw:0,row_range:Some((0,254)),};}",
             "scale:RegisterScale::new(0.0050614546,Sign::Unsigned,1,false)",
         ] {
             assert!(c.contains(part), "{part}");
         }
         for line in [
             "/// Moving Speed: 0.111 rpm per raw step in Bounded mode, raw 0 meaning no limit.",
-            "/// Moving Speed: raw only, no unit in the table.",
+            "/// Moving Speed: raw only.",
             "/// No typed form for 0.1 % per raw step in Wheel mode: not a goal velocity.",
             "/// Moving: in register units, no scale.",
             "/// Present Load: 0.1 % per raw step in every mode.",
+            "/// One raw step is 1/1023 of the maximum: the full magnitude below direction bit 10 is 100 %.",
+            "/// Raw range 0 to 254.",
+            "/// CCW Compliance Slope: in register units, no scale.",
         ] {
             assert!(ax.lines().any(|l| l == line), "{line}");
         }

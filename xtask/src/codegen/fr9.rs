@@ -7,6 +7,15 @@
 //! rpm to rad/s, mA to A, V, °C, % to a ratio, ms to s, deg to rad. A
 //! register whose table gives no unit, or a unit that is not the role's
 //! quantity, gets no scale: raw only (FR-9.2).
+//!
+//! A direction-bit load is the one exception to `value × factor`: the
+//! e-Manual gives its step as "about 0.1%" and its full magnitude as 100 %
+//! (AX-12A Max Torque(14): "Data 1,023 (0x3FF) means that DYNAMIXEL will
+//! use 100% of the maximum torque",
+//! <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>, 2026-11-03), so a
+//! step is 1/1023 of the maximum and raw 1023 reads as exactly 1.0
+//! (specs/008-typed-registers-core). Check 22 refuses a table whose
+//! "about" step is more than 5 % off that.
 
 use std::f64::consts::PI;
 
@@ -39,6 +48,10 @@ const P1_MODES: [(&str, Modes); 4] = [
     ("torque_control", 1 << 5),
     ("wheel", WHEEL),
 ];
+
+/// How far a direction-bit load's table step may sit from 1 / full
+/// magnitude, as a share of it.
+const LOAD_STEP_TOLERANCE: f64 = 0.05;
 
 /// The units `unit_info` may give.
 const UNITS: [&str; 8] = ["deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2"];
@@ -378,6 +391,9 @@ pub(crate) struct GenRole {
     pub(crate) bounded_by: Option<Row>,
     /// The first firmware with the register; 0 for all.
     pub(crate) from_fw: u8,
+    /// The row's own raw range (gains, compliance slopes, the torque
+    /// switch), valid in every mode; a scale's range wins in its modes.
+    pub(crate) row_range: Option<(i64, i64)>,
 }
 
 /// The torque control switch of a table, checked.
@@ -713,8 +729,13 @@ fn role_of(
         untyped: Vec::new(),
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
-    if table.unit_source.is_none() || def.quantity == Quantity::Raw {
+    if table.unit_source.is_none() {
+        return role;
+    }
+    role.row_range = row.range.map(|r| (r.min, r.max));
+    if def.quantity == Quantity::Raw {
         return role;
     }
     let mut first_fw: Option<u8> = None;
@@ -761,9 +782,30 @@ fn role_of(
         let Some(sign) = SignKind::parse(&entry.sign_type) else {
             continue;
         };
+        let si_per_raw = match (def.quantity, sign) {
+            (Quantity::Load, SignKind::DirectionBit(n)) => {
+                let exact = load_step(n);
+                let table_step = entry.value * factor;
+                if (table_step / exact - 1.0).abs() > LOAD_STEP_TOLERANCE {
+                    errors.push(Diagnostic::new(
+                        file,
+                        format!(
+                            "unit_info {:?}: step {} {} is not about 100 % / {} (the magnitude below direction bit {n})",
+                            entry.data_name,
+                            entry.value,
+                            entry.unit,
+                            (1u32 << n) - 1
+                        ),
+                    ));
+                    continue;
+                }
+                exact
+            }
+            _ => entry.value * factor,
+        };
         role.scales.push(GenScale {
             modes,
-            si_per_raw: entry.value * factor,
+            si_per_raw,
             value: entry.value,
             unit: entry.unit.clone(),
             sign,
@@ -784,6 +826,12 @@ fn role_of(
     }
     role.from_fw = first_fw.unwrap_or(0);
     role
+}
+
+/// The ratio step of a load whose magnitude sits below direction bit `n`:
+/// the full magnitude, 2^n − 1, is 100 %.
+pub(crate) fn load_step(n: u8) -> f64 {
+    1.0 / f64::from((1u32 << n) - 1)
 }
 
 /// The roles of `roles` by field.
@@ -930,8 +978,10 @@ mod tests {
         assert_eq!(present.untyped.len(), 1);
 
         let load = roles["present_load"];
-        assert!(close(load.scales[0].si_per_raw, 0.001));
+        assert!(close(load.scales[0].si_per_raw, 1.0 / 1023.0));
         assert_eq!(load.scales[0].modes, ALL);
+        assert_eq!(load.row_range, None);
+        assert_eq!(roles["cw_compliance_slope"].row_range, Some((0, 254)));
         let margin = roles["cw_compliance_margin"];
         assert!(close(margin.scales[0].si_per_raw, 0.29 * PI / 180.0));
         assert!(roles["ccw_compliance_margin"].scales.is_empty());
@@ -1000,13 +1050,13 @@ mod tests {
 
     #[test]
     fn units_count_only_under_unit_source() {
-        let mut table = Table::ax_fr9();
+        let mut table = Table::ax_fr9().without_range("CW Compliance Slope");
         table = table.omit_field("unit_source");
         let m = model(table);
         assert!(
             m.typed
                 .iter()
-                .all(|r| r.scales.is_empty() && r.untyped.is_empty())
+                .all(|r| r.scales.is_empty() && r.untyped.is_empty() && r.row_range.is_none())
         );
         assert_eq!(m.typed.len(), 12);
     }
@@ -1184,6 +1234,37 @@ mod tests {
             ),
             &["two present_load scales in mode Wheel"],
         );
+        assert_fails(
+            Table::ax_fr9()
+                .without_unit("Present Load")
+                .unit(
+                    r#"data_name: "Present Load", value: 0.2, unit: "%", sign_type: "direction_bit_10""#,
+                ),
+            &["step 0.2 % is not about 100 % / 1023"],
+        );
+    }
+
+    #[test]
+    fn load_step_is_full_magnitude() {
+        assert!(close(load_step(10), 1.0 / 1023.0));
+        assert!(close(load_step(1), 1.0));
+        let m =
+            model(Table::ax_fr9().without_unit("Present Load").unit(
+                r#"data_name: "Present Load", value: 0.1, unit: "%", sign_type: "unsigned""#,
+            ));
+        assert!(close(
+            by_field(&m.typed)["present_load"].scales[0].si_per_raw,
+            0.001
+        ));
+    }
+
+    #[test]
+    fn row_ranges_only_under_unit_source() {
+        let m = model(Table::mx_p1());
+        let roles = by_field(&m.typed);
+        assert_eq!(roles["p_gain"].row_range, Some((0, 254)));
+        assert_eq!(roles["torque_ctrl_mode_enable"].row_range, Some((0, 1)));
+        assert_eq!(roles["realtime_tick"].row_range, None);
     }
 
     #[test]

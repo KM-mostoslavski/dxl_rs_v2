@@ -166,6 +166,7 @@ impl HasPresentTemperature for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -177,6 +178,7 @@ impl HasPresentVoltage for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -188,6 +190,7 @@ impl HasPresentVelocity for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -199,6 +202,7 @@ impl HasGoalVelocity for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -210,6 +214,7 @@ impl HasSpeedLimit for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -221,6 +226,7 @@ impl HasPresentCurrent for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -232,6 +238,7 @@ impl HasGoalCurrent for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -243,6 +250,7 @@ impl HasMoving for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -254,6 +262,7 @@ impl HasLedRed for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -265,6 +274,7 @@ impl HasLedGreen for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -276,6 +286,7 @@ impl HasLedBlue for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -287,6 +298,7 @@ impl HasHardwareErrorStatus for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -298,6 +310,7 @@ impl HasRealtimeTick for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -309,6 +322,7 @@ impl HasPGain for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -320,5 +334,6 @@ impl HasDGain for M4210S260Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

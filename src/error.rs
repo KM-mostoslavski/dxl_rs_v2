@@ -394,8 +394,9 @@ pub enum SetupError {
     },
 
     /// The actuator's Operating Mode (or XL-320 Control Mode) value is in
-    /// none of its model's value lists, which come from its control table;
-    /// no mode is guessed (decided 2026-10-28).
+    /// none of its model's value lists, or its MX-64 Protocol 1 Torque Ctrl
+    /// Mode Enable value is outside 0 and 1; both come from its control
+    /// table, and no mode is guessed (decided 2026-10-28).
     #[error("actuator {} reports unknown operating mode {value}", id.get())]
     UnknownOperatingMode {
         /// The actuator that reported the value.

@@ -149,6 +149,7 @@ impl HasPresentTemperature for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -160,6 +161,7 @@ impl HasPresentVoltage for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -171,6 +173,7 @@ impl HasPresentVelocity for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -182,6 +185,7 @@ impl HasGoalVelocity for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -193,6 +197,7 @@ impl HasSpeedLimit for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -204,6 +209,7 @@ impl HasPresentCurrent for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -215,6 +221,7 @@ impl HasGoalCurrent for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -226,6 +233,7 @@ impl HasMoving for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -237,6 +245,7 @@ impl HasHardwareErrorStatus for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -248,6 +257,7 @@ impl HasRealtimeTick for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -259,6 +269,7 @@ impl HasPGain for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -270,5 +281,6 @@ impl HasDGain for Xw540T260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

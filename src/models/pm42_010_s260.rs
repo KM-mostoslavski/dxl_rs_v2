@@ -169,6 +169,7 @@ impl HasPresentTemperature for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -180,6 +181,7 @@ impl HasPresentVoltage for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -191,6 +193,7 @@ impl HasPresentVelocity for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -202,6 +205,7 @@ impl HasGoalVelocity for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -213,6 +217,7 @@ impl HasSpeedLimit for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -224,6 +229,7 @@ impl HasPresentCurrent for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -235,6 +241,7 @@ impl HasGoalCurrent for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -246,6 +253,7 @@ impl HasMoving for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -257,6 +265,7 @@ impl HasLedRed for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -268,6 +277,7 @@ impl HasLedGreen for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -279,6 +289,7 @@ impl HasLedBlue for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -290,6 +301,7 @@ impl HasHardwareErrorStatus for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -301,6 +313,7 @@ impl HasRealtimeTick for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -312,6 +325,7 @@ impl HasPGain for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -323,5 +337,6 @@ impl HasDGain for Pm42010S260 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

@@ -203,6 +203,7 @@ impl HasPresentVoltage for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -214,6 +215,7 @@ impl HasPresentVelocity for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -225,6 +227,7 @@ impl HasGoalVelocity for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -236,6 +239,7 @@ impl HasSpeedLimit for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -247,6 +251,7 @@ impl HasPresentCurrent for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -258,6 +263,7 @@ impl HasGoalCurrent for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -269,6 +275,7 @@ impl HasLed for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -280,6 +287,7 @@ impl HasRealtimeTick for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -291,6 +299,7 @@ impl HasPGain for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -302,5 +311,6 @@ impl HasDGain for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

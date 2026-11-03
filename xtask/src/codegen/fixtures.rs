@@ -156,6 +156,7 @@ impl Table {
             .with_row(42, 1, "Present Voltage", "R", "RAM")
             .with_row(43, 1, "Present Temperature", "R", "RAM")
             .with_row(46, 1, "Moving", "R", "RAM")
+            .row_range("CW Compliance Slope", 0, 254)
             .unit_source(UNIT_SOURCE)
             .unit(r#"data_name: "CW Compliance Margin", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 255)"#)
             .unit(r#"data_name: "Moving Speed", value: 0.111, unit: "rpm", sign_type: "unsigned", modes: ["joint"], zero_is_unlimited: true, range: (min: 0, max: 1023)"#)
@@ -177,6 +178,7 @@ impl Table {
             .with_row(70, 1, "Torque Ctrl Mode Enable", "RW", "RAM")
             .with_row(71, 2, "Goal Torque", "RW", "RAM")
             .row_range("Torque Ctrl Mode Enable", 0, 1)
+            .row_range("P Gain", 0, 254)
             .unit_source(UNIT_SOURCE)
             .torque_control_mode(r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque")"#)
             .unit(r#"data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "unsigned", modes: ["joint", "multi_turn"], zero_is_unlimited: true"#)
@@ -226,6 +228,13 @@ impl Table {
         self
     }
 
+    /// Removes every `unit_info` entry for the row named `name`.
+    pub(crate) fn without_unit(mut self, name: &str) -> Self {
+        let key = format!("data_name: {name:?},");
+        self.units.retain(|fields| !fields.starts_with(&key));
+        self
+    }
+
     /// Sets the `torque_control_mode` text.
     pub(crate) fn torque_control_mode(mut self, text: &str) -> Self {
         self.torque_control_mode = Some(text.to_string());
@@ -235,6 +244,12 @@ impl Table {
     /// Gives the row named `name` a `range`.
     pub(crate) fn row_range(mut self, name: &str, min: i64, max: i64) -> Self {
         self.ranges.insert(name.to_string(), (min, max));
+        self
+    }
+
+    /// Removes the range of the row named `name`.
+    pub(crate) fn without_range(mut self, name: &str) -> Self {
+        self.ranges.remove(name);
         self
     }
 

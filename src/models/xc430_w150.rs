@@ -148,6 +148,7 @@ impl HasPresentTemperature for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -159,6 +160,7 @@ impl HasPresentVoltage for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -170,6 +172,7 @@ impl HasPresentVelocity for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -181,6 +184,7 @@ impl HasGoalVelocity for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -192,6 +196,7 @@ impl HasSpeedLimit for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -203,6 +208,7 @@ impl HasPresentLoad for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -214,6 +220,7 @@ impl HasMoving for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -225,6 +232,7 @@ impl HasLed for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -236,6 +244,7 @@ impl HasHardwareErrorStatus for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -247,6 +256,7 @@ impl HasRealtimeTick for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -258,6 +268,7 @@ impl HasPGain for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -269,5 +280,6 @@ impl HasDGain for Xc430W150 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

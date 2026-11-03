@@ -155,6 +155,7 @@ impl HasPresentTemperature for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -166,6 +167,7 @@ impl HasPresentVoltage for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -177,6 +179,7 @@ impl HasPresentVelocity for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -188,6 +191,7 @@ impl HasGoalVelocity for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -199,6 +203,7 @@ impl HasSpeedLimit for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -210,6 +215,7 @@ impl HasPresentCurrent for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -221,6 +227,7 @@ impl HasGoalCurrent for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -232,6 +239,7 @@ impl HasMoving for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -243,6 +251,7 @@ impl HasLed for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -254,6 +263,7 @@ impl HasHardwareErrorStatus for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -265,6 +275,7 @@ impl HasRealtimeTick for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -276,6 +287,7 @@ impl HasPGain for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -287,5 +299,6 @@ impl HasDGain for Xc330M181 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

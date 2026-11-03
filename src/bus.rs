@@ -328,8 +328,9 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// model number (from the ping on Protocol 2, a Model Number read on
     /// Protocol 1), reads the firmware where the model's table depends on
     /// it, the EEPROM position limits and the operating mode (none on
-    /// models whose mode follows from the angle limits), and holds it with
-    /// torque `Off`. Nothing is written. It never sweeps the bus.
+    /// models whose mode follows from the angle limits; on MX-64 Protocol 1
+    /// the Torque Ctrl Mode Enable(70) switch, after the limits), and holds
+    /// it with torque `Off`. Nothing is written. It never sweeps the bus.
     ///
     /// # Errors
     ///
@@ -343,7 +344,7 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// - [`SetupError::Missing`]: a listed actuator does not answer.
     /// - [`SetupError::WrongModel`]: it answers with another model number.
     /// - [`SetupError::UnknownOperatingMode`]: its mode value is in none of
-    ///   its model's lists.
+    ///   its model's lists (or outside its torque switch's values).
     /// - [`ValidationError::InvertedLimits`]: its minimum limit is above its
     ///   maximum.
     /// - [`Error::Status`] (a hardware fault fails Setup), and any transport

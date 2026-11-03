@@ -136,6 +136,7 @@ impl HasPresentTemperature for Mx64P1 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -151,6 +152,7 @@ impl HasPresentVoltage for Mx64P1 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -166,6 +168,7 @@ impl HasPresentVelocity for Mx64P1 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -181,6 +184,7 @@ impl HasGoalVelocity for Mx64P1 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -196,21 +200,24 @@ impl HasSpeedLimit for Mx64P1 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
 /// Present Load: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: the full magnitude below direction bit 10 is 100 %.
 impl HasPresentLoad for Mx64P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Load",
         register: Self::PRESENT_LOAD,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.001, Sign::DirectionBit(10), 2, false),
+            scale: RegisterScale::new(0.0009775171, Sign::DirectionBit(10), 2, false),
             range: Some((0, 2047)),
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -226,6 +233,7 @@ impl HasGoalCurrent for Mx64P1 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -237,6 +245,7 @@ impl HasMoving for Mx64P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -248,6 +257,7 @@ impl HasLed for Mx64P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -264,10 +274,12 @@ impl HasRealtimeTick for Mx64P1 {
         }],
         bounded_by: None,
         from_fw: 40,
+        row_range: None,
     };
 }
 
 /// P Gain: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasPGain for Mx64P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "P Gain",
@@ -275,10 +287,12 @@ impl HasPGain for Mx64P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 254)),
     };
 }
 
 /// D Gain: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasDGain for Mx64P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "D Gain",
@@ -286,10 +300,12 @@ impl HasDGain for Mx64P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 254)),
     };
 }
 
 /// Torque Ctrl Mode Enable: in register units, no scale.
+/// Raw range 0 to 1.
 impl HasTorqueCtrlModeEnable for Mx64P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Torque Ctrl Mode Enable",
@@ -297,5 +313,6 @@ impl HasTorqueCtrlModeEnable for Mx64P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 1)),
     };
 }

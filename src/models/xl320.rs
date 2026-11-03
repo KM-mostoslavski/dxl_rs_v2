@@ -130,6 +130,7 @@ impl HasPresentTemperature for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -141,6 +142,7 @@ impl HasPresentVoltage for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -152,6 +154,7 @@ impl HasPresentVelocity for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -163,6 +166,7 @@ impl HasGoalVelocity for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -174,6 +178,7 @@ impl HasSpeedLimit for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -185,6 +190,7 @@ impl HasPresentLoad for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -196,6 +202,7 @@ impl HasMoving for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -207,6 +214,7 @@ impl HasLed for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -218,6 +226,7 @@ impl HasHardwareErrorStatus for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -229,6 +238,7 @@ impl HasPGain for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -240,5 +250,6 @@ impl HasDGain for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

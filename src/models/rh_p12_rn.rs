@@ -166,6 +166,7 @@ impl HasPresentTemperature for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -177,6 +178,7 @@ impl HasPresentVoltage for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -188,6 +190,7 @@ impl HasPresentVelocity for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -199,6 +202,7 @@ impl HasGoalVelocity for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -210,6 +214,7 @@ impl HasSpeedLimit for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -221,6 +226,7 @@ impl HasPresentCurrent for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -232,6 +238,7 @@ impl HasGoalCurrent for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -243,6 +250,7 @@ impl HasMoving for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -254,6 +262,7 @@ impl HasLedRed for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -265,6 +274,7 @@ impl HasLedGreen for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -276,6 +286,7 @@ impl HasLedBlue for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -287,6 +298,7 @@ impl HasHardwareErrorStatus for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -298,6 +310,7 @@ impl HasRealtimeTick for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -309,6 +322,7 @@ impl HasPGain for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -320,5 +334,6 @@ impl HasDGain for RhP12Rn {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

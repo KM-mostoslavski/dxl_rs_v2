@@ -146,11 +146,22 @@ fn convert(quantity: Quantity, raw: i64) -> String {
     }
 }
 
+/// `Some(min..=max)` or `None`, as the generated test compares it.
+fn range_value(range: Option<(i64, i64)>) -> String {
+    range.map_or_else(
+        || "None".to_string(),
+        |(min, max)| format!("Some({min}..={max})"),
+    )
+}
+
 /// Checks of one scale of `role`, in its first mode.
 fn scale_checks(role: &GenRole, scale: &GenScale) -> String {
     let mode = fr9::mode_names(scale.modes)[0];
     let factor = role.def.quantity.factor(&scale.unit).unwrap_or(1.0);
-    let step = scale.value * factor;
+    let step = match (role.def.quantity, scale.sign) {
+        (Quantity::Load, SignKind::DirectionBit(n)) => fr9::load_step(n),
+        _ => scale.value * factor,
+    };
     let mut out = format!(
         "let scale = role.scale(LimitMode::{mode}).unwrap();\n\
          assert_eq!((scale.sign(), scale.size(), scale.zero_is_unlimited()), ({}, {}, {}));\n\
@@ -173,16 +184,13 @@ fn scale_checks(role: &GenRole, scale: &GenScale) -> String {
     if scale.zero_is_unlimited && role.def.quantity == Quantity::Velocity {
         out.push_str("assert_eq!(scale.speed_limit(0), SpeedLimit::Unlimited);\n");
     }
-    let range = scale.range.map_or_else(
-        || "None".to_string(),
-        |(min, max)| format!("Some({min}..={max})"),
-    );
+    let range = range_value(scale.range.or(role.row_range));
     let _ = writeln!(
         out,
         "assert_eq!(role.raw_range(LimitMode::{mode}), {range});"
     );
     if role.def.quantity == Quantity::Tick
-        && let Some((_, max)) = scale.range
+        && let Some((_, max)) = scale.range.or(role.row_range)
     {
         let _ = writeln!(
             out,
@@ -248,20 +256,22 @@ fn render_roles(out: &mut String, model: &GenModel) {
         .filter(plain)
         .map(|r| {
             format!(
-                "(Role::{}, <{ty} as {}>::ROLE, {ty}::{})",
+                "(Role::{}, <{ty} as {}>::ROLE, {ty}::{}, {})",
                 r.def.variant,
                 r.def.has,
-                const_ident(&r.row.data_name)
+                const_ident(&r.row.data_name),
+                range_value(r.row_range)
             )
         })
         .collect();
     if !raw.is_empty() {
         body.push_str(&each(
-            "(role, tier2, register)",
+            "(role, tier2, register, range)",
             &raw,
             "assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));\n\
              for mode in ALL_MODES {\n\
              assert_eq!(tier2.scale(mode), None);\n\
+             assert_eq!(tier2.raw_range(mode), range);\n\
              assert_eq!(data.typed(role, mode), Some((register, None)));\n\
              }\n",
         ));
@@ -286,8 +296,9 @@ fn render_roles(out: &mut String, model: &GenModel) {
                 .collect();
             let _ = writeln!(
                 body,
-                "for mode in [{}] {{\nassert_eq!(role.scale(mode), None);\nassert_eq!(data.typed(Role::{}, mode), Some(({ty}::{}, None)));\n}}",
+                "for mode in [{}] {{\nassert_eq!(role.scale(mode), None);\nassert_eq!(role.raw_range(mode), {});\nassert_eq!(data.typed(Role::{}, mode), Some(({ty}::{}, None)));\n}}",
                 modes.join(", "),
+                range_value(role.row_range),
                 role.def.variant,
                 const_ident(&role.row.data_name),
             );
@@ -809,11 +820,13 @@ mod tests {
             "assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=1023));",
             "assert_eq!(data.typed(Role::SpeedLimit,LimitMode::Bounded),Some((Ax::MOVING_SPEED,Some(scale))));",
             "assert!(close(scale.velocity(1124).rad_per_s(),-1.1623893));",
-            "assert!(close(scale.load(100).ratio(),0.1));",
+            "assert!(close(scale.load(100).ratio(),0.097751714));",
+            "assert!(close(scale.load(1124).ratio(),-0.097751714));",
             "assert!(close(scale.si_of(100),0.5061455));",
-            "(Role::GoalVelocity,<AxasHasGoalVelocity>::ROLE,Ax::MOVING_SPEED),",
-            "assert_eq!((tier2.from_firmware(),tier2.bounded_by()),(0,None));formodeinALL_MODES{assert_eq!(tier2.scale(mode),None);assert_eq!(data.typed(role,mode),Some((register,None)));}",
-            "formodein[LimitMode::Unbounded,LimitMode::Pwm,LimitMode::UnboundedCurrent,LimitMode::Velocity,LimitMode::Current,LimitMode::Wheel]{assert_eq!(role.scale(mode),None);assert_eq!(data.typed(Role::SpeedLimit,mode),Some((Ax::MOVING_SPEED,None)));}",
+            "(Role::GoalVelocity,<AxasHasGoalVelocity>::ROLE,Ax::MOVING_SPEED,None),",
+            "(Role::CwComplianceSlope,<AxasHasCwComplianceSlope>::ROLE,Ax::CW_COMPLIANCE_SLOPE,Some(0..=254)),",
+            "assert_eq!((tier2.from_firmware(),tier2.bounded_by()),(0,None));formodeinALL_MODES{assert_eq!(tier2.scale(mode),None);assert_eq!(tier2.raw_range(mode),range);assert_eq!(data.typed(role,mode),Some((register,None)));}",
+            "formodein[LimitMode::Unbounded,LimitMode::Pwm,LimitMode::UnboundedCurrent,LimitMode::Velocity,LimitMode::Current,LimitMode::Wheel]{assert_eq!(role.scale(mode),None);assert_eq!(role.raw_range(mode),None);assert_eq!(data.typed(Role::SpeedLimit,mode),Some((Ax::MOVING_SPEED,None)));}",
             "letrole=<MxasHasRealtimeTick>::ROLE;assert_eq!(role.from_firmware(),40);",
             "assert_eq!(role.tick_modulus(LimitMode::Bounded),Some(32768));",
             "assert!(close(scale.current(1124).amps(),-0.45));",

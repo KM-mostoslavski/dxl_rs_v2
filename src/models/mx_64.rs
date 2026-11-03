@@ -156,6 +156,7 @@ impl HasPresentTemperature for Mx64 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -171,6 +172,7 @@ impl HasPresentVoltage for Mx64 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -186,6 +188,7 @@ impl HasPresentVelocity for Mx64 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -201,6 +204,7 @@ impl HasGoalVelocity for Mx64 {
         }],
         bounded_by: Some(Self::VELOCITY_LIMIT),
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -218,6 +222,7 @@ impl HasSpeedLimit for Mx64 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -233,6 +238,7 @@ impl HasPresentCurrent for Mx64 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -248,6 +254,7 @@ impl HasGoalCurrent for Mx64 {
         }],
         bounded_by: Some(Self::CURRENT_LIMIT),
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -259,6 +266,7 @@ impl HasMoving for Mx64 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -270,6 +278,7 @@ impl HasLed for Mx64 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -281,6 +290,7 @@ impl HasHardwareErrorStatus for Mx64 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -296,10 +306,12 @@ impl HasRealtimeTick for Mx64 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
 /// Position P Gain: in register units, no scale.
+/// Raw range 0 to 16383.
 impl HasPGain for Mx64 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position P Gain",
@@ -307,10 +319,12 @@ impl HasPGain for Mx64 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 16383)),
     };
 }
 
 /// Position D Gain: in register units, no scale.
+/// Raw range 0 to 16383.
 impl HasDGain for Mx64 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position D Gain",
@@ -318,5 +332,6 @@ impl HasDGain for Mx64 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 16383)),
     };
 }

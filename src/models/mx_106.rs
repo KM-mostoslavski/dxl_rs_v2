@@ -152,6 +152,7 @@ impl HasPresentTemperature for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -163,6 +164,7 @@ impl HasPresentVoltage for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -174,6 +176,7 @@ impl HasPresentVelocity for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -185,6 +188,7 @@ impl HasGoalVelocity for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -196,6 +200,7 @@ impl HasSpeedLimit for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -207,6 +212,7 @@ impl HasPresentCurrent for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -218,6 +224,7 @@ impl HasGoalCurrent for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -229,6 +236,7 @@ impl HasMoving for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -240,6 +248,7 @@ impl HasLed for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -251,6 +260,7 @@ impl HasHardwareErrorStatus for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -262,6 +272,7 @@ impl HasRealtimeTick for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -273,6 +284,7 @@ impl HasPGain for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -284,5 +296,6 @@ impl HasDGain for Mx106 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

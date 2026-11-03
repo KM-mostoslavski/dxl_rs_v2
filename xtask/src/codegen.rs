@@ -636,7 +636,17 @@ mod tests {
             (load.row.address, load.scales[0].sign),
             (40, SignKind::DirectionBit(10))
         );
-        assert!(close(load.scales[0].si_per_raw, 0.001));
+        assert!(close(load.scales[0].si_per_raw, 1.0 / 1023.0));
+        assert_eq!(
+            role("ax_12a", "cw_compliance_slope").row_range,
+            Some((0, 254))
+        );
+        assert_eq!(role("mx_64_p1", "p_gain").row_range, Some((0, 254)));
+        assert_eq!(role("mx_64", "p_gain").row_range, Some((0, 16_383)));
+        assert_eq!(
+            role("mx_64_p1", "torque_ctrl_mode_enable").row_range,
+            Some((0, 1))
+        );
         assert_eq!(role("ax_12a", "led").row.address, 25);
         assert_eq!(role("ax_12a", "moving").row.address, 46);
         assert_eq!(role("ax_12a", "cw_compliance_slope").row.address, 28);

@@ -149,6 +149,7 @@ impl HasPresentTemperature for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -160,6 +161,7 @@ impl HasPresentVoltage for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -171,6 +173,7 @@ impl HasPresentVelocity for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -182,6 +185,7 @@ impl HasGoalVelocity for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -193,6 +197,7 @@ impl HasSpeedLimit for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -204,6 +209,7 @@ impl HasPresentLoad for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -215,6 +221,7 @@ impl HasMoving for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -226,6 +233,7 @@ impl HasLed for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -237,6 +245,7 @@ impl HasHardwareErrorStatus for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -248,6 +257,7 @@ impl HasRealtimeTick for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -259,6 +269,7 @@ impl HasPGain for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -270,5 +281,6 @@ impl HasDGain for Mx28 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

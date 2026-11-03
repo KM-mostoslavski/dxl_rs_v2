@@ -448,9 +448,9 @@ pub(crate) enum ModeSource {
         /// What each of its values means for this model.
         values: ModeValues,
     },
-    /// AX, MX on Protocol 1: no mode register. The mode follows from the
-    /// CW and CCW Angle Limits Setup reads anyway; see
-    /// [`LimitMode::from_angle_limits`].
+    /// AX, RX, and MX on Protocol 1 without a torque control switch in
+    /// their table: no mode register. The mode follows from the CW and CCW
+    /// Angle Limits Setup reads anyway; see [`LimitMode::from_angle_limits`].
     AngleLimits,
     /// MX-64 on Protocol 1: the angle limits, overridden by a torque
     /// control switch. Setup reads the 1-byte `register` (Torque Ctrl Mode

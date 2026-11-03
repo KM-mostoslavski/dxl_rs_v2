@@ -103,6 +103,10 @@ pub struct RoleRegister {
     pub(crate) bounded_by: Option<Register>,
     /// The first firmware version that has the register; 0 for all.
     pub(crate) from_fw: u8,
+    /// The raw range the e-Manual gives for the register in every mode
+    /// (gains, compliance slopes, a mode switch), if the table records one;
+    /// a scale's own range wins in that scale's modes.
+    pub(crate) row_range: Option<(i64, i64)>,
 }
 
 impl RoleRegister {
@@ -139,14 +143,13 @@ impl RoleRegister {
     }
 
     /// The raw range the e-Manual gives for the register in `mode`, or
-    /// `None` when the table records none.
+    /// `None` when the table records none: the range of the scale that
+    /// applies in `mode`, else the register's own range (MX-64 Protocol 1
+    /// P Gain 0 to 254, AX-12A Compliance Slope 0 to 254).
     pub const fn raw_range(&self, mode: LimitMode) -> Option<RangeInclusive<i64>> {
-        match self.entry(mode) {
-            Some(ModeScale {
-                range: Some((min, max)),
-                ..
-            }) => Some(*min..=*max),
-            _ => None,
+        match self.range_in(mode) {
+            Some((min, max)) => Some(min..=max),
+            None => None,
         }
     }
 
@@ -155,12 +158,19 @@ impl RoleRegister {
     /// top of its raw range, 0 meaning 65,536. `None` without a recorded
     /// range.
     pub const fn tick_modulus(&self, mode: LimitMode) -> Option<u16> {
+        match self.range_in(mode) {
+            Some((_, max)) => Some((max + 1) as u16),
+            None => None,
+        }
+    }
+
+    /// The raw range in `mode`, `(min, max)`.
+    const fn range_in(&self, mode: LimitMode) -> Option<(i64, i64)> {
         match self.entry(mode) {
             Some(ModeScale {
-                range: Some((_, max)),
-                ..
-            }) => Some((*max + 1) as u16),
-            _ => None,
+                range: Some(range), ..
+            }) => Some(*range),
+            _ => self.row_range,
         }
     }
 
@@ -339,6 +349,21 @@ mod tests {
         scales: &[JOINT, WHEEL],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
+    };
+
+    const SLOPE: RoleRegister = RoleRegister {
+        name: "CW Compliance Slope",
+        register: reg(28, 1),
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: Some((0, 254)),
+    };
+
+    const RANGED_ROW: RoleRegister = RoleRegister {
+        row_range: Some((0, 2047)),
+        ..MOVING_SPEED
     };
 
     const TICK: RoleRegister = RoleRegister {
@@ -351,6 +376,7 @@ mod tests {
         }],
         bounded_by: Some(reg(44, 4)),
         from_fw: 40,
+        row_range: None,
     };
 
     #[test]
@@ -383,6 +409,18 @@ mod tests {
         assert_eq!(MOVING_SPEED.raw_range(LimitMode::Wheel), None);
         assert_eq!(MOVING_SPEED.raw_range(LimitMode::Pwm), None);
         assert_eq!(MOVING_SPEED.tick_modulus(LimitMode::Wheel), None);
+    }
+
+    #[test]
+    fn row_range_fills_in_where_no_scale_gives_one() {
+        for mode in [LimitMode::Bounded, LimitMode::Wheel, LimitMode::Current] {
+            assert_eq!(SLOPE.raw_range(mode), Some(0..=254));
+            assert_eq!(SLOPE.scale(mode), None);
+        }
+        assert_eq!(RANGED_ROW.raw_range(LimitMode::Bounded), Some(0..=1023));
+        assert_eq!(RANGED_ROW.raw_range(LimitMode::Wheel), Some(0..=2047));
+        assert_eq!(RANGED_ROW.raw_range(LimitMode::Pwm), Some(0..=2047));
+        assert_eq!(SLOPE.tick_modulus(LimitMode::Pwm), Some(255));
     }
 
     #[test]

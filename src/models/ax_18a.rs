@@ -121,6 +121,7 @@ impl HasPresentTemperature for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -132,6 +133,7 @@ impl HasPresentVoltage for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -143,6 +145,7 @@ impl HasPresentVelocity for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -154,6 +157,7 @@ impl HasGoalVelocity for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -165,6 +169,7 @@ impl HasSpeedLimit for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -176,6 +181,7 @@ impl HasPresentLoad for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -187,6 +193,7 @@ impl HasMoving for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -198,6 +205,7 @@ impl HasLed for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -209,6 +217,7 @@ impl HasCwComplianceMargin for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -220,6 +229,7 @@ impl HasCcwComplianceMargin for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -231,6 +241,7 @@ impl HasCwComplianceSlope for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -242,5 +253,6 @@ impl HasCcwComplianceSlope for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }

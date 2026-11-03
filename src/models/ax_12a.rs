@@ -126,6 +126,7 @@ impl HasPresentTemperature for Ax12a {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -141,6 +142,7 @@ impl HasPresentVoltage for Ax12a {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -157,10 +159,11 @@ impl HasPresentVelocity for Ax12a {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
-/// Moving Speed: raw only, no unit in the table.
+/// Moving Speed: raw only.
 /// No typed form for 0.1 % per raw step in Wheel mode: not a goal velocity.
 impl HasGoalVelocity for Ax12a {
     const ROLE: RoleRegister = RoleRegister {
@@ -169,6 +172,7 @@ impl HasGoalVelocity for Ax12a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -184,21 +188,24 @@ impl HasSpeedLimit for Ax12a {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
 /// Present Load: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: the full magnitude below direction bit 10 is 100 %.
 impl HasPresentLoad for Ax12a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Load",
         register: Self::PRESENT_LOAD,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.001, Sign::DirectionBit(10), 2, false),
+            scale: RegisterScale::new(0.0009775171, Sign::DirectionBit(10), 2, false),
             range: Some((0, 2047)),
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -210,6 +217,7 @@ impl HasMoving for Ax12a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -221,6 +229,7 @@ impl HasLed for Ax12a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -236,6 +245,7 @@ impl HasCwComplianceMargin for Ax12a {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -251,10 +261,12 @@ impl HasCcwComplianceMargin for Ax12a {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
 /// CW Compliance Slope: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasCwComplianceSlope for Ax12a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CW Compliance Slope",
@@ -262,10 +274,12 @@ impl HasCwComplianceSlope for Ax12a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 254)),
     };
 }
 
 /// CCW Compliance Slope: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasCcwComplianceSlope for Ax12a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CCW Compliance Slope",
@@ -273,5 +287,6 @@ impl HasCcwComplianceSlope for Ax12a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 254)),
     };
 }

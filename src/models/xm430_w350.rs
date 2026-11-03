@@ -155,6 +155,7 @@ impl HasPresentTemperature for Xm430W350 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -170,6 +171,7 @@ impl HasPresentVoltage for Xm430W350 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -185,6 +187,7 @@ impl HasPresentVelocity for Xm430W350 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -200,6 +203,7 @@ impl HasGoalVelocity for Xm430W350 {
         }],
         bounded_by: Some(Self::VELOCITY_LIMIT),
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -217,6 +221,7 @@ impl HasSpeedLimit for Xm430W350 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -232,6 +237,7 @@ impl HasPresentCurrent for Xm430W350 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -247,6 +253,7 @@ impl HasGoalCurrent for Xm430W350 {
         }],
         bounded_by: Some(Self::CURRENT_LIMIT),
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -258,6 +265,7 @@ impl HasMoving for Xm430W350 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -269,6 +277,7 @@ impl HasLed for Xm430W350 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -280,6 +289,7 @@ impl HasHardwareErrorStatus for Xm430W350 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
@@ -295,10 +305,12 @@ impl HasRealtimeTick for Xm430W350 {
         }],
         bounded_by: None,
         from_fw: 0,
+        row_range: None,
     };
 }
 
 /// Position P Gain: in register units, no scale.
+/// Raw range 0 to 16383.
 impl HasPGain for Xm430W350 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position P Gain",
@@ -306,10 +318,12 @@ impl HasPGain for Xm430W350 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 16383)),
     };
 }
 
 /// Position D Gain: in register units, no scale.
+/// Raw range 0 to 16383.
 impl HasDGain for Xm430W350 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position D Gain",
@@ -317,5 +331,6 @@ impl HasDGain for Xm430W350 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
+        row_range: Some((0, 16383)),
     };
 }
