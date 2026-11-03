@@ -17,7 +17,7 @@ mod p2;
 #[cfg(test)]
 mod no_alloc;
 #[cfg(test)]
-mod vectors;
+pub(crate) mod vectors;
 
 pub use clock::Clock;
 #[cfg(feature = "std")]
@@ -104,7 +104,7 @@ pub struct Pong {
     pub(crate) model_number: Option<u16>,
     /// Protocol 2 only.
     pub(crate) firmware: Option<u8>,
-    /// The error byte of a scan or broadcast ping reply that had one set.
+    /// The error byte of a scan reply that had one set.
     /// Unicast ping reports a set error byte as [`Error::Status`] instead,
     /// so this is always `None` there.
     pub(crate) fault: Option<StatusReport>,
@@ -185,6 +185,28 @@ pub trait Exchange: sealed::Sealed {
     ) -> Result<(), Error>
     where
         I: Iterator<Item = Id> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>);
+
+    /// Reads `size` bytes at `addr` from each `(id, addr, size)` entry with
+    /// one Bulk Read instruction: addresses and sizes may differ per
+    /// actuator. `on_reply` is called exactly once per entry, in entry
+    /// order, with that actuator's data or its own error. `scratch` holds
+    /// one reply and must be at least as long as the largest `size`.
+    ///
+    /// Protocol 1 has it on MX, MX(2.0) and X series firmware except
+    /// XL-320; the caller checks each target's table.
+    ///
+    /// Returns `Err` when the request is invalid, before anything is sent
+    /// (an ID listed twice, a size or address out of range), or when the
+    /// transport fails.
+    fn bulk_read<T: Transport, C: Clock, I, F>(
+        link: &mut Link<'_, T, C>,
+        entries: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, u16, u16)> + Clone,
         F: FnMut(Id, Result<&[u8], Error>);
 
     /// Decodes a non-zero error byte of this protocol.
@@ -326,6 +348,101 @@ pub(crate) fn check<P: Exchange>(status: Status, id: Id, out: &mut [u8]) -> Resu
         .into());
     }
     Ok(())
+}
+
+/// Receives one status packet of this protocol.
+pub(crate) trait Receive: Exchange {
+    /// Waits until a status packet completes or `deadline` passes, storing
+    /// at most `out.len()` of its data bytes into `out`.
+    fn receive_status<T: Transport, C: Clock>(
+        link: &mut Link<'_, T, C>,
+        out: &mut [u8],
+        deadline: u64,
+        id: Option<Id>,
+    ) -> Result<Status, Error>;
+}
+
+/// Collects the replies to one broadcast read instruction (Sync Read, Bulk
+/// Read): one status packet per `(id, size)` entry, in entry order, as the
+/// e-Manual says they come back.
+///
+/// `on_reply` is called exactly once per entry with that actuator's `size`
+/// data bytes, or its own error; each reply gets a full timeout. A reply
+/// from an ID later in the list means the IDs before it are not answering:
+/// they get a timeout and the reply goes to its own ID. A late reply from an
+/// ID that already timed out is discarded. `scratch` holds one reply and
+/// must be at least as long as the largest `size`. Returns `Err` only when
+/// the transport itself fails.
+pub(crate) fn collect<P, T, C, I, F>(
+    link: &mut Link<'_, T, C>,
+    entries: I,
+    scratch: &mut [u8],
+    mut on_reply: F,
+) -> Result<(), Error>
+where
+    P: Receive,
+    T: Transport,
+    C: Clock,
+    I: Iterator<Item = (Id, usize)> + Clone,
+    F: FnMut(Id, Result<&[u8], Error>),
+{
+    let all = entries.clone();
+    let mut held = None;
+    let mut pending = entries;
+    let mut done = 0;
+    while let Some((id, size)) = pending.next() {
+        let already_handled = |raw: u8| {
+            all.clone()
+                .take(done)
+                .any(|(earlier, _)| earlier != id && earlier.get() == raw)
+        };
+        let received = match held.take() {
+            Some(status) => Ok(status),
+            None => {
+                let deadline = link.deadline();
+                loop {
+                    match P::receive_status(link, scratch, deadline, Some(id)) {
+                        Ok(status) if already_handled(status.id) => {}
+                        other => break other,
+                    }
+                }
+            }
+        };
+        done += 1;
+        match received {
+            Ok(status)
+                if status.id != id.get()
+                    && pending.clone().any(|(later, _)| later.get() == status.id) =>
+            {
+                held = Some(status);
+                on_reply(id, Err(TransportError::Timeout { id: Some(id) }.into()));
+            }
+            Ok(status) => match scratch.get_mut(..size) {
+                Some(out) => on_reply(id, check::<P>(status, id, out).map(|()| &*out)),
+                None => on_reply(
+                    id,
+                    Err(crate::error::ValidationError::DataLength {
+                        expected: size,
+                        got: scratch.len(),
+                    }
+                    .into()),
+                ),
+            },
+            Err(err @ Error::Transport(TransportError::Io(_))) => return Err(err),
+            Err(err) => on_reply(id, Err(err)),
+        }
+    }
+    Ok(())
+}
+
+/// The first ID listed twice in `ids`, if any. Bulk instructions take each
+/// ID once (e-Manual Protocol 2.0, Bulk Read and Bulk Write: "The same ID
+/// cannot be used multiple times in the Parameter").
+pub(crate) fn repeated_id<I: Iterator<Item = Id> + Clone>(ids: I) -> Option<Id> {
+    ids.clone()
+        .enumerate()
+        .find(|&(i, id)| ids.clone().take(i).any(|earlier| earlier == id))
+        .map(|(_, id)| id)
 }
 
 /// Buffers outgoing bytes in a small stack chunk.

@@ -1,4 +1,5 @@
-//! Packet examples copied from the ROBOTIS e-Manual, fetched 2026-10-26.
+//! Packet examples copied from the ROBOTIS e-Manual, fetched 2026-10-26;
+//! the Bulk Read, Bulk Write and Reboot examples re-checked 2026-11-03.
 //!
 //! The e-Manual is being retired, so the bytes live here. Each constant names
 //! its page and anchor. "Integrity vector only" marks examples whose
@@ -65,7 +66,7 @@ pub(crate) mod p2 {
     pub(crate) const FACTORY_RESET: &[u8] = &[
         0xFF, 0xFF, 0xFD, 0x00, 0x01, 0x04, 0x00, 0x06, 0x01, 0xA1, 0xE6,
     ];
-    /// Integrity vector only: Reboot, ID 1.
+    /// `#reboot-0x08`: Reboot ID 1; the reply is [`OK_REPLY`].
     pub(crate) const REBOOT: &[u8] = &[0xFF, 0xFF, 0xFD, 0x00, 0x01, 0x03, 0x00, 0x08, 0x2F, 0x4E];
     /// Integrity vector only: Clear multi-turn, ID 1.
     pub(crate) const CLEAR: &[u8] = &[
@@ -90,17 +91,17 @@ pub(crate) mod p2 {
         0x08, 0x00, 0x07, 0x1F, 0x08, 0x00, 0x00, 0x16, 0xCA, 0x00, 0x04, 0xFF, 0x03, 0x00, 0x00,
         0xD1, 0x9E,
     ];
-    /// Integrity vector only: Bulk Read, ID 1 Present Voltage, ID 2 Present
-    /// Temperature.
+    /// `#bulk-read-0x92`: Bulk Read, ID 1 Present Input Voltage (144, 2
+    /// bytes), ID 2 Present Temperature (146, 1 byte).
     pub(crate) const BULK_READ: &[u8] = &[
         0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x0D, 0x00, 0x92, 0x01, 0x90, 0x00, 0x02, 0x00, 0x02, 0x92,
         0x00, 0x01, 0x00, 0x1A, 0x05,
     ];
-    /// Integrity vector only: Bulk Read reply from ID 1 (119).
+    /// `#bulk-read-0x92`: Bulk Read reply from ID 1 (119).
     pub(crate) const BULK_READ_REPLY_1: &[u8] = &[
         0xFF, 0xFF, 0xFD, 0x00, 0x01, 0x06, 0x00, 0x55, 0x00, 0x77, 0x00, 0xC3, 0x69,
     ];
-    /// Integrity vector only: Bulk Read reply from ID 2 (36).
+    /// `#bulk-read-0x92`: Bulk Read reply from ID 2 (36).
     pub(crate) const BULK_READ_REPLY_2: &[u8] = &[
         0xFF, 0xFF, 0xFD, 0x00, 0x02, 0x05, 0x00, 0x55, 0x00, 0x24, 0x8B, 0xA9,
     ];
@@ -114,8 +115,8 @@ pub(crate) mod p2 {
         0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x14, 0x00, 0x55, 0x00, 0x03, 0xA6, 0x00, 0x00, 0x00, 0x67,
         0xA4, 0x00, 0x07, 0xA5, 0x01, 0x24, 0x74, 0x00, 0x04, 0x1F, 0xD9, 0xC1,
     ];
-    /// Integrity vector only: Bulk Write, ID 1 Max Voltage Limit = 160, ID 2
-    /// Temperature Limit = 80.
+    /// `#bulk-write-0x93`: Bulk Write, ID 1 Max Voltage Limit (32, 2
+    /// bytes) = 160, ID 2 Temperature Limit (31, 1 byte) = 80.
     pub(crate) const BULK_WRITE: &[u8] = &[
         0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x10, 0x00, 0x93, 0x01, 0x20, 0x00, 0x02, 0x00, 0xA0, 0x00,
         0x02, 0x1F, 0x00, 0x01, 0x00, 0x50, 0xB7, 0x68,
@@ -128,6 +129,8 @@ pub(crate) mod p2 {
         READ_REPLY_1,
         READ_REPLY_2,
         OK_REPLY,
+        BULK_READ_REPLY_1,
+        BULK_READ_REPLY_2,
     ];
 
     /// Every example on the page.
@@ -196,18 +199,25 @@ pub(crate) mod p1 {
     pub(crate) const FACTORY_RESET_REPLY: &[u8] = &[0xFF, 0xFF, 0x00, 0x02, 0x00, 0xFD];
     /// Integrity vector only: Reboot, ID 1.
     pub(crate) const REBOOT: &[u8] = &[0xFF, 0xFF, 0x01, 0x02, 0x08, 0xF4];
-    /// Integrity vector only: Bulk Read, ID 1 Goal Position, ID 2 Present
-    /// Position.
+    /// `#bulk-read`: Bulk Read (MX), ID 1 Goal Position (30, 2 bytes), ID 2
+    /// Present Position (36, 2 bytes).
     pub(crate) const BULK_READ: &[u8] = &[
         0xFF, 0xFF, 0xFE, 0x09, 0x92, 0x00, 0x02, 0x01, 0x1E, 0x02, 0x02, 0x24, 0x1D,
     ];
-    /// Integrity vector only: Bulk Read reply from ID 1.
+    /// `#bulk-read`: Bulk Read reply from ID 1 (`00 80`, 32,768).
     pub(crate) const BULK_READ_REPLY_1: &[u8] = &[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x00, 0x80, 0x7A];
-    /// Integrity vector only: Bulk Read reply from ID 2.
+    /// `#bulk-read`: Bulk Read reply from ID 2 (`00 80`).
     pub(crate) const BULK_READ_REPLY_2: &[u8] = &[0xFF, 0xFF, 0x02, 0x04, 0x00, 0x00, 0x80, 0x79];
 
     /// Status packets this crate parses.
-    pub(crate) const STATUS: &[&[u8]] = &[OK_REPLY, READ_REPLY, ERROR_REPLY, FACTORY_RESET_REPLY];
+    pub(crate) const STATUS: &[&[u8]] = &[
+        OK_REPLY,
+        READ_REPLY,
+        ERROR_REPLY,
+        FACTORY_RESET_REPLY,
+        BULK_READ_REPLY_1,
+        BULK_READ_REPLY_2,
+    ];
 
     /// Every example on the page.
     pub(crate) const ALL: &[&[u8]] = &[
