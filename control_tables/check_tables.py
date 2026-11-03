@@ -880,6 +880,8 @@ def check_type_info(file: str, scale: object, report: Report) -> None:
 #   `torque_control_mode`); absent means every mode.
 # - `profile` (optional): the Drive Mode profile the entry applies in, from
 #   PROFILES; only in a table with a `Drive Mode` row; absent means both.
+# - No two entries of one register meet in a mode and profile; an entry without
+#   `modes` (or `profile`) meets every other entry of that register.
 # - `zero_is_unlimited` (optional): `true` where the page says raw 0 means no
 #   limit ("maximum rpm", "infinite velocity").
 # - `range` (optional): `(min: INT, max: INT)`, the raw range the page gives in
@@ -894,8 +896,9 @@ def check_type_info(file: str, scale: object, report: Report) -> None:
 #
 # `torque_control_mode: (register: STRING, on: INT, goal: STRING)` (MX on
 # Protocol 1): the RW RAM size-1 row that switches torque control on when it
-# holds `on`, and the RW RAM row that is then the goal; only in a table whose
-# mode source is the CW/CCW Angle Limit pair.
+# holds `on` (inside that row's `range`, when it has one), and a different RW
+# RAM row that is then the goal; only in a table whose mode source is the
+# CW/CCW Angle Limit pair.
 
 UNIT_INFO_KEYS = ("data_name", "value", "unit", "sign_type")
 UNIT_INFO_FR9_KEYS = ("modes", "profile", "zero_is_unlimited", "range", "bounded_by", "from_fw")
@@ -976,7 +979,7 @@ def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> Non
     has_drive_mode = "Drive Mode" in rows
     angle_limits = mode_source_is_angle_limits(table)
     has_torque_mode = "torque_control_mode" in table
-    seen: dict[tuple[str, str | None, str | None], int] = {}
+    seen: list[tuple[str, str | None, str | None, int]] = []
     valid: list[dict] = []
     for i, item in enumerate(entries):
         loc = f"`unit_info` entry {i}"
@@ -1059,11 +1062,20 @@ def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> Non
         if "from_fw" in item and not (_is_int(from_fw) and 0 <= from_fw <= 255):
             report.add(file, loc, f"`from_fw` must be an integer 0–255, found {from_fw!r}")
         if isinstance(name, str):
+            selector = profile if isinstance(profile, str) else None
             for mode in mode_keys:
-                key = (name, mode, profile if isinstance(profile, str) else None)
-                if key in seen:
-                    report.add(file, loc, f"same register, mode and profile as `unit_info` entry {seen[key]}")
-                seen.setdefault(key, i)
+                clash = next(
+                    (j for n, m, p, j in seen if n == name and _overlaps(m, mode) and _overlaps(p, selector)), None
+                )
+                if clash is not None:
+                    report.add(
+                        file,
+                        loc,
+                        f"same register, mode and profile as `unit_info` entry {clash}"
+                        " (an entry without `modes` or `profile` applies in all of them)",
+                    )
+                else:
+                    seen.append((name, mode, selector, i))
             valid.append(item)
     for item in valid:
         bound = item.get("bounded_by")
@@ -1079,6 +1091,11 @@ def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> Non
         scale = (item.get("value"), item.get("unit"))
         if not any(e["data_name"] == bound and (e.get("value"), e.get("unit")) == scale for e in valid):
             report.add(file, loc, f"`bounded_by` {bound!r} has no `unit_info` entry of the same value and unit")
+
+
+def _overlaps(a: str | None, b: str | None) -> bool:
+    """Two `modes` / `profile` selectors meet: equal, or one is absent (absent means every one)."""
+    return a is None or b is None or a == b
 
 
 def _is_fr9_sign(sign: object) -> bool:
@@ -1135,6 +1152,13 @@ def check_torque_control_mode(stem: str, table: dict, strict: bool, info: MapInf
             report.add(file, loc, f"`{key}` row must be {want}; {_row_location(row)} is not")
         if info.under(stem, "p1") and row["address"] > 255:
             report.add(file, loc, f"`{key}` row above address 255 in a table mapped under `p1`")
+        span = row.get("range")
+        bounded = _is_record(span) and _is_int(span.get("min")) and _is_int(span.get("max"))
+        if key == "register" and _is_int(on) and bounded:
+            if not span["min"] <= on <= span["max"]:
+                report.add(file, loc, f"`on` {on} is outside the `register` row range {span['min']}..={span['max']}")
+    if "register" in spec and spec.get("register") == spec.get("goal"):
+        report.add(file, loc, "`register` and `goal` name the same row")
 
 
 def flag_text(table: object) -> str:

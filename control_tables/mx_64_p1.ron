@@ -48,6 +48,8 @@
       value: 0.088,
       unit: "deg",
       sign_type: "unsigned",
+      modes: ["joint"],
+      range: (min: 0, max: 4095),
     },
     {
       data_name: "Moving Speed",
@@ -78,6 +80,8 @@
       value: 0.088,
       unit: "deg",
       sign_type: "unsigned",
+      modes: ["joint", "wheel", "torque_control"],
+      range: (min: 0, max: 4095),
     },
     {
       data_name: "Present Speed",

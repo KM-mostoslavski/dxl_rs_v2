@@ -1201,6 +1201,18 @@ class Fr9Tests(FixtureCase):
         apart = units(speed.format('["joint"]'), speed.format('["wheel"]'), speed.format('["multi_turn"]'))
         self.assertPasses(self.check_with(ax=fr9_ax(units=apart)))
 
+    def test_an_entry_without_modes_or_profile_overlaps_every_one(self) -> None:
+        every = '{ data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "unsigned" }'
+        wheel = '{ data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "direction_bit_10", modes: ["wheel"] }'
+        for pair in ((every, wheel), (wheel, every)):
+            with self.subTest(first=pair[0]):
+                self.assertFails(
+                    self.check_with(ax=fr9_ax(units=units(*pair))), "ax.ron", "same register, mode and profile"
+                )
+        both = '{ data_name: "Profile Velocity", value: 0.229, unit: "rpm", sign_type: "unsigned" }'
+        timed = '{ data_name: "Profile Velocity", value: 1.0, unit: "ms", sign_type: "unsigned", profile: "time_based" }'
+        self.assertFails(self.check_with(x=fr9_x(units=units(both, timed))), "x.ron", "same register, mode and profile")
+
     def test_bounded_by(self) -> None:
         limit = '{ data_name: "Current Limit", value: 2.69, unit: "mA", sign_type: "unsigned" }'
         goal = '{{ data_name: "Goal Current", value: {v}, unit: "mA", sign_type: "twos_complement", bounded_by: {b} }}'
@@ -1248,6 +1260,7 @@ class Fr9Tests(FixtureCase):
             '(register: "Torque Ctrl Mode Enable", on: 256, goal: "Goal Torque")': "`on` must be",
             '(register: "Torque Ctrl Mode Enable", goal: "Goal Torque")': "missing `on`",
             '(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque", off: 0)': "unknown field",
+            '(register: "Torque Ctrl Mode Enable", on: 1, goal: "Torque Ctrl Mode Enable")': "name the same row",
             "[1]": "must be `(register",
         }
         for text, needle in cases.items():
@@ -1256,6 +1269,14 @@ class Fr9Tests(FixtureCase):
         rows = FR9_X_ROWS + [(70, 1, "Torque Ctrl Mode Enable", "RW", "RAM"), (71, 2, "Goal Torque", "RW", "RAM")]
         on_x = fr9_x(rows=rows, more=f"  {TORQUE_MODE}")
         self.assertFails(self.check_with(x=on_x), "x.ron", "`torque_control_mode`", "CW/CCW Angle Limit pair")
+
+    def test_torque_control_on_value_fits_the_register_range(self) -> None:
+        rows = [r if r[2] != "Torque Ctrl Mode Enable" else (*r, (0, 1)) for r in FR9_AX_ROWS]
+        self.assertPasses(self.check_with(ax=fr9_ax(rows=rows)))
+        spec = 'torque_control_mode: (register: "Torque Ctrl Mode Enable", on: 2, goal: "Goal Torque"),'
+        self.assertFails(
+            self.check_with(ax=fr9_ax(rows=rows, torque=spec)), "ax.ron", "`on` 2 is outside the `register` row range 0..=1"
+        )
 
     def test_torque_control_rows_stay_in_protocol_1_addresses(self) -> None:
         rows = [r if r[2] != "Goal Torque" else (300, 2, "Goal Torque", "RW", "RAM") for r in FR9_AX_ROWS]
@@ -1282,6 +1303,14 @@ class RealTablesTests(unittest.TestCase):
             tables["mx_64"]["operating_modes"]["current_position"], [5]
         )
         self.assertEqual(tables["mx_64_p1"]["torque_control_mode"]["register"], "Torque Ctrl Mode Enable")
+
+    def test_mx_64_p1_positions_do_not_claim_multi_turn(self) -> None:
+        _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)
+        for entry in tables["mx_64_p1"]["unit_info"]:
+            if entry["data_name"] in ("Goal Position", "Present Position"):
+                with self.subTest(register=entry["data_name"]):
+                    self.assertNotIn("multi_turn", entry["modes"])
+                    self.assertEqual(entry["range"], {"min": 0, "max": 4095})
 
 
 if __name__ == "__main__":
