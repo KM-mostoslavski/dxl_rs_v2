@@ -3,7 +3,9 @@
 
 Command line, output and exit codes are the contract in
 `specs/005-tables/contracts/table-tools.md` section 1; the rules are those of
-`specs/005-tables/contracts/ron-schema.md` sections 1 and 2.
+`specs/005-tables/contracts/ron-schema.md` sections 1 and 2, extended for the
+FR-9 register data by `specs/009-tables-fr9/contracts/fr9-schema.md` (see
+"FR-9 register data" below for the vocabulary).
 
     python3 control_tables/check_tables.py [--dir DIR] [--today YYYY-MM-DD] [--markdown] [STEM ...]
 
@@ -451,30 +453,35 @@ def check_source(stem: str, table: dict, today: datetime.date, report: Report) -
     source = table["source"]
     if source == Ident("Unverified"):
         return
-    if not (isinstance(source, Tagged) and source.name == "Verified" and _is_record(source.args)):
-        report.add(file, "`source`", f"must be `Unverified` or `Verified(url: …, verified: …)`, found {source!r}")
+    check_verified(file, "source", source, today, report, "must be `Unverified` or `Verified(url: …, verified: …)`")
+
+
+def check_verified(file: str, key: str, value: object, today: datetime.date, report: Report, shape: str) -> None:
+    """A `Verified(url: …, verified: …)` value under `key`: e-Manual URL, real ISO date, not in the future."""
+    if not (isinstance(value, Tagged) and value.name == "Verified" and _is_record(value.args)):
+        report.add(file, f"`{key}`", f"{shape}, found {value!r}")
         return
-    args = source.args
+    args = value.args
     extra = sorted(set(args) - {"url", "verified"})
     if extra:
-        report.add(file, "`source`", f"unknown field(s) {', '.join(extra)}")
+        report.add(file, f"`{key}`", f"unknown field(s) {', '.join(extra)}")
     if "url" not in args:
-        report.add(file, "`source`", "missing `url`")
+        report.add(file, f"`{key}`", "missing `url`")
     else:
-        check_url(file, "`source` url", args["url"], report)
+        check_url(file, f"`{key}` url", args["url"], report)
     date = args.get("verified")
     if date is None:
-        report.add(file, "`source`", "missing `verified` date")
+        report.add(file, f"`{key}`", "missing `verified` date")
     elif not isinstance(date, str) or not DATE_RE.match(date):
-        report.add(file, "`source` verified", f"{date!r} is not an ISO date YYYY-MM-DD")
+        report.add(file, f"`{key}` verified", f"{date!r} is not an ISO date YYYY-MM-DD")
     else:
         try:
             day = datetime.date.fromisoformat(date)
         except ValueError:
-            report.add(file, "`source` verified", f"{date!r} is not a real date")
+            report.add(file, f"`{key}` verified", f"{date!r} is not a real date")
         else:
             if day > today:
-                report.add(file, "`source` verified", f"{date} is in the future (today is {today.isoformat()})")
+                report.add(file, f"`{key}` verified", f"{date} is in the future (today is {today.isoformat()})")
 
 
 INSTRUCTIONS = (
@@ -561,6 +568,15 @@ ACCESS_VALUES = ("R", "RW")
 AREA_VALUES = ("EEPROM", "RAM", "Hybrid")
 MODE_NAMES = ("Operating Mode", "Control Mode")
 MODE_LISTS = ("bounded", "unbounded", "no_position")
+# FR-9 per-mode lists (specs/009-tables-fr9): optional, all four or none, only with
+# `unit_source`. Each names the coarse list it refines: `current`, `velocity` and `pwm`
+# split `no_position` exactly; `current_position` is the current-based part of `unbounded`.
+MODE_REFINED = {
+    "current": "no_position",
+    "velocity": "no_position",
+    "pwm": "no_position",
+    "current_position": "unbounded",
+}
 # Role rows (contract 4.3): name -> (access, area); None means any.
 ROLES = {
     "Model Number": ("R", "EEPROM"),
@@ -620,7 +636,7 @@ def check_row_fields(stem: str, table: dict, report: Report) -> None:
                 report.add(file, loc, f"missing `{key}`")
             elif not (isinstance(row[key], Ident) and row[key].name in allowed):
                 report.add(file, loc, f"`{key}` must be {' or '.join(allowed)}, found {row[key]}")
-        unknown = sorted(set(row) - {"address", "size", "data_name", "access", "area"})
+        unknown = sorted(set(row) - {"address", "size", "data_name", "access", "area", "range"})
         if unknown:
             report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
 
@@ -671,10 +687,17 @@ def check_mode_source(stem: str, table: dict, report: Report) -> None:
         return
     if not has_mode_row:
         report.add(file, "`operating_modes`", "present without an `Operating Mode` or `Control Mode` row")
-    check_operating_modes(file, modes, report)
+    check_operating_modes(file, modes, report, "unit_source" in table)
 
 
-def check_operating_modes(file: str, modes: object, report: Report) -> None:
+def _mode_values(modes: dict, key: str) -> set[int]:
+    values = modes.get(key)
+    if not isinstance(values, list):
+        return set()
+    return {v for v in values if isinstance(v, int) and not isinstance(v, bool)}
+
+
+def check_operating_modes(file: str, modes: object, report: Report, has_unit_source: bool = False) -> None:
     loc = "`operating_modes`"
     if not _is_record(modes):
         report.add(file, loc, "must be `(bounded: [...], unbounded: [...], no_position: [...])`")
@@ -682,9 +705,39 @@ def check_operating_modes(file: str, modes: object, report: Report) -> None:
     for key in MODE_LISTS:
         if key not in modes:
             report.add(file, loc, f"missing `{key}`")
-    unknown = sorted(set(modes) - set(MODE_LISTS))
+    unknown = sorted(set(modes) - set(MODE_LISTS) - set(MODE_REFINED))
     if unknown:
         report.add(file, loc, f"unknown key(s) {', '.join(unknown)}")
+    refined = [key for key in MODE_REFINED if key in modes]
+    if refined:
+        if not has_unit_source:
+            report.add(file, loc, "per-mode lists (current, velocity, pwm, current_position) need `unit_source`")
+        for key in MODE_REFINED:
+            if key not in modes:
+                report.add(file, loc, f"missing `{key}`; the per-mode lists come all four or none")
+    for key in refined:
+        values = modes[key]
+        if not isinstance(values, list):
+            report.add(file, loc, f"`{key}` must be a list of mode values, found {values!r}")
+            continue
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+                report.add(file, loc, f"`{key}`: {value!r} is not a mode value 0–255")
+    if len(refined) == len(MODE_REFINED):
+        split = {key: _mode_values(modes, key) for key in MODE_REFINED}
+        for key, parent in MODE_REFINED.items():
+            outside = sorted(split[key] - _mode_values(modes, parent))
+            if outside:
+                report.add(file, loc, f"`{key}` value(s) {outside} not in `{parent}`")
+        seen: dict[int, str] = {}
+        for key in ("current", "velocity", "pwm"):
+            for value in sorted(split[key]):
+                if value in seen:
+                    report.add(file, loc, f"value {value} in both `{seen[value]}` and `{key}`")
+                seen.setdefault(value, key)
+        uncovered = sorted(_mode_values(modes, "no_position") - set(seen))
+        if uncovered:
+            report.add(file, loc, f"`no_position` value(s) {uncovered} in none of `current`, `velocity`, `pwm`")
     where: dict[int, list[str]] = {}
     for key in MODE_LISTS:
         values = modes.get(key)
@@ -796,6 +849,292 @@ def check_type_info(file: str, scale: object, report: Report) -> None:
         report.add(file, loc, f"max_radian ({rmax}) must be above min_radian ({rmin})")
     if not lo <= zero <= hi:
         report.add(file, loc, f"value_of_zero_radian_position ({zero}) must lie within {lo}..={hi}")
+
+
+# --------------------------------------------------------------------------
+# FR-9 register data (specs/009-tables-fr9/contracts/fr9-schema.md)
+# --------------------------------------------------------------------------
+#
+# `unit_source: Verified(url: …, verified: …)` (optional, any table) records the
+# e-Manual page and date on which the table's FR-9 data was checked: its
+# `unit_info`, row `range`s, per-mode `operating_modes` lists and
+# `torque_control_mode`. A table without it keeps the legacy `unit_info` shape
+# (the four keys below, sign type `signed` or `unsigned`, any unit) and may not
+# carry the other FR-9 fields.
+#
+# A `unit_info` entry under `unit_source` is
+#
+#     { data_name: "Moving Speed", value: 0.111, unit: "rpm", sign_type: "unsigned",
+#       modes: ["joint"], zero_is_unlimited: true, range: (min: 0, max: 1023) }
+#
+# - `data_name`: the exact `data_name` of a row of this table.
+# - `value`: the e-Manual's size of one raw step, in `unit`; above zero.
+# - `unit`: one of UNITS, as the e-Manual writes it (`rev/min` is `rpm`,
+#   `1 [°C]` is `°C`, `0.1 [V]` is `V`, `0.1%` is `%`, `1 [msec]` is `ms`).
+# - `sign_type`: `unsigned` (raw is a magnitude), `twos_complement` (Protocol 2
+#   pages: "Two's complement is applied for the negative value") or
+#   `direction_bit_N` (Protocol 1 pages: "the 10th bit becomes the direction
+#   bit"; bits below N are the magnitude, bit N set means CW, read as negative).
+# - `modes` (optional): the angle-limit modes of an AX / RX / MX Protocol 1
+#   table the entry applies in, from MODES_P1 (`torque_control` needs
+#   `torque_control_mode`); absent means every mode.
+# - `profile` (optional): the Drive Mode profile the entry applies in, from
+#   PROFILES; only in a table with a `Drive Mode` row; absent means both.
+# - `zero_is_unlimited` (optional): `true` where the page says raw 0 means no
+#   limit ("maximum rpm", "infinite velocity").
+# - `range` (optional): `(min: INT, max: INT)`, the raw range the page gives in
+#   this mode; it fits the row size under `sign_type`.
+# - `bounded_by` (optional): the row whose value bounds this one's magnitude
+#   (`Goal Current` by `Current Limit`); that row has an entry of the same
+#   `value` and `unit`.
+# - `from_fw` (optional): the first firmware version the register works on.
+#
+# A row may carry `range: (min: INT, max: INT)` (raw, from the page's Range
+# column or description) under `unit_source`; it fits the row size.
+#
+# `torque_control_mode: (register: STRING, on: INT, goal: STRING)` (MX on
+# Protocol 1): the RW RAM size-1 row that switches torque control on when it
+# holds `on`, and the RW RAM row that is then the goal; only in a table whose
+# mode source is the CW/CCW Angle Limit pair.
+
+UNIT_INFO_KEYS = ("data_name", "value", "unit", "sign_type")
+UNIT_INFO_FR9_KEYS = ("modes", "profile", "zero_is_unlimited", "range", "bounded_by", "from_fw")
+UNITS = ("deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2")
+SIGN_TYPES = ("unsigned", "twos_complement")
+LEGACY_SIGN_TYPES = ("signed", "unsigned")
+DIRECTION_BIT_RE = re.compile(r"^direction_bit_(\d+)$")
+MODES_P1 = ("joint", "wheel", "multi_turn", "torque_control")
+PROFILES = ("velocity_based", "time_based")
+TORQUE_CONTROL_KEYS = ("register", "on", "goal")
+
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def raw_bounds(size: int, sign_type: str | None) -> tuple[int, int]:
+    """The raw values a register of `size` bytes holds under `sign_type` (`None`: either reading)."""
+    bits = 8 * size
+    match = DIRECTION_BIT_RE.match(sign_type or "")
+    if match:
+        return 0, (1 << (int(match.group(1)) + 1)) - 1
+    if sign_type == "twos_complement":
+        return -(1 << (bits - 1)), (1 << (bits - 1)) - 1
+    if sign_type == "unsigned":
+        return 0, (1 << bits) - 1
+    return -(1 << (bits - 1)), (1 << bits) - 1
+
+
+def check_range(file: str, loc: str, value: object, size: int, sign_type: str | None, report: Report) -> None:
+    """`(min: INT, max: INT)`, `min <= max`, both raw values of the register."""
+    if not _is_record(value) or set(value) != {"min", "max"}:
+        report.add(file, loc, f"`range` must be `(min: INT, max: INT)`, found {value!r}")
+        return
+    lo, hi = value["min"], value["max"]
+    if not (_is_int(lo) and _is_int(hi)):
+        report.add(file, loc, "`range` min and max must be integers")
+        return
+    if lo > hi:
+        report.add(file, loc, f"`range` min {lo} is above max {hi}")
+    first, last = raw_bounds(size, sign_type)
+    if sign_type is None and lo < 0:
+        last = (1 << (8 * size - 1)) - 1
+    if lo < first or hi > last:
+        shown = f" as {sign_type}" if sign_type else ""
+        report.add(file, loc, f"`range` {lo}..={hi} does not fit a {size}-byte register{shown} ({first}..={last})")
+
+
+def mode_source_is_angle_limits(table: dict) -> bool:
+    names = {r["data_name"] for r in table_rows(table)}
+    return not (names & set(MODE_NAMES)) and {"CW Angle Limit", "CCW Angle Limit"} <= names
+
+
+def check_unit_source(stem: str, table: dict, today: datetime.date, report: Report) -> bool:
+    """`unit_source`, when present, is `Verified(url, verified)`; returns whether it is present."""
+    if "unit_source" not in table:
+        return False
+    check_verified(
+        f"{stem}.ron", "unit_source", table["unit_source"], today, report, "must be `Verified(url: …, verified: …)`"
+    )
+    return True
+
+
+def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> None:
+    """`unit_info` entries: the legacy shape, or the FR-9 shape under `unit_source` (`strict`)."""
+    file = f"{stem}.ron"
+    entries = table.get("unit_info")
+    if entries is None:
+        return
+    if not isinstance(entries, list):
+        report.add(file, "`unit_info`", "must be a list of entries")
+        return
+    rows = {r["data_name"]: r for r in table_rows(table)}
+    has_drive_mode = "Drive Mode" in rows
+    angle_limits = mode_source_is_angle_limits(table)
+    has_torque_mode = "torque_control_mode" in table
+    seen: dict[tuple[str, str | None, str | None], int] = {}
+    valid: list[dict] = []
+    for i, item in enumerate(entries):
+        loc = f"`unit_info` entry {i}"
+        if not _is_record(item):
+            report.add(file, loc, "must be a record `{ data_name: …, value: …, unit: …, sign_type: … }`")
+            continue
+        name = item.get("data_name")
+        if isinstance(name, str) and name:
+            loc = f'`unit_info` "{name}"'
+        else:
+            report.add(file, loc, "`data_name` must be a non-empty string")
+        for key in UNIT_INFO_KEYS[1:]:
+            if key not in item:
+                report.add(file, loc, f"missing `{key}`")
+        value, unit, sign = item.get("value"), item.get("unit"), item.get("sign_type")
+        if "value" in item and not (_is_number(value) and value > 0):
+            report.add(file, loc, f"`value` must be a number above 0, found {value!r}")
+        if "unit" in item and not (isinstance(unit, str) and unit):
+            report.add(file, loc, f"`unit` must be a non-empty string, found {unit!r}")
+        if not strict:
+            fr9 = sorted(set(item) & set(UNIT_INFO_FR9_KEYS))
+            if fr9:
+                report.add(file, loc, f"{', '.join(fr9)} need `unit_source` (the FR-9 data is verified per table)")
+            unknown = sorted(set(item) - set(UNIT_INFO_KEYS) - set(UNIT_INFO_FR9_KEYS))
+            if unknown:
+                report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+            if "sign_type" in item and sign not in LEGACY_SIGN_TYPES and not _is_fr9_sign(sign):
+                report.add(file, loc, f"unknown `sign_type` {sign!r}")
+            continue
+        unknown = sorted(set(item) - set(UNIT_INFO_KEYS) - set(UNIT_INFO_FR9_KEYS))
+        if unknown:
+            report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+        row = rows.get(name) if isinstance(name, str) else None
+        if isinstance(name, str) and name and row is None:
+            report.add(file, loc, "names no row of this table")
+        if isinstance(unit, str) and unit not in UNITS:
+            report.add(file, loc, f"`unit` {unit!r} is not one of {', '.join(UNITS)}")
+        if "sign_type" in item:
+            if not _is_fr9_sign(sign):
+                report.add(
+                    file, loc, f"`sign_type` must be unsigned, twos_complement or direction_bit_N, found {sign!r}"
+                )
+                sign = None
+            elif row is not None:
+                match = DIRECTION_BIT_RE.match(sign)
+                if match and not 1 <= int(match.group(1)) < 8 * row["size"]:
+                    report.add(file, loc, f"`{sign}`: bit {match.group(1)} is outside a {row['size']}-byte register")
+                    sign = None
+        else:
+            sign = None
+        modes = item.get("modes")
+        mode_keys: list[str | None] = [None]
+        if "modes" in item:
+            if not angle_limits:
+                report.add(file, loc, "`modes` only in a table whose mode source is the CW/CCW Angle Limit pair")
+            if not isinstance(modes, list) or not modes or not all(isinstance(m, str) for m in modes):
+                report.add(file, loc, f"`modes` must be a non-empty list of {', '.join(MODES_P1)}")
+            else:
+                mode_keys = []
+                for mode in modes:
+                    if mode not in MODES_P1:
+                        report.add(file, loc, f"unknown mode {mode!r} (one of {', '.join(MODES_P1)})")
+                    elif mode == "torque_control" and not has_torque_mode:
+                        report.add(file, loc, "mode `torque_control` without `torque_control_mode`")
+                    if mode in mode_keys:
+                        report.add(file, loc, f"mode {mode!r} listed twice")
+                    else:
+                        mode_keys.append(mode)
+        profile = item.get("profile")
+        if "profile" in item:
+            if profile not in PROFILES:
+                report.add(file, loc, f"`profile` must be one of {', '.join(PROFILES)}, found {profile!r}")
+            if not has_drive_mode:
+                report.add(file, loc, "`profile` only in a table with a `Drive Mode` row")
+        if "zero_is_unlimited" in item and item["zero_is_unlimited"] not in (Ident("true"), Ident("false")):
+            report.add(file, loc, f"`zero_is_unlimited` must be true or false, found {item['zero_is_unlimited']!r}")
+        if "range" in item and row is not None:
+            check_range(file, loc, item["range"], row["size"], sign, report)
+        from_fw = item.get("from_fw")
+        if "from_fw" in item and not (_is_int(from_fw) and 0 <= from_fw <= 255):
+            report.add(file, loc, f"`from_fw` must be an integer 0–255, found {from_fw!r}")
+        if isinstance(name, str):
+            for mode in mode_keys:
+                key = (name, mode, profile if isinstance(profile, str) else None)
+                if key in seen:
+                    report.add(file, loc, f"same register, mode and profile as `unit_info` entry {seen[key]}")
+                seen.setdefault(key, i)
+            valid.append(item)
+    for item in valid:
+        bound = item.get("bounded_by")
+        if bound is None:
+            continue
+        loc = f'`unit_info` "{item["data_name"]}"'
+        if not isinstance(bound, str) or bound not in rows:
+            report.add(file, loc, f"`bounded_by` {bound!r} names no row of this table")
+            continue
+        if bound == item["data_name"]:
+            report.add(file, loc, "`bounded_by` names the register itself")
+            continue
+        scale = (item.get("value"), item.get("unit"))
+        if not any(e["data_name"] == bound and (e.get("value"), e.get("unit")) == scale for e in valid):
+            report.add(file, loc, f"`bounded_by` {bound!r} has no `unit_info` entry of the same value and unit")
+
+
+def _is_fr9_sign(sign: object) -> bool:
+    return isinstance(sign, str) and (sign in SIGN_TYPES or DIRECTION_BIT_RE.match(sign) is not None)
+
+
+def check_row_ranges(stem: str, table: dict, strict: bool, report: Report) -> None:
+    """Row `range`s: only under `unit_source`, each fitting its row."""
+    file = f"{stem}.ron"
+    for row in table_rows(table):
+        if "range" not in row:
+            continue
+        loc = _row_location(row)
+        if not strict:
+            report.add(file, loc, "`range` needs `unit_source` (the FR-9 data is verified per table)")
+            continue
+        check_range(file, loc, row["range"], row["size"], None, report)
+
+
+def check_torque_control_mode(stem: str, table: dict, strict: bool, info: MapInfo, report: Report) -> None:
+    """`torque_control_mode`: an RW RAM switch row and an RW RAM goal row, angle-limit tables only."""
+    file = f"{stem}.ron"
+    loc = "`torque_control_mode`"
+    spec = table.get("torque_control_mode")
+    if spec is None:
+        return
+    if not strict:
+        report.add(file, loc, "needs `unit_source` (the FR-9 data is verified per table)")
+    if not mode_source_is_angle_limits(table):
+        report.add(file, loc, "only in a table whose mode source is the CW/CCW Angle Limit pair")
+    if not _is_record(spec):
+        report.add(file, loc, "must be `(register: STRING, on: INT, goal: STRING)`")
+        return
+    for key in TORQUE_CONTROL_KEYS:
+        if key not in spec:
+            report.add(file, loc, f"missing `{key}`")
+    unknown = sorted(set(spec) - set(TORQUE_CONTROL_KEYS))
+    if unknown:
+        report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+    on = spec.get("on")
+    if "on" in spec and not (_is_int(on) and 0 <= on <= 255):
+        report.add(file, loc, f"`on` must be a register value 0–255, found {on!r}")
+    rows = {r["data_name"]: r for r in table_rows(table)}
+    for key, size in (("register", 1), ("goal", None)):
+        name = spec.get(key)
+        if key not in spec:
+            continue
+        row = rows.get(name) if isinstance(name, str) else None
+        if row is None:
+            report.add(file, loc, f"`{key}` {name!r} names no row of this table")
+            continue
+        if not _has(row, "RW", "RAM") or (size is not None and row["size"] != size):
+            want = f"size {size}, RW, RAM" if size else "RW, RAM"
+            report.add(file, loc, f"`{key}` row must be {want}; {_row_location(row)} is not")
+        if info.under(stem, "p1") and row["address"] > 255:
+            report.add(file, loc, f"`{key}` row above address 255 in a table mapped under `p1`")
 
 
 def flag_text(table: object) -> str:
@@ -1061,6 +1400,10 @@ def run_checks(model_map: object, tables: dict[str, object], today: datetime.dat
         check_instructions(stem, table, report)
         check_row_fields(stem, table, report)
         check_mode_source(stem, table, report)
+        strict = check_unit_source(stem, table, today, report)
+        check_unit_info(stem, table, strict, report)
+        check_row_ranges(stem, table, strict, report)
+        check_torque_control_mode(stem, table, strict, info, report)
         if info.mapped(stem):
             check_roles(stem, table, info, report)
     check_map(tables, info, report)

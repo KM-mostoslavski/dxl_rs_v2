@@ -78,12 +78,21 @@ MODE_NAMES = ("Operating Mode", "Control Mode")
 AUTO = object()
 
 
-def row(address: int, size: int, name: str, access: str | None = "RW", area: str | None = "RAM") -> str:
+def row(
+    address: int,
+    size: int,
+    name: str,
+    access: str | None = "RW",
+    area: str | None = "RAM",
+    span: tuple[int, int] | None = None,
+) -> str:
     fields = [f"address: {address}", f"size: {size}", f'data_name: "{name}"']
     if access is not None:
         fields.append(f"access: {access}")
     if area is not None:
         fields.append(f"area: {area}")
+    if span is not None:
+        fields.append(f"range: (min: {span[0]}, max: {span[1]})")
     return "{ " + ", ".join(fields) + " }"
 
 
@@ -1007,6 +1016,272 @@ class NotMappedTests(FixtureCase):
     def test_record_listed_twice_fails(self) -> None:
         records = ['(file: "extra", reason: NoModelNumber)', '(file: "extra", reason: NoModelNumber)']
         self.assertFails(self.run_nm(records, extra=table()), "extra")
+
+
+UNIT_SOURCE = 'unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/", verified: "2026-10-28"),'
+FR9_X_ROWS = X_ROWS[:2] + [
+    (10, 1, "Drive Mode", "RW", "EEPROM"),
+    (11, 1, "Operating Mode", "RW", "EEPROM"),
+    (38, 2, "Current Limit", "RW", "EEPROM"),
+    (44, 4, "Velocity Limit", "RW", "EEPROM"),
+] + X_ROWS[3:] + [
+    (84, 2, "Position P Gain", "RW", "RAM", (0, 16383)),
+    (102, 2, "Goal Current", "RW", "RAM"),
+    (104, 4, "Goal Velocity", "RW", "RAM"),
+    (112, 4, "Profile Velocity", "RW", "RAM"),
+    (128, 4, "Present Velocity", "R", "RAM"),
+]
+FR9_X_UNITS = """  unit_info: [
+    { data_name: "Current Limit", value: 2.69, unit: "mA", sign_type: "unsigned", range: (min: 0, max: 1193) },
+    { data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "twos_complement", bounded_by: "Current Limit" },
+    { data_name: "Velocity Limit", value: 0.229, unit: "rpm", sign_type: "unsigned", range: (min: 0, max: 1023) },
+    { data_name: "Goal Velocity", value: 0.229, unit: "rpm", sign_type: "twos_complement", bounded_by: "Velocity Limit" },
+    { data_name: "Profile Velocity", value: 0.229, unit: "rpm", sign_type: "unsigned", profile: "velocity_based",
+      zero_is_unlimited: true, range: (min: 0, max: 32767) },
+    { data_name: "Profile Velocity", value: 1.0, unit: "ms", sign_type: "unsigned", profile: "time_based",
+      zero_is_unlimited: true, range: (min: 0, max: 32737), from_fw: 42 },
+    { data_name: "Present Velocity", value: 0.229, unit: "rpm", sign_type: "twos_complement" },
+  ],"""
+FR9_X_MODES = (
+    "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], "
+    "current: [0], velocity: [1], pwm: [16], current_position: [5])"
+)
+FR9_AX_ROWS = AX_ROWS[:5] + [
+    (28, 1, "CW Compliance Slope", "RW", "RAM", (0, 254)),
+    (30, 2, "Goal Position", "RW", "RAM"),
+    (32, 2, "Moving Speed", "RW", "RAM"),
+    (36, 2, "Present Position", "R", "RAM"),
+    (40, 2, "Present Load", "R", "RAM"),
+    (70, 1, "Torque Ctrl Mode Enable", "RW", "RAM"),
+    (71, 2, "Goal Torque", "RW", "RAM"),
+]
+FR9_AX_UNITS = """  unit_info: [
+    { data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "unsigned", modes: ["joint", "multi_turn"],
+      zero_is_unlimited: true, range: (min: 0, max: 1023) },
+    { data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "direction_bit_10", modes: ["wheel"],
+      range: (min: 0, max: 2047) },
+    { data_name: "Present Load", value: 0.1, unit: "%", sign_type: "direction_bit_10", range: (min: 0, max: 2047) },
+    { data_name: "Goal Torque", value: 4.5, unit: "mA", sign_type: "direction_bit_10", modes: ["torque_control"] },
+  ],"""
+TORQUE_MODE = 'torque_control_mode: (register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque"),'
+
+
+def fr9_x(*, units: str = FR9_X_UNITS, source: str | None = UNIT_SOURCE, rows: list[tuple] | None = None,
+          modes: str = FR9_X_MODES, more: str = "") -> str:
+    """An X table carrying FR-9 data (`unit_source` unless `source` is None)."""
+    extra = "\n".join(part for part in (f"  {source}" if source else "", units, more) if part)
+    return table(FR9_X_ROWS if rows is None else rows, operating_modes=modes, extra=extra)
+
+
+def fr9_ax(*, units: str = FR9_AX_UNITS, source: str | None = UNIT_SOURCE, torque: str | None = TORQUE_MODE,
+           rows: list[tuple] | None = None) -> str:
+    """An AX-shaped (angle-limit) table with MX Protocol 1 style FR-9 data."""
+    extra = "\n".join(part for part in (f"  {source}" if source else "", f"  {torque}" if torque else "", units) if part)
+    return table(FR9_AX_ROWS if rows is None else rows, protocols="[P1]", type_info=AX_SCALE, extra=extra)
+
+
+def units(*entries: str) -> str:
+    return "  unit_info: [\n" + "".join(f"    {e},\n" for e in entries) + "  ],"
+
+
+class Fr9Tests(FixtureCase):
+    """FR-9 register data (specs/009-tables-fr9): `unit_source`, `unit_info`, ranges, per-mode lists."""
+
+    def test_clean_fr9_tables_pass(self) -> None:
+        self.assertPasses(self.check_with(x=fr9_x(), ax=fr9_ax()))
+
+    def test_legacy_unit_info_passes_without_unit_source(self) -> None:
+        legacy = units(
+            '{ data_name: "Speed", value: 0.111, unit: "rpm", sign_type: "signed" }',
+            '{ data_name: "Torque", value: 0.001757, unit: "N·m/bit", sign_type: "unsigned" }',
+        )
+        self.assertPasses(self.check_with(x=table(extra=legacy)))
+
+    def test_legacy_unit_info_shape_is_checked(self) -> None:
+        cases = {
+            '{ data_name: "Speed", value: 0.1, unit: "rpm", sign_type: "sideways" }': "unknown `sign_type`",
+            '{ data_name: "Speed", value: 0, unit: "rpm", sign_type: "signed" }': "above 0",
+            '{ data_name: "Speed", value: 0.1, sign_type: "signed" }': "missing `unit`",
+            '{ data_name: "", value: 0.1, unit: "rpm", sign_type: "signed" }': "`data_name`",
+            '{ data_name: "Speed", value: 0.1, unit: "rpm", sign_type: "signed", colour: 1 }': "unknown field",
+            '"Speed"': "must be a record",
+        }
+        for text, needle in cases.items():
+            with self.subTest(entry=text):
+                self.assertFails(self.check_with(x=table(extra=units(text))), "x.ron", needle)
+        self.assertFails(self.check_with(x=table(extra="  unit_info: 3,")), "x.ron", "must be a list")
+
+    def test_fr9_fields_need_unit_source(self) -> None:
+        self.assertFails(self.check_with(x=fr9_x(source=None)), "x.ron", "need `unit_source`", "per-mode lists")
+        self.assertFails(self.check_with(ax=fr9_ax(source=None)), "ax.ron", "`torque_control_mode`", "needs `unit_source`")
+        ranged = [r if r[2] != "Goal Position" else (*r, (0, 4095)) for r in X_ROWS]
+        self.assertFails(self.check_with(x=table(ranged)), "x.ron", '"Goal Position"', "`range` needs `unit_source`")
+
+    def test_unit_source_must_be_a_verified_emanual_page(self) -> None:
+        cases = {
+            "unit_source: Unverified,": "must be `Verified",
+            'unit_source: Verified(url: "https://example.com/x", verified: "2026-10-28"),': "is not on",
+            'unit_source: Verified(url: "https://emanual.robotis.com/x", verified: "2026-12-01"),': "in the future",
+            'unit_source: Verified(url: "https://emanual.robotis.com/x"),': "missing `verified`",
+        }
+        for text, needle in cases.items():
+            with self.subTest(source=text):
+                self.assertFails(self.check_with(x=fr9_x(source=text)), "x.ron", "`unit_source`", needle)
+
+    def test_strict_entry_rules(self) -> None:
+        cases = {
+            '{ data_name: "Goal Speed", value: 0.229, unit: "rpm", sign_type: "unsigned" }': "names no row",
+            '{ data_name: "Present Velocity", value: 0.229, unit: "rev/min", sign_type: "twos_complement" }': "is not one of",
+            '{ data_name: "Present Velocity", value: 0.229, unit: "rpm", sign_type: "signed" }': "direction_bit_N",
+            '{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "direction_bit_16" }': "outside a 2-byte",
+            '{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "direction_bit_0" }': "outside a 2-byte",
+            '{ data_name: "Goal Current", value: -1, unit: "mA", sign_type: "unsigned" }': "above 0",
+            '{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "unsigned", scale: 2 }': "unknown field",
+            '{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "unsigned", from_fw: 300 }': "`from_fw`",
+            '{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "unsigned", zero_is_unlimited: 1 }':
+                "true or false",
+        }
+        for text, needle in cases.items():
+            with self.subTest(entry=text):
+                self.assertFails(self.check_with(x=fr9_x(units=units(text))), "x.ron", needle)
+
+    def test_ranges_fit_the_register(self) -> None:
+        cases = {
+            "(min: 10, max: 2)": "above max",
+            "(min: 0, max: 65536)": "does not fit a 2-byte register as unsigned",
+            "(min: -1, max: 2)": "does not fit",
+            "(min: 0)": "`range` must be",
+            '(min: 0, max: "x")': "integers",
+        }
+        for span, needle in cases.items():
+            with self.subTest(span=span):
+                entry = f'{{ data_name: "Current Limit", value: 2.69, unit: "mA", sign_type: "unsigned", range: {span} }}'
+                self.assertFails(self.check_with(x=fr9_x(units=units(entry))), "x.ron", needle)
+        twos = '{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "twos_complement", range: (min: -1193, max: 1193) }'
+        self.assertPasses(self.check_with(x=fr9_x(units=units(twos))))
+        bit = '{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "direction_bit_10", range: (min: 0, max: 2048) }'
+        self.assertFails(self.check_with(x=fr9_x(units=units(bit))), "x.ron", "0..=2047")
+
+    def test_row_ranges_fit_the_row(self) -> None:
+        for span, needle in (((0, 70000), "does not fit a 2-byte"), ((-40000, 0), "does not fit"), ((5, 1), "above max")):
+            with self.subTest(span=span):
+                rows = [r if r[2] != "Position P Gain" else (*r[:5], span) for r in FR9_X_ROWS]
+                self.assertFails(self.check_with(x=fr9_x(rows=rows)), "x.ron", '"Position P Gain"', needle)
+        rows = [r if r[2] != "Position P Gain" else (*r[:5], (-32768, 32767)) for r in FR9_X_ROWS]
+        self.assertPasses(self.check_with(x=fr9_x(rows=rows)))
+
+    def test_modes_only_in_angle_limit_tables(self) -> None:
+        entry = '{ data_name: "Goal Velocity", value: 0.229, unit: "rpm", sign_type: "twos_complement", modes: ["wheel"] }'
+        self.assertFails(self.check_with(x=fr9_x(units=units(entry))), "x.ron", "CW/CCW Angle Limit pair")
+
+    def test_mode_names(self) -> None:
+        cases = {
+            '["spin"]': "unknown mode",
+            "[]": "non-empty list",
+            '["wheel", "wheel"]': "listed twice",
+        }
+        for modes, needle in cases.items():
+            with self.subTest(modes=modes):
+                entry = f'{{ data_name: "Present Load", value: 0.1, unit: "%", sign_type: "direction_bit_10", modes: {modes} }}'
+                self.assertFails(self.check_with(ax=fr9_ax(units=units(entry))), "ax.ron", needle)
+        self.assertFails(self.check_with(ax=fr9_ax(torque=None)), "ax.ron", "`torque_control` without")
+
+    def test_profile_needs_a_drive_mode_row(self) -> None:
+        rows = [r for r in FR9_X_ROWS if r[2] != "Drive Mode"]
+        self.assertFails(self.check_with(x=fr9_x(rows=rows)), "x.ron", "`Drive Mode` row")
+        entry = '{ data_name: "Profile Velocity", value: 0.229, unit: "rpm", sign_type: "unsigned", profile: "smooth" }'
+        self.assertFails(self.check_with(x=fr9_x(units=units(entry))), "x.ron", "`profile` must be one of")
+
+    def test_one_entry_per_register_mode_and_profile(self) -> None:
+        twice = '{ data_name: "Present Velocity", value: 0.229, unit: "rpm", sign_type: "twos_complement" }'
+        self.assertFails(self.check_with(x=fr9_x(units=units(twice, twice))), "x.ron", "same register, mode and profile")
+        speed = '{{ data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "unsigned", modes: {} }}'
+        overlap = units(speed.format('["joint", "wheel"]'), speed.format('["wheel"]'))
+        self.assertFails(self.check_with(ax=fr9_ax(units=overlap)), "ax.ron", "same register, mode and profile")
+        apart = units(speed.format('["joint"]'), speed.format('["wheel"]'), speed.format('["multi_turn"]'))
+        self.assertPasses(self.check_with(ax=fr9_ax(units=apart)))
+
+    def test_bounded_by(self) -> None:
+        limit = '{ data_name: "Current Limit", value: 2.69, unit: "mA", sign_type: "unsigned" }'
+        goal = '{{ data_name: "Goal Current", value: {v}, unit: "mA", sign_type: "twos_complement", bounded_by: {b} }}'
+        cases = {
+            goal.format(v=2.69, b='"Current Cap"'): "names no row",
+            goal.format(v=2.69, b='"Goal Current"'): "the register itself",
+            goal.format(v=3.36, b='"Current Limit"'): "same value and unit",
+            goal.format(v=2.69, b="3"): "names no row",
+        }
+        for text, needle in cases.items():
+            with self.subTest(entry=text):
+                self.assertFails(self.check_with(x=fr9_x(units=units(limit, text))), "x.ron", "`bounded_by`", needle)
+        no_limit_entry = goal.format(v=2.69, b='"Current Limit"')
+        self.assertFails(self.check_with(x=fr9_x(units=units(no_limit_entry))), "x.ron", "same value and unit")
+
+    def test_per_mode_lists(self) -> None:
+        cases = {
+            "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [16])":
+                "all four or none",
+            "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [], "
+            "current_position: [5])": "[16] in none of",
+            "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0, 1], velocity: [1], pwm: [16], "
+            "current_position: [5])": "value 1 in both `current` and `velocity`",
+            "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [16], "
+            "current_position: [3])": "`current_position` value(s) [3] not in `unbounded`",
+            "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1, 2], pwm: [16], "
+            "current_position: [5])": "`velocity` value(s) [2] not in `no_position`",
+            "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: 0, velocity: [1], pwm: [16], "
+            "current_position: [5])": "must be a list",
+            "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [999], "
+            "current_position: [5])": "999 is not a mode value",
+        }
+        for modes, needle in cases.items():
+            with self.subTest(modes=modes):
+                self.assertFails(self.check_with(x=fr9_x(modes=modes)), "x.ron", "`operating_modes`", needle)
+        empty = "(bounded: [3], unbounded: [], no_position: [], current: [], velocity: [], pwm: [], current_position: [])"
+        self.assertPasses(self.check_with(x=fr9_x(modes=empty, units="")))
+
+    def test_torque_control_mode(self) -> None:
+        cases = {
+            '(register: "Torque Mode", on: 1, goal: "Goal Torque")': "`register` 'Torque Mode' names no row",
+            '(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Push")': "`goal` 'Goal Push' names no row",
+            '(register: "Goal Torque", on: 1, goal: "Goal Torque")': "size 1, RW, RAM",
+            '(register: "Torque Ctrl Mode Enable", on: 1, goal: "Present Load")': "must be RW, RAM",
+            '(register: "Torque Ctrl Mode Enable", on: 256, goal: "Goal Torque")': "`on` must be",
+            '(register: "Torque Ctrl Mode Enable", goal: "Goal Torque")': "missing `on`",
+            '(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque", off: 0)': "unknown field",
+            "[1]": "must be `(register",
+        }
+        for text, needle in cases.items():
+            with self.subTest(spec=text):
+                self.assertFails(self.check_with(ax=fr9_ax(torque=f"torque_control_mode: {text},")), "ax.ron", needle)
+        rows = FR9_X_ROWS + [(70, 1, "Torque Ctrl Mode Enable", "RW", "RAM"), (71, 2, "Goal Torque", "RW", "RAM")]
+        on_x = fr9_x(rows=rows, more=f"  {TORQUE_MODE}")
+        self.assertFails(self.check_with(x=on_x), "x.ron", "`torque_control_mode`", "CW/CCW Angle Limit pair")
+
+    def test_torque_control_rows_stay_in_protocol_1_addresses(self) -> None:
+        rows = [r if r[2] != "Goal Torque" else (300, 2, "Goal Torque", "RW", "RAM") for r in FR9_AX_ROWS]
+        self.assertFails(self.check_with(ax=fr9_ax(rows=rows)), "ax.ron", "`goal` row above address 255")
+
+
+class RealTablesTests(unittest.TestCase):
+    """The FR-9 data in this repository's own tables (specs/009-tables-fr9)."""
+
+    FR9_STEMS = ("ax_12a", "ax_12_plus", "rx_28", "mx_64_p1", "mx_64", "xm430_w350")
+
+    def test_repository_tables_pass(self) -> None:
+        code, out, err = run_check(["--today", "2026-11-03"])
+        self.assertEqual(code, 0, err)
+
+    def test_fr9_tables_carry_unit_source(self) -> None:
+        _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)
+        for stem in self.FR9_STEMS:
+            with self.subTest(stem=stem):
+                self.assertIsInstance(tables[stem]["unit_source"], Tagged)
+                names = {e["data_name"] for e in tables[stem]["unit_info"]}
+                self.assertIn("Present Temperature", names)
+        self.assertEqual(
+            tables["mx_64"]["operating_modes"]["current_position"], [5]
+        )
+        self.assertEqual(tables["mx_64_p1"]["torque_control_mode"]["register"], "Torque Ctrl Mode Enable")
 
 
 if __name__ == "__main__":
