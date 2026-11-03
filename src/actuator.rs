@@ -456,8 +456,9 @@ pub(crate) struct ModeValues {
     /// Values that give [`LimitMode::Unbounded`] (extended or current-based
     /// position).
     pub(crate) unbounded: &'static [u8],
-    /// Values that give [`LimitMode::NoPosition`] (current, velocity, PWM,
-    /// wheel).
+    /// Values whose mode ignores Goal Position (current, velocity, PWM).
+    /// They give [`LimitMode::Pwm`], which refuses every goal, until the
+    /// tables list them per mode.
     pub(crate) no_position: &'static [u8],
 }
 
@@ -473,7 +474,7 @@ impl ModeValues {
         } else if holds(self.unbounded, value) {
             Some(LimitMode::Unbounded)
         } else if holds(self.no_position, value) {
-            Some(LimitMode::NoPosition)
+            Some(LimitMode::Pwm)
         } else {
             None
         }
@@ -501,25 +502,36 @@ const fn holds(mut list: &[u8], value: u8) -> bool {
 /// The goal check follows the firmware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
-#[allow(dead_code, reason = "used by bus-1")]
-pub(crate) enum LimitMode {
+#[non_exhaustive]
+pub enum LimitMode {
     /// Position (joint) mode: the goal must lie in the EEPROM limits read at
     /// Setup.
     #[default]
     Bounded = 0,
-    /// Extended or current-based position, MX multi-turn: the firmware does
-    /// not use the EEPROM limits; only the register size check applies.
+    /// Extended position, MX multi-turn, or a current-based position mode
+    /// the model's lists do not single out: the firmware does not use the
+    /// EEPROM limits; only the register size check applies.
     Unbounded = 1,
-    /// Velocity, current, PWM, AX / XL-320 wheel mode: the firmware ignores
-    /// Goal Position; a goal is refused.
-    NoPosition = 2,
+    /// PWM mode, or any mode the model's lists only say ignores Goal
+    /// Position: every goal position, velocity and current is refused.
+    Pwm = 2,
+    /// Current-based position mode: an unbounded goal position, and a goal
+    /// current as its torque limit.
+    UnboundedCurrent = 3,
+    /// Velocity mode: goal velocities only.
+    Velocity = 4,
+    /// Current (torque) mode: goal currents only.
+    Current = 5,
+    /// AX / MX on Protocol 1 wheel mode (CW = CCW Angle Limit = 0): moving
+    /// speed as a goal velocity only.
+    Wheel = 6,
 }
 
 impl LimitMode {
     /// The limit mode of an AX or an MX on Protocol 1, from the CW and CCW
     /// Angle Limits Setup read:
     ///
-    /// - CW = CCW = 0: wheel mode, [`NoPosition`](LimitMode::NoPosition).
+    /// - CW = CCW = 0: wheel mode, [`Wheel`](LimitMode::Wheel).
     /// - CW = CCW = 4095: MX multi-turn mode,
     ///   [`Unbounded`](LimitMode::Unbounded).
     /// - Any other pair: joint mode, [`Bounded`](LimitMode::Bounded).
@@ -533,10 +545,28 @@ impl LimitMode {
     #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) const fn from_angle_limits(limits: Limits) -> Self {
         match (limits.min_raw(), limits.max_raw()) {
-            (0, 0) => Self::NoPosition,
+            (0, 0) => Self::Wheel,
             (4095, 4095) => Self::Unbounded,
             _ => Self::Bounded,
         }
+    }
+
+    /// Whether the firmware uses Goal Position in this mode.
+    pub const fn allows_goal_position(self) -> bool {
+        matches!(
+            self,
+            Self::Bounded | Self::Unbounded | Self::UnboundedCurrent
+        )
+    }
+
+    /// Whether the firmware uses a goal velocity in this mode.
+    pub const fn allows_goal_velocity(self) -> bool {
+        matches!(self, Self::Velocity | Self::Wheel)
+    }
+
+    /// Whether the firmware uses Goal Current in this mode.
+    pub const fn allows_goal_current(self) -> bool {
+        matches!(self, Self::Current | Self::UnboundedCurrent)
     }
 }
 
@@ -617,7 +647,7 @@ impl Cache {
     /// - [`LimitMode::Bounded`]: `raw` must lie in the recorded limits, both
     ///   bounds included.
     /// - [`LimitMode::Unbounded`]: any `raw` passes.
-    /// - [`LimitMode::NoPosition`]: every goal is refused.
+    /// - Any mode that ignores Goal Position: every goal is refused.
     ///
     /// # Errors
     ///
@@ -641,8 +671,48 @@ impl Cache {
                     max: limits.max_raw(),
                 })
             }
-            (LimitMode::Bounded | LimitMode::Unbounded, _) => Ok(raw),
-            (LimitMode::NoPosition, _) => Err(ValidationError::NotPositionMode { id: self.id }),
+            (mode, _) if mode.allows_goal_position() => Ok(raw),
+            _ => Err(ValidationError::NotPositionMode { id: self.id }),
+        }
+    }
+
+    /// The limit mode Setup recorded.
+    #[allow(dead_code, reason = "used by the bus part of FR-9")]
+    pub(crate) const fn mode(&self) -> LimitMode {
+        self.mode
+    }
+
+    /// Checks that the recorded mode uses a goal velocity.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::NotVelocityMode`] in any other mode.
+    #[allow(dead_code, reason = "used by the bus part of FR-9")]
+    pub(crate) const fn check_goal_velocity(&self) -> Result<(), ValidationError> {
+        if self.mode.allows_goal_velocity() {
+            Ok(())
+        } else {
+            Err(ValidationError::NotVelocityMode {
+                id: self.id,
+                mode: self.mode,
+            })
+        }
+    }
+
+    /// Checks that the recorded mode uses a goal current.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::NotCurrentMode`] in any other mode.
+    #[allow(dead_code, reason = "used by the bus part of FR-9")]
+    pub(crate) const fn check_goal_current(&self) -> Result<(), ValidationError> {
+        if self.mode.allows_goal_current() {
+            Ok(())
+        } else {
+            Err(ValidationError::NotCurrentMode {
+                id: self.id,
+                mode: self.mode,
+            })
         }
     }
 }
@@ -945,7 +1015,7 @@ mod tests {
             [
                 (values.bounded, LimitMode::Bounded),
                 (values.unbounded, LimitMode::Unbounded),
-                (values.no_position, LimitMode::NoPosition),
+                (values.no_position, LimitMode::Pwm),
             ]
             .into_iter()
             .find(|(list, _)| list.contains(&value))
@@ -960,7 +1030,7 @@ mod tests {
                 }
             }
             for value in [0, 1, 16] {
-                assert_eq!(X_MODES.limit_mode(value), Some(LimitMode::NoPosition));
+                assert_eq!(X_MODES.limit_mode(value), Some(LimitMode::Pwm));
             }
             assert_eq!(X_MODES.limit_mode(3), Some(LimitMode::Bounded));
             for value in [4, 5] {
@@ -992,7 +1062,7 @@ mod tests {
             };
             for value in 0..=255 {
                 let expected = match value {
-                    1 => Some(LimitMode::NoPosition),
+                    1 => Some(LimitMode::Pwm),
                     2 => Some(LimitMode::Bounded),
                     _ => None,
                 };
@@ -1015,7 +1085,7 @@ mod tests {
         #[test]
         fn angle_limits_decide_the_mode() {
             let mode = |cw, ccw| LimitMode::from_angle_limits(Limits::new(id(1), cw, ccw).unwrap());
-            assert_eq!(mode(0, 0), LimitMode::NoPosition);
+            assert_eq!(mode(0, 0), LimitMode::Wheel);
             assert_eq!(mode(4095, 4095), LimitMode::Unbounded);
             for (cw, ccw) in [(0, 1023), (1, 1023), (0, 4095), (1023, 1023), (0, 1)] {
                 assert_eq!(mode(cw, ccw), LimitMode::Bounded);
@@ -1164,7 +1234,97 @@ mod tests {
             assert_eq!(size_of::<Cache>(), 16);
             assert_eq!(LimitMode::Bounded as u8, 0);
             assert_eq!(LimitMode::Unbounded as u8, 1);
-            assert_eq!(LimitMode::NoPosition as u8, 2);
+            assert_eq!(LimitMode::Pwm as u8, 2);
+            assert_eq!(LimitMode::Wheel as u8, 6);
+        }
+
+        const ALL_MODES: [LimitMode; 7] = [
+            LimitMode::Bounded,
+            LimitMode::Unbounded,
+            LimitMode::Pwm,
+            LimitMode::UnboundedCurrent,
+            LimitMode::Velocity,
+            LimitMode::Current,
+            LimitMode::Wheel,
+        ];
+
+        #[test]
+        fn each_mode_allows_the_goals_its_firmware_uses() {
+            use LimitMode as M;
+            for mode in ALL_MODES {
+                assert_eq!(
+                    mode.allows_goal_position(),
+                    matches!(mode, M::Bounded | M::Unbounded | M::UnboundedCurrent),
+                    "{mode:?}"
+                );
+                assert_eq!(
+                    mode.allows_goal_velocity(),
+                    matches!(mode, M::Velocity | M::Wheel),
+                    "{mode:?}"
+                );
+                assert_eq!(
+                    mode.allows_goal_current(),
+                    matches!(mode, M::Current | M::UnboundedCurrent),
+                    "{mode:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn goal_velocity_and_current_follow_the_mode() {
+            for mode in ALL_MODES {
+                let mut cache = limited(id(4));
+                cache.record_mode(mode);
+                assert_eq!(cache.mode(), mode);
+                let velocity = if mode.allows_goal_velocity() {
+                    Ok(())
+                } else {
+                    Err(ValidationError::NotVelocityMode { id: id(4), mode })
+                };
+                let current = if mode.allows_goal_current() {
+                    Ok(())
+                } else {
+                    Err(ValidationError::NotCurrentMode { id: id(4), mode })
+                };
+                assert_eq!(cache.check_goal_velocity(), velocity, "{mode:?}");
+                assert_eq!(cache.check_goal_current(), current, "{mode:?}");
+                if !mode.allows_goal_position() {
+                    assert_eq!(
+                        cache.check_goal(2048),
+                        Err(ValidationError::NotPositionMode { id: id(4) })
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn new_errors_name_the_actuator() {
+            let msg = |e: ValidationError| e.to_string();
+            assert_eq!(
+                msg(ValidationError::Unsupported {
+                    id: id(7),
+                    register: "Present Current"
+                }),
+                "actuator 7 has no Present Current register"
+            );
+            assert!(
+                msg(ValidationError::NotVelocityMode {
+                    id: id(7),
+                    mode: LimitMode::Bounded
+                })
+                .starts_with("actuator 7 is in Bounded mode")
+            );
+            assert!(
+                msg(ValidationError::NotCurrentMode {
+                    id: id(7),
+                    mode: LimitMode::Velocity
+                })
+                .starts_with("actuator 7 is in Velocity mode")
+            );
+            assert_eq!(
+                msg(ValidationError::InvalidSlopeStep(9)),
+                "compliance slope step 9 is outside 1..=7"
+            );
         }
 
         #[test]
@@ -1199,9 +1359,9 @@ mod tests {
         fn no_position_refuses_every_goal() {
             let refused = Err(ValidationError::NotPositionMode { id: id(4) });
             let mut known = limited(id(4));
-            known.record_mode(LimitMode::NoPosition);
+            known.record_mode(LimitMode::Pwm);
             let mut unknown = Cache::new(id(4));
-            unknown.record_mode(LimitMode::NoPosition);
+            unknown.record_mode(LimitMode::Pwm);
             for cache in [known, unknown] {
                 for raw in [2000, 1000, i32::MIN, i32::MAX] {
                     assert_eq!(cache.check_goal(raw), refused);
@@ -1213,11 +1373,7 @@ mod tests {
         fn record_mode_keeps_limits() {
             let mut cache = limited(id(3));
             let limits = cache.limits();
-            for mode in [
-                LimitMode::Unbounded,
-                LimitMode::NoPosition,
-                LimitMode::Bounded,
-            ] {
+            for mode in [LimitMode::Unbounded, LimitMode::Pwm, LimitMode::Bounded] {
                 cache.record_mode(mode);
                 assert_eq!(cache.mode, mode);
                 assert_eq!(cache.limits(), limits);
@@ -1390,11 +1546,7 @@ mod tests {
             let typed: Option<RangeInclusive<Position>> =
                 Some(scale.to_position(1000)..=scale.to_position(3000));
             assert_eq!(a.cache_mut().record_limits(1000, 3000).map(|_| ()), Ok(()));
-            for mode in [
-                LimitMode::Bounded,
-                LimitMode::Unbounded,
-                LimitMode::NoPosition,
-            ] {
+            for mode in [LimitMode::Bounded, LimitMode::Unbounded, LimitMode::Pwm] {
                 a.cache_mut().record_mode(mode);
                 assert_eq!(a.position_limits_raw(), raw, "{}", a.name());
                 assert_eq!(a.position_limits(), typed, "{}", a.name());

@@ -20,7 +20,7 @@ mod register;
 mod transport;
 mod units;
 
-pub use actuator::{Actuator, ModelNumber, TorqueState};
+pub use actuator::{Actuator, LimitMode, ModelNumber, TorqueState};
 pub use bus::{ActuatorRef, Bus, Config, DefaultClock, IdSet, IdSetIter, NoClock, field};
 #[cfg(feature = "std")]
 pub use bus::{DynBus, SerialBus};
@@ -45,4 +45,7 @@ pub use transport::SerialTransport;
 pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
-pub use units::{Position, PositionScale};
+pub use units::{
+    ComplianceMargin, ComplianceSlope, Current, Gain, HardwareErrors, Load, Position,
+    PositionScale, RegisterScale, Sign, SpeedLimit, Temperature, Tick, Velocity, Voltage,
+};

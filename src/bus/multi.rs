@@ -576,7 +576,7 @@ mod tests {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
             hold(&mut bus, XM430, 1, (1000, 3000), LimitMode::Unbounded, ON);
-            hold(&mut bus, XM430, 2, (1000, 3000), LimitMode::NoPosition, ON);
+            hold(&mut bus, XM430, 2, (1000, 3000), LimitMode::Pwm, ON);
             hold(&mut bus, XM430, 3, (1000, 3000), BOUNDED, ON);
             let mark = mark(&bus);
             assert_eq!(

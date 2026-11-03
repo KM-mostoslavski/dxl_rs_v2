@@ -3,6 +3,7 @@
 use core::fmt;
 
 use crate::Id;
+use crate::actuator::LimitMode;
 use crate::protocol::ProtocolVersion;
 
 /// Every error this crate returns, by category.
@@ -123,7 +124,11 @@ impl fmt::Display for FitsIn {
 ///         | V::DoesNotFit { .. }
 ///         | V::BufferLength { .. }
 ///         | V::DuplicateId { .. }
-///         | V::NotPositionMode { .. } => false,
+///         | V::NotPositionMode { .. }
+///         | V::NotVelocityMode { .. }
+///         | V::NotCurrentMode { .. }
+///         | V::Unsupported { .. }
+///         | V::InvalidSlopeStep(_) => false,
 ///     }
 /// }
 /// ```
@@ -257,6 +262,46 @@ pub enum ValidationError {
         /// The actuator the goal was for.
         id: Id,
     },
+
+    /// The actuator's operating mode ignores Goal Velocity: only velocity
+    /// mode (Protocol 2) and wheel mode (Protocol 1) use it.
+    #[error(
+        "actuator {} is in {mode:?} mode; only velocity or wheel mode uses a goal velocity",
+        id.get()
+    )]
+    NotVelocityMode {
+        /// The actuator the goal was for.
+        id: Id,
+        /// The mode recorded at Setup.
+        mode: LimitMode,
+    },
+
+    /// The actuator's operating mode ignores Goal Current: only current and
+    /// current-based position mode use it.
+    #[error(
+        "actuator {} is in {mode:?} mode; only current or current-based position mode uses a goal current",
+        id.get()
+    )]
+    NotCurrentMode {
+        /// The actuator the goal was for.
+        id: Id,
+        /// The mode recorded at Setup.
+        mode: LimitMode,
+    },
+
+    /// The actuator's model has no such register, so a typed call for it
+    /// sends nothing.
+    #[error("actuator {} has no {register} register", id.get())]
+    Unsupported {
+        /// The actuator the call was for.
+        id: Id,
+        /// The register's name, as the control table writes it.
+        register: &'static str,
+    },
+
+    /// A compliance slope step outside the e-Manual's `1..=7`.
+    #[error("compliance slope step {0} is outside 1..=7")]
+    InvalidSlopeStep(u8),
 }
 
 /// The bus could not be set up as declared: an actuator is missing, unknown

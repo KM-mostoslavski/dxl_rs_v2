@@ -181,7 +181,7 @@ impl PositionScale {
 ///
 /// `x - whole` is exact, so no `f32` addition can round the result up a
 /// tick. `as` saturates, so no input panics.
-fn round_half_away(x: f32) -> i64 {
+pub(crate) fn round_half_away(x: f32) -> i64 {
     let whole = x as i64;
     let rest = x - whole as f32;
     if rest >= 0.5 {

@@ -559,11 +559,7 @@ mod tests {
 
         #[test]
         fn limit_mode_decides_per_target() {
-            let kinds = held([
-                LimitMode::Unbounded,
-                LimitMode::NoPosition,
-                LimitMode::Bounded,
-            ]);
+            let kinds = held([LimitMode::Unbounded, LimitMode::Pwm, LimitMode::Bounded]);
             let stages = validate_raw(&kinds, &mut on(), &[1], &[100_000]).unwrap();
             assert_eq!(stages[0].data(), &100_000i32.to_le_bytes());
             assert_eq!(
