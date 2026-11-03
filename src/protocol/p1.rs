@@ -8,8 +8,8 @@
 use core::iter;
 
 use super::{
-    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Status, Transport, Writer,
-    check, drain, receive, sealed,
+    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Receive, Status, Transport,
+    Writer, check, collect, drain, receive, repeated_id, sealed,
 };
 use crate::Id;
 use crate::error::{
@@ -18,9 +18,10 @@ use crate::error::{
 
 /// Dynamixel Protocol 1.0.
 ///
-/// Has no Sync Read and its Ping reply carries no model number; those
-/// operations are absent by design, so code using them with `P1` does not
-/// compile.
+/// Has no Sync Read, no Bulk Write and no typed Reboot, and its Ping reply
+/// carries no model number; those operations are absent by design, so code
+/// using them with `P1` does not compile. Its Bulk Read exists on MX
+/// firmware only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct P1;
 
@@ -36,6 +37,7 @@ const PING: u8 = 0x01;
 const READ: u8 = 0x02;
 const WRITE: u8 = 0x03;
 const SYNC_WRITE: u8 = 0x83;
+const BULK_READ: u8 = 0x92;
 
 /// Largest `LEN` field value.
 const MAX_LEN: usize = u8::MAX as usize;
@@ -194,6 +196,11 @@ fn short_addr(addr: u16) -> Result<u8, Error> {
 
 /// Sends an instruction to `id` and parses its status packet into `out`,
 /// checking it carries exactly `out.len()` data bytes.
+///
+/// A packet from another ID is a late reply to an earlier instruction (its
+/// actuator answered after that exchange timed out, e.g. behind a USB
+/// adapter's latency timer). It is dropped and the wait goes on until the
+/// deadline, so it is never taken for this reply.
 fn unicast<T: Transport, C: Clock, I>(
     link: &mut Link<'_, T, C>,
     id: Id,
@@ -207,7 +214,12 @@ where
     drain(link)?;
     send(link.transport, id.get(), instruction, params)?;
     let deadline = link.deadline();
-    let status = receive(link, &mut StatusParser::new(out), deadline, Some(id))?;
+    let status = loop {
+        let status = receive(link, &mut StatusParser::new(out), deadline, Some(id))?;
+        if status.id == id.get() {
+            break status;
+        }
+    };
     check::<P1>(status, id, out)
 }
 
@@ -345,8 +357,67 @@ impl Exchange for P1 {
         Ok(())
     }
 
+    fn bulk_read<T: Transport, C: Clock, I, F>(
+        link: &mut Link<'_, T, C>,
+        entries: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, u16, u16)> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        if let Some(id) = repeated_id(entries.clone().map(|(id, _, _)| id)) {
+            return Err(ValidationError::DuplicateId { id }.into());
+        }
+        for (_, addr, size) in entries.clone() {
+            short_addr(addr)?;
+            let size = usize::from(size);
+            if size > MAX_STATUS_DATA {
+                return Err(ValidationError::PacketTooLarge {
+                    len: size,
+                    max: MAX_STATUS_DATA,
+                }
+                .into());
+            }
+            if scratch.len() < size {
+                return Err(ValidationError::DataLength {
+                    expected: size,
+                    got: scratch.len(),
+                }
+                .into());
+            }
+        }
+        let params = iter::once(0x00).chain(entries.clone().flat_map(|(id, addr, size)| {
+            [
+                u8::try_from(size).unwrap_or(u8::MAX),
+                id.get(),
+                u8::try_from(addr).unwrap_or(u8::MAX),
+            ]
+        }));
+        drain(link)?;
+        send(link.transport, BROADCAST, BULK_READ, params)?;
+        collect::<Self, T, C, _, F>(
+            link,
+            entries.map(|(id, _, size)| (id, usize::from(size))),
+            scratch,
+            on_reply,
+        )
+    }
+
     fn report(error: u8) -> StatusReport {
         StatusReport::P1(P1Flags(error))
+    }
+}
+
+impl Receive for P1 {
+    fn receive_status<T: Transport, C: Clock>(
+        link: &mut Link<'_, T, C>,
+        out: &mut [u8],
+        deadline: u64,
+        id: Option<Id>,
+    ) -> Result<Status, Error> {
+        receive(link, &mut StatusParser::new(out), deadline, id)
     }
 }
 
@@ -473,6 +544,26 @@ mod tests {
         assert_eq!(
             P1::ping(&mut link!(line, clock), id(1)),
             Err(ProtocolError::Malformed.into())
+        );
+    }
+
+    #[test]
+    fn a_late_reply_from_another_id_is_dropped() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let late_from_2 = [0xFF, 0xFF, 0x02, 0x02, 0x00, 0xFB];
+
+        let mut line = MockTransport::new(&time);
+        let mut stream = std::vec::Vec::from(late_from_2);
+        stream.extend_from_slice(v::OK_REPLY);
+        line.reply(&stream);
+        assert_eq!(P1::ping(&mut link!(line, clock), id(1)).unwrap().id, id(1));
+
+        let mut line = MockTransport::new(&time);
+        line.reply(&late_from_2);
+        assert_eq!(
+            P1::ping(&mut link!(line, clock), id(1)),
+            Err(TransportError::Timeout { id: Some(id(1)) }.into())
         );
     }
 
@@ -725,5 +816,90 @@ mod tests {
             Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
         );
         assert_eq!(calls, 0);
+    }
+
+    /// What each ID got, in order.
+    type Replies = Vec<(u8, Result<Vec<u8>, Error>)>;
+
+    fn bulk_read_with(
+        line: &mut MockTransport<'_>,
+        entries: &[(u8, u16, u16)],
+    ) -> Result<Replies, Error> {
+        let time = MockTime::new();
+        let mut clock = time.ticker(100);
+        let mut got = Vec::new();
+        let mut scratch = [0; 2];
+        P1::bulk_read(
+            &mut link!(*line, clock),
+            entries
+                .iter()
+                .map(|&(raw, addr, size)| (id(raw), addr, size)),
+            &mut scratch,
+            |id, r| got.push((id.get(), r.map(<[u8]>::to_vec))),
+        )?;
+        Ok(got)
+    }
+
+    #[test]
+    fn bulk_read_matches_emanual_and_takes_replies_in_order() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        line.reply(v::BULK_READ_REPLY_1).reply(v::BULK_READ_REPLY_2);
+        let got = bulk_read_with(&mut line, &[(1, 30, 2), (2, 36, 2)]).unwrap();
+        line.assert_sent(v::BULK_READ);
+        assert_eq!(
+            got,
+            [
+                (1, Ok(std::vec![0x00, 0x80])),
+                (2, Ok(std::vec![0x00, 0x80]))
+            ]
+        );
+
+        let mut line = MockTransport::new(&time);
+        line.reply(v::BULK_READ_REPLY_2);
+        let got = bulk_read_with(&mut line, &[(1, 30, 2), (2, 36, 2)]).unwrap();
+        assert_eq!(
+            got,
+            [
+                (1, Err(TransportError::Timeout { id: Some(id(1)) }.into())),
+                (2, Ok(std::vec![0x00, 0x80]))
+            ]
+        );
+    }
+
+    #[test]
+    fn bulk_read_refuses_bad_requests_before_sending() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        assert_eq!(
+            bulk_read_with(&mut line, &[(1, 30, 2), (1, 36, 2)]),
+            Err(ValidationError::DuplicateId { id: id(1) }.into())
+        );
+        assert_eq!(
+            bulk_read_with(&mut line, &[(1, 256, 2)]),
+            Err(ValidationError::AddressOutOfRange { addr: 256 }.into())
+        );
+        assert_eq!(
+            bulk_read_with(&mut line, &[(1, 30, 4)]),
+            Err(ValidationError::DataLength {
+                expected: 4,
+                got: 2
+            }
+            .into())
+        );
+        assert_eq!(
+            bulk_read_with(&mut line, &[(1, 30, 300)]),
+            Err(ValidationError::PacketTooLarge {
+                len: 300,
+                max: MAX_STATUS_DATA
+            }
+            .into())
+        );
+        assert!(line.sent().is_empty());
+        line.fail_with(embedded_io::ErrorKind::BrokenPipe);
+        assert_eq!(
+            bulk_read_with(&mut line, &[(1, 30, 2)]),
+            Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+        );
     }
 }
