@@ -20,8 +20,10 @@ mod register;
 mod transport;
 mod units;
 
-pub use actuator::{Actuator, LimitMode, ModelNumber, TorqueState};
-pub use bus::{ActuatorRef, Bus, Config, DefaultClock, IdSet, IdSetIter, NoClock, field};
+pub use actuator::{Actuator, LimitMode, Model, ModelNumber, TorqueState};
+pub use bus::{
+    ActuatorRef, Bus, Config, DefaultClock, IdSet, IdSetIter, ModelRef, NoClock, bulk, field,
+};
 #[cfg(feature = "std")]
 pub use bus::{DynBus, SerialBus};
 /// The `embedded-io` crate this one builds on, so users can implement and

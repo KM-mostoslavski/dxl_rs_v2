@@ -134,6 +134,17 @@ pub trait Actuator: sealed::Describe {
         Some(limits.min_raw()..=limits.max_raw())
     }
 
+    /// The limit mode Setup recorded from the actuator's operating mode
+    /// (Operating Mode, or the angle limits and torque switch on Protocol
+    /// 1). It decides which goals the bus accepts: position modes take
+    /// goal positions, [`LimitMode::Velocity`] and [`LimitMode::Wheel`]
+    /// goal velocities, [`LimitMode::Current`] and
+    /// [`LimitMode::UnboundedCurrent`] goal currents. A mode changed after
+    /// Setup is not seen until the next Setup.
+    fn limit_mode(&self) -> LimitMode {
+        self.cache().mode()
+    }
+
     /// The limits of [`position_limits_raw`](Actuator::position_limits_raw)
     /// in radians, through [`position_scale`](Actuator::position_scale). The
     /// same rule applies: returned in every operating mode, applied to goals
@@ -143,6 +154,20 @@ pub trait Actuator: sealed::Describe {
         let scale = self.position_scale();
         Some(scale.to_position(*limits.start())..=scale.to_position(*limits.end()))
     }
+}
+
+/// A generated model type, such as `Ax12a` or `Xm430W350` in
+/// [`models`](crate::models): the type parameter of the Tier 2 handle
+/// [`ActuatorRef::model`](crate::ActuatorRef::model).
+///
+/// Its `Has*` impls ([`HasPGain`], [`HasCwComplianceSlope`], ...) say which
+/// typed registers it has, so a Tier 2 call on a register the model lacks
+/// does not compile. Sealed like [`Actuator`]: only the generated model
+/// types implement it, and [`ActuatorKind`](crate::ActuatorKind) does not.
+pub trait Model: Actuator {
+    /// The model's control-table data. Not part of the public API.
+    #[doc(hidden)]
+    const DATA: &'static ModelData;
 }
 
 /// Torque and fault state of one actuator. Faulted always means torque off.
@@ -331,6 +356,10 @@ pub struct ModelData {
     pub(crate) scale: PositionScale,
     /// The FR-9 registers the table has.
     pub(crate) roles: Roles,
+    /// Whether the table's `instructions` list Bulk Read on Protocol 1 for
+    /// every firmware (MX on Protocol 1, MX(2.0)); `false` where the table
+    /// lists no instructions.
+    pub(crate) bulk_read_p1: bool,
 }
 
 impl ModelData {
@@ -978,6 +1007,7 @@ mod tests {
         },
         scale: PositionScale::new(2048, 0, 4095, -PI, PI),
         roles: Roles::NONE,
+        bulk_read_p1: false,
     };
 
     const AX12A: ModelData = ModelData {
@@ -998,6 +1028,7 @@ mod tests {
         mode: ModeSource::AngleLimits,
         scale: PositionScale::new(512, 0, 1023, 0.0, 5.2359877),
         roles: Roles::NONE,
+        bulk_read_p1: false,
     };
 
     struct Fake {

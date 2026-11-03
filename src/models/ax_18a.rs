@@ -5,7 +5,7 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasCcwComplianceMargin, HasCcwComplianceSlope,
     HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMoving,
     HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
-    LimitRegisters, ModeSource, ModelData, Protocols, RoleRegister, Roles,
+    LimitRegisters, ModeSource, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -61,6 +61,7 @@ impl Ax18a {
             ccw_compliance_slope: Some(<Self as HasCcwComplianceSlope>::ROLE),
             ..Roles::NONE
         },
+        bulk_read_p1: false,
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -112,6 +113,10 @@ impl Describe for Ax18a {
 }
 
 impl Actuator for Ax18a {}
+
+impl Model for Ax18a {
+    const DATA: &'static ModelData = &Self::DATA;
+}
 
 /// Present Temperature: raw only, no unit in the table.
 impl HasPresentTemperature for Ax18a {

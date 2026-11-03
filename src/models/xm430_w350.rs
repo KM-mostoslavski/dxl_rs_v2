@@ -5,7 +5,7 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
     HasLed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
     HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitRegisters, ModeScale, ModeSet,
-    ModeSource, ModeValues, ModelData, Protocols, RoleRegister, Roles,
+    ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -70,6 +70,7 @@ impl Xm430W350 {
             d_gain: Some(<Self as HasDGain>::ROLE),
             ..Roles::NONE
         },
+        bulk_read_p1: false,
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -142,6 +143,10 @@ impl Describe for Xm430W350 {
 }
 
 impl Actuator for Xm430W350 {}
+
+impl Model for Xm430W350 {
+    const DATA: &'static ModelData = &Self::DATA;
+}
 
 /// Present Temperature: 1 °C per raw step in every mode.
 impl HasPresentTemperature for Xm430W350 {

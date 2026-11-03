@@ -56,6 +56,7 @@ pub(crate) struct Table {
     protocols: Option<String>,
     operating_modes: Option<String>,
     torque_control_mode: Option<String>,
+    instructions: Option<String>,
     type_info: (i32, i32, i32, f32, f32),
     units: Vec<String>,
     rows: Vec<RowSpec>,
@@ -73,6 +74,7 @@ impl Table {
             protocols: Some(protocols.to_string()),
             operating_modes: None,
             torque_control_mode: None,
+            instructions: None,
             type_info,
             units: Vec::new(),
             rows: rows.to_vec(),
@@ -306,6 +308,13 @@ impl Table {
         self
     }
 
+    /// Sets the `instructions` text, e.g.
+    /// `[(protocol: P1, source: "x", list: [Ping, BulkRead])]`.
+    pub(crate) fn instructions(mut self, text: &str) -> Self {
+        self.instructions = Some(text.to_string());
+        self
+    }
+
     /// Leaves out `source`, `unit_source`, `protocols` or
     /// `operating_modes`.
     pub(crate) fn omit_field(mut self, field: &str) -> Self {
@@ -344,6 +353,9 @@ impl Table {
         }
         if let Some(modes) = &self.operating_modes {
             let _ = writeln!(out, "  operating_modes: {modes},");
+        }
+        if let Some(list) = &self.instructions {
+            let _ = writeln!(out, "  instructions: {list},");
         }
         if let Some(mode) = &self.torque_control_mode {
             let _ = writeln!(out, "  torque_control_mode: {mode},");

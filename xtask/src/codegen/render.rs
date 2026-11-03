@@ -371,7 +371,7 @@ fn model_imports(model: &GenModel) -> String {
     if matches!(model.roles.mode, ModeRole::Register { .. }) {
         actuator.push("ModeValues");
     }
-    actuator.extend(["ModelData", "Protocols", "Roles"]);
+    actuator.extend(["Model", "ModelData", "Protocols", "Roles"]);
     let scales = || model.typed.iter().flat_map(|r| r.scales.iter());
     if scales().next().is_some() {
         actuator.extend(["ModeScale", "ModeSet"]);
@@ -450,6 +450,7 @@ fn render_model(model: &GenModel) -> String {
          \x20       mode: {mode},\n\
          \x20       scale: {scale},\n\
          \x20       roles: {roles},\n\
+         \x20       bulk_read_p1: {bulk_read_p1},\n\
          \x20   }};\n",
         name = model.name,
         number = model.number,
@@ -462,6 +463,7 @@ fn render_model(model: &GenModel) -> String {
         mode = mode_value(&roles.mode),
         scale = position_scale_value(&model.scale),
         roles = roles_value(model),
+        bulk_read_p1 = model.bulk_read_p1,
     );
     for (name, row) in &model.registers {
         let _ = writeln!(
@@ -477,7 +479,11 @@ fn render_model(model: &GenModel) -> String {
          \x20   fn cache(&self) -> &Cache {{\n        &self.cache\n    }}\n\n\
          \x20   fn cache_mut(&mut self) -> &mut Cache {{\n        &mut self.cache\n    }}\n}}\n"
     );
-    let _ = writeln!(out, "impl Actuator for {ty} {{}}");
+    let _ = writeln!(out, "impl Actuator for {ty} {{}}\n");
+    let _ = writeln!(
+        out,
+        "impl Model for {ty} {{\n    const DATA: &'static ModelData = &Self::DATA;\n}}"
+    );
     for role in &model.typed {
         out.push('\n');
         render_role(&mut out, ty, role);
@@ -597,6 +603,11 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
          /// each model type whose table has the register.\n\
          pub use crate::actuator::{{{}}};",
         traits.join(", ")
+    );
+    out.push_str(
+        "\n/// The model types, for the typed handle of\n\
+         /// [`ActuatorRef::model`](crate::ActuatorRef::model).\n\
+         pub use crate::actuator::Model;\n",
     );
 
     if has_tests {
@@ -727,6 +738,8 @@ mod tests {
             "implHasHardwareErrorStatusforXm{constROLE:RoleRegister=RoleRegister{name:\"HardwareErrorStatus\",register:Self::HARDWARE_ERROR_STATUS,scales:&[],bounded_by:None,from_fw:0,row_range:None,};}",
             "protocols:Protocols{p1:true,p2:true}",
             "implActuatorforXm{}",
+            "implModelforXm{constDATA:&'staticModelData=&Self::DATA;}",
+            "bulk_read_p1:false,};",
             "implDescribeforXm{fndata(&self)->&'staticModelData{&Self::DATA}fncache(&self)->&Cache{&self.cache}fncache_mut(&mutself)->&mutCache{&mutself.cache}}",
         ] {
             assert!(c.contains(part), "{part}");
@@ -738,7 +751,7 @@ mod tests {
         assert_eq!(
             uses(xm),
             [
-                "usecrate::actuator::{Actuator,Cache,Describe,HasHardwareErrorStatus,LimitRegisters,ModeSource,ModeValues,ModelData,Protocols,RoleRegister,Roles}",
+                "usecrate::actuator::{Actuator,Cache,Describe,HasHardwareErrorStatus,LimitRegisters,ModeSource,ModeValues,Model,ModelData,Protocols,RoleRegister,Roles}",
                 "usecrate::id::Id",
                 "usecrate::register::{Access,Area,Register}",
                 "usecrate::units::PositionScale",
@@ -756,8 +769,22 @@ mod tests {
         ));
         assert!(c.contains("hardware_error:None"));
         assert!(c.contains("mode:ModeSource::AngleLimits"));
+        assert!(c.contains("bulk_read_p1:false,"));
+        let bulk = one(
+            "ax",
+            Table::ax().instructions(
+                "[(protocol: P1, source: \"x\", list: [Ping, BulkRead]), (protocol: P2, source: \"x\", list: [BulkRead])]",
+            ),
+        );
+        assert!(compact(file(&bulk, "models/ax.rs")).contains("bulk_read_p1:true,"));
+        let later = one(
+            "ax",
+            Table::ax()
+                .instructions("[(protocol: P1, source: \"x\", list: [BulkRead], from_fw: 40)]"),
+        );
+        assert!(compact(file(&later, "models/ax.rs")).contains("bulk_read_p1:false,"));
         assert!(uses(ax).contains(
-            &"usecrate::actuator::{Actuator,Cache,Describe,LimitRegisters,ModeSource,ModelData,Protocols,Roles}"
+            &"usecrate::actuator::{Actuator,Cache,Describe,LimitRegisters,ModeSource,Model,ModelData,Protocols,Roles}"
                 .to_string()
         ));
     }
@@ -871,6 +898,7 @@ mod tests {
             assert!(c.contains(&format!("{},", role.has)), "{}", role.has);
         }
         assert!(c.contains("RoleRegister};"));
+        assert!(c.contains("pubusecrate::actuator::Model;"));
     }
 
     #[test]

@@ -4,16 +4,17 @@
 //! `[Stage; N]`.
 
 use crate::Id;
-use crate::actuator::{Actuator, Describe, TorqueState};
+use crate::actuator::{Actuator, TorqueState};
 use crate::error::{Error, SetupError, ValidationError};
 use crate::models::ActuatorKind;
 
 use core::cell::Cell;
 
-use super::field::WriteField;
-use super::field::sealed::{Field, Value};
+use super::field::sealed::Field;
+use super::field::{ReadField, WriteField, encode_write, read_site};
 use super::id_set::IdSet;
 use super::observe::{is_hardware_fault, observe};
+use super::slots::Bound;
 use super::slots::find;
 use super::wire::{ReadMany, Wire};
 
@@ -123,24 +124,25 @@ pub(crate) fn check_values(targets: usize, got: usize) -> Result<(), ValidationE
     }
 }
 
-/// Validates every staged target in order and encodes its value: torque on,
-/// the value converted to a tick, the target's limit mode, the register
-/// size. The first failure refuses the whole call.
+/// Validates every staged target in order and encodes its value as
+/// `field::encode_write` does: the register, torque on for a goal, the
+/// operating mode, the value's conversion, the target's limits, the
+/// register size. The first failure refuses the whole call.
 ///
-/// `values` has one value per stage (see [`check_values`]).
+/// `values` has one value per stage (see [`check_values`]); `bounds` one
+/// goal bound per slot.
 pub(crate) fn validate_writes<F: WriteField>(
     kinds: &[ActuatorKind],
     states: &mut [TorqueState],
+    bounds: &[Bound],
     stages: &mut [Stage],
     values: &[F::Value],
 ) -> Result<(), Error> {
     for (stage, &value) in stages.iter_mut().zip(values) {
         let (kind, state) = held(kinds, states, stage)?;
-        state.check_goal(kind.id())?;
-        let data = kind.data();
-        let raw = kind.cache().check_goal(value.to_raw(&data.scale)?)?;
-        let reg = F::register(data);
-        reg.encode(raw, &mut stage.bytes)?;
+        let on = state.check_goal(kind.id());
+        let bound = bounds.get(usize::from(stage.slot)).copied().flatten();
+        let reg = encode_write::<F>(kind, on, bound, value, &mut stage.bytes)?.0;
         stage.addr = reg.addr;
         stage.size = reg.size;
     }
@@ -211,8 +213,10 @@ pub(crate) fn check_out(targets: usize, got: usize) -> Result<(), ValidationErro
     }
 }
 
-/// Stages a read of field `F`: each target's register layout.
-pub(crate) fn stage_reads<F: Field>(
+/// Stages a read of field `F`: each target's register layout, after
+/// checking every target has the register and, for a typed value, a unit
+/// in its mode. The first failure refuses the whole call.
+pub(crate) fn stage_reads<F: ReadField>(
     kinds: &[ActuatorKind],
     stages: &mut [Stage],
 ) -> Result<(), Error> {
@@ -220,7 +224,7 @@ pub(crate) fn stage_reads<F: Field>(
         let kind = kinds
             .get(usize::from(stage.slot))
             .ok_or_else(|| lost(kinds))?;
-        let reg = F::register(kind.data());
+        let reg = read_site::<F>(kind)?.reg;
         stage.addr = reg.addr;
         stage.size = reg.size;
     }
@@ -264,7 +268,7 @@ where
         let Some(kind) = kinds.get(slot) else {
             return;
         };
-        let result = reply.and_then(|bytes| Ok(F::register(kind.data()).decode(bytes)?));
+        let result = reply.and_then(|bytes| Ok(F::site(kind)?.reg.decode(bytes)?));
         if let Some(state) = states.get_mut(slot) {
             observe(state, &result);
         }
@@ -457,7 +461,7 @@ mod tests {
     #[cfg(feature = "x-series")]
     mod with_models {
         use super::*;
-        use crate::actuator::{LimitMode, ModelNumber};
+        use crate::actuator::{Describe, LimitMode, ModelNumber};
         use crate::bus::field::{GoalPosition, Raw};
         use crate::protocol::ProtocolVersion;
         use crate::units::Position;
@@ -519,7 +523,7 @@ mod tests {
             let mut stages = [Stage::EMPTY; 3];
             let staged = resolve(kinds, targets.iter().map(|&n| id(n)), &mut stages)?;
             check_values(staged.len(), values.len())?;
-            validate_writes::<Raw<GoalPosition>>(kinds, states, staged, values)?;
+            validate_writes::<Raw<GoalPosition>>(kinds, states, &[], staged, values)?;
             Ok(stages)
         }
 
@@ -583,12 +587,14 @@ mod tests {
             let kinds = held(BOUNDED);
             let mut stages = [Stage::EMPTY; 3];
             let staged = resolve(&kinds, [id(1)], &mut stages).unwrap();
-            validate_writes::<GoalPosition>(&kinds, &mut on(), staged, &[Position::ZERO]).unwrap();
+            validate_writes::<GoalPosition>(&kinds, &mut on(), &[], staged, &[Position::ZERO])
+                .unwrap();
             assert_eq!(staged[0].data(), &2048i32.to_le_bytes());
             assert_eq!(
                 validate_writes::<GoalPosition>(
                     &kinds,
                     &mut on(),
+                    &[],
                     staged,
                     &[Position::from_radians(f32::NAN)]
                 ),

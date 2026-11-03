@@ -15,7 +15,10 @@ use super::scale::RegisterScale;
 ///     let _ = scale.load_to_raw(l);
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+///
+/// [`Default`] is zero, to fill a caller-owned buffer before a
+/// multi-actuator read.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
 pub struct Load(f32);
 
 impl Load {

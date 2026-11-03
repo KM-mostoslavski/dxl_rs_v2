@@ -7,8 +7,8 @@
 use core::iter;
 
 use super::{
-    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Status, Transport, Writer,
-    check, crc, drain, receive, sealed,
+    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Receive, Status, Transport,
+    Writer, check, collect, crc, drain, receive, repeated_id, sealed,
 };
 use crate::Id;
 use crate::error::{
@@ -17,7 +17,8 @@ use crate::error::{
 
 /// Dynamixel Protocol 2.0.
 ///
-/// Has two instructions Protocol 1 lacks: Sync Read and broadcast Ping.
+/// Has instructions Protocol 1 lacks: Sync Read, Bulk Write, Reboot and
+/// broadcast Ping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct P2;
 
@@ -36,6 +37,9 @@ const WRITE: u8 = 0x03;
 const STATUS: u8 = 0x55;
 const SYNC_READ: u8 = 0x82;
 const SYNC_WRITE: u8 = 0x83;
+const REBOOT: u8 = 0x08;
+const BULK_READ: u8 = 0x92;
+const BULK_WRITE: u8 = 0x93;
 
 /// Largest `LEN` field value.
 const MAX_LEN: usize = u16::MAX as usize;
@@ -470,6 +474,35 @@ impl Exchange for P2 {
         Self::sync_read(link, addr, size, ids, scratch, on_reply)
     }
 
+    fn bulk_read<T: Transport, C: Clock, I, F>(
+        link: &mut Link<'_, T, C>,
+        entries: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, u16, u16)> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        if let Some(id) = repeated_id(entries.clone().map(|(id, _, _)| id)) {
+            return Err(ValidationError::DuplicateId { id }.into());
+        }
+        for (_, _, size) in entries.clone() {
+            check_reply_size(usize::from(size), scratch)?;
+        }
+        let params = entries
+            .clone()
+            .flat_map(|(id, addr, size)| iter::once(id.get()).chain(addr_len(addr, size)));
+        drain(link)?;
+        send(link.transport, BROADCAST, BULK_READ, params)?;
+        collect::<Self, T, C, _, F>(
+            link,
+            entries.map(|(id, _, size)| (id, usize::from(size))),
+            scratch,
+            on_reply,
+        )
+    }
+
     fn report(error: u8) -> StatusReport {
         StatusReport::P2 {
             alert: error & 0x80 != 0,
@@ -478,17 +511,46 @@ impl Exchange for P2 {
     }
 }
 
+impl Receive for P2 {
+    fn receive_status<T: Transport, C: Clock>(
+        link: &mut Link<'_, T, C>,
+        out: &mut [u8],
+        deadline: u64,
+        id: Option<Id>,
+    ) -> Result<Status, Error> {
+        receive(link, &mut StatusParser::new(out), deadline, id)
+    }
+}
+
+/// Checks that a reply of `size` data bytes fits a status packet and
+/// `scratch`.
+fn check_reply_size(size: usize, scratch: &[u8]) -> Result<(), Error> {
+    if size > MAX_STATUS_DATA {
+        return Err(ValidationError::PacketTooLarge {
+            len: size,
+            max: MAX_STATUS_DATA,
+        }
+        .into());
+    }
+    if scratch.len() < size {
+        return Err(ValidationError::DataLength {
+            expected: size,
+            got: scratch.len(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 impl P2 {
     /// Reads `size` bytes at `addr` from every ID in `ids` with one Sync Read
     /// instruction.
     ///
-    /// Replies come back in request order (e-Manual `#parameters-4`).
-    /// `on_reply` is called exactly once per ID with that actuator's data,
-    /// or its own error; each reply gets a full timeout. A reply from an ID
-    /// later in the list means the IDs before it are not answering: they
-    /// get a timeout and the reply goes to its own ID. A late reply from an
-    /// ID that already timed out is discarded. `scratch` holds one
-    /// reply and must be at least `size` bytes. Returns `Err` only when the
+    /// Replies come back in request order (e-Manual `#parameters-4`) and are
+    /// collected as `protocol::collect` says: `on_reply` is called exactly
+    /// once per ID with that actuator's data, or its own error. `scratch`
+    /// holds one reply and must be at least `size` bytes. Returns `Err` only
+    /// for an invalid request, before anything is sent, or when the
     /// transport itself fails.
     pub(crate) fn sync_read<T: Transport, C: Clock, I, F>(
         link: &mut Link<'_, T, C>,
@@ -496,69 +558,68 @@ impl P2 {
         size: u16,
         ids: I,
         scratch: &mut [u8],
-        mut on_reply: F,
+        on_reply: F,
     ) -> Result<(), Error>
     where
         I: Iterator<Item = Id> + Clone,
         F: FnMut(Id, Result<&[u8], Error>),
     {
         let size_usize = usize::from(size);
-        if size_usize > MAX_STATUS_DATA {
-            return Err(ValidationError::PacketTooLarge {
-                len: size_usize,
-                max: MAX_STATUS_DATA,
-            }
-            .into());
-        }
-        let Some(buf) = scratch.get_mut(..size_usize) else {
-            return Err(ValidationError::DataLength {
-                expected: size_usize,
-                got: scratch.len(),
-            }
-            .into());
-        };
+        check_reply_size(size_usize, scratch)?;
         let params = addr_len(addr, size)
             .into_iter()
             .chain(ids.clone().map(Id::get));
         drain(link)?;
         send(link.transport, BROADCAST, SYNC_READ, params)?;
-        let all = ids.clone();
-        let mut held = None;
-        let mut pending = ids;
-        let mut done = 0;
-        while let Some(id) = pending.next() {
-            let already_handled = |raw: u8| {
-                all.clone()
-                    .take(done)
-                    .any(|earlier| earlier != id && earlier.get() == raw)
-            };
-            let received = match held.take() {
-                Some(status) => Ok(status),
-                None => {
-                    let deadline = link.deadline();
-                    loop {
-                        match receive(link, &mut StatusParser::new(buf), deadline, Some(id)) {
-                            Ok(status) if already_handled(status.id) => {}
-                            other => break other,
-                        }
-                    }
-                }
-            };
-            done += 1;
-            match received {
-                Ok(status)
-                    if status.id != id.get()
-                        && pending.clone().any(|later| later.get() == status.id) =>
-                {
-                    held = Some(status);
-                    on_reply(id, Err(TransportError::Timeout { id: Some(id) }.into()));
-                }
-                Ok(status) => on_reply(id, check::<P2>(status, id, buf).map(|()| &*buf)),
-                Err(err @ Error::Transport(TransportError::Io(_))) => return Err(err),
-                Err(err) => on_reply(id, Err(err)),
-            }
+        collect::<Self, T, C, _, F>(link, ids.map(|id| (id, size_usize)), scratch, on_reply)
+    }
+
+    /// Writes each `(id, addr, data)` entry with one Bulk Write instruction
+    /// (e-Manual `#bulk-write-0x93`): addresses and sizes may differ per
+    /// actuator. Broadcast, so no reply and no wait.
+    ///
+    /// # Errors
+    ///
+    /// Before anything is sent: `DuplicateId` for an ID listed twice,
+    /// `PacketTooLarge` for data no packet can carry. Then only a failing
+    /// transport.
+    pub(crate) fn bulk_write<'d, T: Transport, C: Clock, I>(
+        link: &mut Link<'_, T, C>,
+        entries: I,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, u16, &'d [u8])> + Clone,
+    {
+        if let Some(id) = repeated_id(entries.clone().map(|(id, _, _)| id)) {
+            return Err(ValidationError::DuplicateId { id }.into());
         }
-        Ok(())
+        if let Some((_, _, data)) = entries
+            .clone()
+            .find(|(_, _, data)| u16::try_from(data.len()).is_err())
+        {
+            return Err(ValidationError::PacketTooLarge {
+                len: data.len(),
+                max: MAX_LEN,
+            }
+            .into());
+        }
+        let params = entries.flat_map(|(id, addr, data)| {
+            let len = u16::try_from(data.len()).unwrap_or(u16::MAX);
+            iter::once(id.get())
+                .chain(addr_len(addr, len))
+                .chain(data.iter().copied())
+        });
+        drain(link)?;
+        send(link.transport, BROADCAST, BULK_WRITE, params)
+    }
+
+    /// Reboots `id` (e-Manual `#reboot-0x08`) and waits for its status
+    /// packet, sent before the actuator restarts.
+    pub(crate) fn reboot<T: Transport, C: Clock>(
+        link: &mut Link<'_, T, C>,
+        id: Id,
+    ) -> Result<(), Error> {
+        unicast(link, id, REBOOT, iter::empty(), &mut [])
     }
 }
 
@@ -1262,6 +1323,153 @@ mod tests {
                 |_, _| panic!("no reply expected")
             ),
             Err(TransportError::Io(ErrorKind::BrokenPipe).into())
+        );
+    }
+
+    /// What each ID got, in order.
+    type Replies = Vec<(u8, Result<Vec<u8>, Error>)>;
+
+    fn bulk_read_with(entries: &[(u8, u16, u16)], replies: &[&[u8]]) -> (Vec<u8>, Replies) {
+        let time = MockTime::new();
+        let mut clock = time.ticker(100);
+        let mut line = MockTransport::new(&time);
+        for reply in replies {
+            line.reply(reply);
+        }
+        let mut got = Vec::new();
+        let mut scratch = [0; 4];
+        P2::bulk_read(
+            &mut link!(line, clock),
+            entries
+                .iter()
+                .map(|&(raw, addr, size)| (id(raw), addr, size)),
+            &mut scratch,
+            |id, r| got.push((id.get(), r.map(<[u8]>::to_vec))),
+        )
+        .unwrap();
+        (line.sent().to_vec(), got)
+    }
+
+    #[test]
+    fn bulk_read_matches_emanual_and_delivers_each_size() {
+        let (sent, got) = bulk_read_with(
+            &[(1, 144, 2), (2, 146, 1)],
+            &[v::BULK_READ_REPLY_1, v::BULK_READ_REPLY_2],
+        );
+        assert_eq!(sent, v::BULK_READ);
+        assert_eq!(
+            got,
+            [(1, Ok(std::vec![0x77, 0x00])), (2, Ok(std::vec![0x24]))]
+        );
+    }
+
+    #[test]
+    fn bulk_read_gives_a_silent_actuator_its_timeout() {
+        let (_, got) = bulk_read_with(&[(1, 144, 2), (2, 146, 1)], &[v::BULK_READ_REPLY_2]);
+        assert_eq!(
+            got,
+            [
+                (1, Err(TransportError::Timeout { id: Some(id(1)) }.into())),
+                (2, Ok(std::vec![0x24]))
+            ]
+        );
+        let (_, got) = bulk_read_with(&[(1, 144, 1)], &[v::BULK_READ_REPLY_1]);
+        assert_eq!(
+            got,
+            [(
+                1,
+                Err(ProtocolError::WrongLength {
+                    expected: 1,
+                    got: 2
+                }
+                .into())
+            )]
+        );
+    }
+
+    #[test]
+    fn bulk_read_refuses_bad_requests_before_sending() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let mut line = MockTransport::new(&time);
+        let mut scratch = [0; 2];
+        let mut run = |entries: &[(u8, u16, u16)], scratch: &mut [u8]| {
+            P2::bulk_read(
+                &mut link!(line, clock),
+                entries
+                    .iter()
+                    .map(|&(raw, addr, size)| (id(raw), addr, size)),
+                scratch,
+                |_, _| {},
+            )
+        };
+        assert_eq!(
+            run(&[(1, 144, 2), (1, 146, 1)], &mut scratch),
+            Err(ValidationError::DuplicateId { id: id(1) }.into())
+        );
+        assert_eq!(
+            run(&[(1, 132, 4)], &mut scratch),
+            Err(ValidationError::DataLength {
+                expected: 4,
+                got: 2
+            }
+            .into())
+        );
+        assert_eq!(
+            run(&[(1, 0, u16::MAX)], &mut scratch),
+            Err(ValidationError::PacketTooLarge {
+                len: usize::from(u16::MAX),
+                max: MAX_STATUS_DATA
+            }
+            .into())
+        );
+        assert!(line.sent().is_empty());
+    }
+
+    #[test]
+    fn bulk_write_matches_emanual_and_never_reads() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let mut line = MockTransport::new(&time);
+        let a = 160u16.to_le_bytes();
+        let b = [80u8];
+        let entries = [(id(1), 32, &a[..]), (id(2), 31, &b[..])];
+        P2::bulk_write(&mut link!(line, clock), entries.into_iter()).unwrap();
+        assert_eq!((line.sent(), line.reads()), (v::BULK_WRITE, 0));
+
+        let mut line = MockTransport::new(&time);
+        let twice = [(id(1), 32, &a[..]), (id(1), 31, &b[..])];
+        assert_eq!(
+            P2::bulk_write(&mut link!(line, clock), twice.into_iter()),
+            Err(ValidationError::DuplicateId { id: id(1) }.into())
+        );
+        let huge = std::vec![0; usize::from(u16::MAX) + 1];
+        let too_long = [(id(1), 0, &huge[..])];
+        assert_eq!(
+            P2::bulk_write(&mut link!(line, clock), too_long.into_iter()),
+            Err(ValidationError::PacketTooLarge {
+                len: huge.len(),
+                max: MAX_LEN
+            }
+            .into())
+        );
+        assert!(line.sent().is_empty());
+    }
+
+    #[test]
+    fn reboot_matches_emanual_and_waits_for_its_status() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(10);
+        let mut line = MockTransport::new(&time);
+        line.reply(v::OK_REPLY);
+        assert_eq!(P2::reboot(&mut link!(line, clock), id(1)), Ok(()));
+        line.assert_sent(v::REBOOT);
+        line.assert_done();
+
+        let mut line = MockTransport::new(&time);
+        assert_eq!(
+            P2::reboot(&mut link!(line, clock), id(1)),
+            Err(TransportError::Timeout { id: Some(id(1)) }.into())
         );
     }
 }

@@ -4,7 +4,7 @@
 use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain,
     HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
-    LimitRegisters, ModeSource, ModeValues, ModelData, Protocols, RoleRegister, Roles,
+    LimitRegisters, ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -69,6 +69,7 @@ impl Ym070210B001 {
             d_gain: Some(<Self as HasDGain>::ROLE),
             ..Roles::NONE
         },
+        bulk_read_p1: false,
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -194,6 +195,10 @@ impl Describe for Ym070210B001 {
 }
 
 impl Actuator for Ym070210B001 {}
+
+impl Model for Ym070210B001 {
+    const DATA: &'static ModelData = &Self::DATA;
+}
 
 /// Present Input Voltage: raw only, no unit in the table.
 impl HasPresentVoltage for Ym070210B001 {

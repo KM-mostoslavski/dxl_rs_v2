@@ -1,17 +1,19 @@
-//! Commands to many actuators in one call (research R-7, R-8): the Easy
-//! tier (`enable_torque`, `disable_torque`, `write_goal_positions[_raw]`,
-//! `read_positions[_raw]`) and the explicit `sync_write` and, on Protocol
-//! 2, `sync_read`.
+//! Commands to many actuators in one call (research R-7, R-8, SRS FR-9.5):
+//! the Easy tier (`enable_torque`, `disable_torque`,
+//! `write_goal_positions[_raw]`, `write_goal_velocities`,
+//! `write_goal_currents`, `read_positions[_raw]`, `read_field`) and the
+//! explicit `sync_write` and, on Protocol 2, `sync_read`.
 
 use crate::actuator::{Actuator, Describe, TorqueState};
 use crate::error::Error;
 use crate::protocol::{Clock, P2, Protocol};
-use crate::units::Position;
+use crate::units::{Current, Position, Velocity};
 use crate::{Id, Transport};
 
 use super::Bus;
-use super::field::sealed::Value;
-use super::field::{GoalPosition, PresentPosition, Raw, ReadField, WriteField};
+use super::field::{
+    self, GoalCurrent, GoalPosition, GoalVelocity, PresentPosition, Raw, ReadField, WriteField,
+};
 use super::group::{self, FirstError, Stage};
 use super::observe::after_torque_write;
 use super::slots::Slots;
@@ -32,7 +34,7 @@ where
     S: Slots,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states) = slots.split_mut();
+    let (kinds, states, _) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     for stage in stages.iter() {
         let (kind, state) = group::held(kinds, states, stage)?;
@@ -62,7 +64,7 @@ where
     S: Slots,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states) = slots.split_mut();
+    let (kinds, states, _) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     let mut first = FirstError::default();
     for (index, stage) in stages.iter().enumerate() {
@@ -92,10 +94,10 @@ where
     F: WriteField,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states) = slots.split_mut();
+    let (kinds, states, bounds) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_values(stages.len(), values.len())?;
-    group::validate_writes::<F>(kinds, states, stages, values)?;
+    group::validate_writes::<F>(kinds, states, bounds, stages, values)?;
     for (addr, size) in group::groups(stages) {
         wire.sync_write(addr, size, group::entries(kinds, stages, (addr, size)))?;
     }
@@ -120,14 +122,14 @@ where
     R: ReadMany<P, T, C>,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states) = slots.split_mut();
+    let (kinds, states, _) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_out(stages.len(), out.len())?;
     group::stage_reads::<F>(kinds, stages)?;
     group::read_stages::<P, T, C, F, R>(wire, kinds, states, stages)?;
     for (value, stage) in out.iter_mut().zip(stages.iter()) {
         if let Some(kind) = kinds.get(usize::from(stage.slot)) {
-            *value = F::Value::from_raw(stage.raw(), &kind.data().scale);
+            *value = field::decode::<F>(kind, stage.raw())?;
         }
     }
     Ok(())
@@ -308,19 +310,71 @@ assert_eq!(present, [512, 612]);
         self.sync_write(Raw(GoalPosition), ids, goals)
     }
 
-    /// Writes field `F` to every target: `values[i]` to target `i`, one Sync
-    /// Write per register layout. Both protocols.
+    /// Sends goal velocities in rad/s: `goals[i]` to target `i`, one Sync
+    /// Write per register layout (Goal Velocity, or Moving Speed in wheel
+    /// mode on Protocol 1).
     ///
-    /// The same validation as the Easy tier, all of it before any byte:
-    /// `bus.sync_write(GoalPosition, ids, &goals)` is
-    /// [`write_goal_positions`](Bus::write_goal_positions), and
-    /// `bus.sync_write(Raw(GoalPosition), ids, &ticks)` is
-    /// [`write_goal_positions_raw`](Bus::write_goal_positions_raw). Not
-    /// atomic across layouts on the wire; a fault shows on the next read.
+    /// Each target is checked as
+    /// [`ActuatorRef::set_goal_velocity`](crate::ActuatorRef::set_goal_velocity)
+    /// checks it: torque on, velocity or wheel mode, within the Velocity
+    /// Limit read at Setup. A refusal sends nothing to anyone. Not atomic
+    /// across layouts on the wire; a fault shows on the next read.
     ///
     /// # Errors
     ///
-    /// As [`write_goal_positions`](Bus::write_goal_positions).
+    /// As [`sync_write`](Bus::sync_write).
+    pub fn write_goal_velocities<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        goals: &[Velocity],
+    ) -> Result<(), Error> {
+        self.sync_write(GoalVelocity, ids, goals)
+    }
+
+    /// Sends goal currents in amperes: `goals[i]` to target `i`, one Sync
+    /// Write per register layout (Goal Current, or Goal Torque on MX
+    /// Protocol 1).
+    ///
+    /// Each target is checked as
+    /// [`ActuatorRef::set_goal_current`](crate::ActuatorRef::set_goal_current)
+    /// checks it: torque on, current or current-based position mode, within
+    /// the Current Limit read at Setup. A refusal sends nothing to anyone.
+    ///
+    /// # Errors
+    ///
+    /// As [`sync_write`](Bus::sync_write).
+    pub fn write_goal_currents<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        goals: &[Current],
+    ) -> Result<(), Error> {
+        self.sync_write(GoalCurrent, ids, goals)
+    }
+
+    /// Writes field `F` to every target: `values[i]` to target `i`, one Sync
+    /// Write per register layout. Both protocols; any writable
+    /// [`field`](crate::field).
+    ///
+    /// Each target is checked as a single
+    /// [`ActuatorRef::write`](crate::ActuatorRef::write) checks it, all of
+    /// it before any byte, and a refusal sends nothing to anyone:
+    /// `bus.sync_write(GoalPosition, ids, &goals)` is
+    /// [`write_goal_positions`](Bus::write_goal_positions), and
+    /// `bus.sync_write(Raw(GoalPosition), ids, &ticks)` is
+    /// [`write_goal_positions_raw`](Bus::write_goal_positions_raw). Targets
+    /// whose models put the field at different addresses get one
+    /// instruction each, with each model's own scale. Not atomic across
+    /// layouts on the wire; a fault shows on the next read.
+    ///
+    /// # Errors
+    ///
+    /// Refused with nothing sent, naming the first failing target in
+    /// target order: the target errors of
+    /// [`write_goal_positions`](Bus::write_goal_positions), and every
+    /// refusal of [`ActuatorRef::write`](crate::ActuatorRef::write)
+    /// (`Unsupported`, `ActuatorIsOff`, the mode errors, `NoUnit`,
+    /// `NotFinite`, `DoesNotFit`, `OutOfLimits`). Otherwise a transport
+    /// error of a Sync Write.
     pub fn sync_write<F: WriteField, I: IntoIterator<Item = Id>>(
         &mut self,
         field: F,
@@ -380,6 +434,64 @@ assert_eq!(present, [512, 612]);
         self.read::<Raw<PresentPosition>, AnyProtocol, I>(ids, out)
     }
 
+    /// Reads field `F` of every target: `out[i]` is target `i`. Both
+    /// protocols; any readable [`field`](crate::field). Protocol 2 sends one
+    /// Sync Read per register layout, Protocol 1 one Read per target.
+    ///
+    /// Each value is converted with its own model's scale. The same rules
+    /// as [`read_positions`](Bus::read_positions): strict, `out` changes
+    /// only if every target answered, a hardware fault marks its target
+    /// `Faulted`, not retried.
+    #[cfg_attr(
+        all(feature = "mock", feature = "rx"),
+        doc = r#"
+Temperatures of two RX-28 on Protocol 1, one Read each:
+
+```
+use dxl_rs_v2::field::PresentTemperature;
+use dxl_rs_v2::{Bus, Config, Error, Id, MockTime, MockTransport, ModelNumber, P1, Temperature};
+
+# let time = MockTime::new();
+# let mut line = MockTransport::new(&time);
+# line.reply_to(1, &[0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC])
+#     .reply_to(2, &[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x1C, 0x00, 0xDE])
+#     .reply_to(3, &[0xFF, 0xFF, 0x01, 0x04, 0x00, 0x00, 0x00, 0xFA])
+#     .reply_to(4, &[0xFF, 0xFF, 0x01, 0x04, 0x00, 0xFF, 0x03, 0xF8])
+#     .reply_to(5, &[0xFF, 0xFF, 0x02, 0x02, 0x00, 0xFB])
+#     .reply_to(6, &[0xFF, 0xFF, 0x02, 0x04, 0x00, 0x1C, 0x00, 0xDD])
+#     .reply_to(7, &[0xFF, 0xFF, 0x02, 0x04, 0x00, 0x00, 0x00, 0xF9])
+#     .reply_to(8, &[0xFF, 0xFF, 0x02, 0x04, 0x00, 0xFF, 0x03, 0xF7])
+#     .reply_to(9, &[0xFF, 0xFF, 0x01, 0x03, 0x00, 0x20, 0xDB])
+#     .reply_to(10, &[0xFF, 0xFF, 0x02, 0x03, 0x00, 0x21, 0xD9]);
+let mut bus = Bus::<P1, _, _>::new(line, time.ticker(10), Config::new());
+bus.declare([(Id::new(1)?, ModelNumber(28)), (Id::new(2)?, ModelNumber(28))])?;
+let mut celsius = [Temperature::default(); 2];
+bus.read_field(PresentTemperature, bus.ids(), &mut celsius)?;
+assert_eq!(celsius.map(Temperature::celsius), [32.0, 33.0]);
+# Ok::<(), Error>(())
+```
+"#
+    )]
+    ///
+    /// # Errors
+    ///
+    /// As [`read_positions`](Bus::read_positions), and refused with nothing
+    /// sent for a target whose model lacks the register
+    /// ([`ValidationError::Unsupported`]) or gives it no unit in its mode
+    /// ([`ValidationError::NoUnit`]).
+    ///
+    /// [`ValidationError::Unsupported`]: crate::ValidationError::Unsupported
+    /// [`ValidationError::NoUnit`]: crate::ValidationError::NoUnit
+    pub fn read_field<F: ReadField, I: IntoIterator<Item = Id>>(
+        &mut self,
+        field: F,
+        ids: I,
+        out: &mut [F::Value],
+    ) -> Result<(), Error> {
+        let _ = field;
+        self.read::<F, AnyProtocol, I>(ids, out)
+    }
+
     /// Reads field `F` of `ids` into `out` through `R`.
     fn read<F: ReadField, R: ReadMany<P, T, C>, I: IntoIterator<Item = Id>>(
         &mut self,
@@ -395,9 +507,11 @@ assert_eq!(present, [512, 612]);
 /// The Protocol 2 explicit tier.
 impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
     /// Reads field `F` of every target with Sync Read: `out[i]` is target
-    /// `i`, one instruction per register layout. Protocol 2 only.
+    /// `i`, one instruction per register layout. Protocol 2 only; any
+    /// readable [`field`](crate::field).
     ///
-    /// The same rules as [`read_positions`](Bus::read_positions):
+    /// The same rules as [`read_field`](Bus::read_field) and
+    /// [`read_positions`](Bus::read_positions):
     /// `bus.sync_read(PresentPosition, ids, &mut out)` is `read_positions`,
     /// and `bus.sync_read(Raw(PresentPosition), ids, &mut ticks)` is
     /// `read_positions_raw`. Strict: `out` changes only if every target
@@ -419,7 +533,7 @@ impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
     ///
     /// # Errors
     ///
-    /// As [`read_positions`](Bus::read_positions).
+    /// As [`read_field`](Bus::read_field).
     pub fn sync_read<F: ReadField, I: IntoIterator<Item = Id>>(
         &mut self,
         field: F,

@@ -4,8 +4,8 @@
 use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
     HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasSpeedLimit, LimitRegisters, ModeSource, ModeValues, ModelData, Protocols,
-    RoleRegister, Roles,
+    HasPresentVoltage, HasSpeedLimit, LimitRegisters, ModeSource, ModeValues, Model, ModelData,
+    Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -71,6 +71,7 @@ impl Xl320 {
             d_gain: Some(<Self as HasDGain>::ROLE),
             ..Roles::NONE
         },
+        bulk_read_p1: false,
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -121,6 +122,10 @@ impl Describe for Xl320 {
 }
 
 impl Actuator for Xl320 {}
+
+impl Model for Xl320 {
+    const DATA: &'static ModelData = &Self::DATA;
+}
 
 /// Present Temperature: raw only, no unit in the table.
 impl HasPresentTemperature for Xl320 {

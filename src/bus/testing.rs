@@ -153,12 +153,27 @@ pub(crate) fn hold<P: Protocol, const N: usize>(
     bus.states[slot] = state;
 }
 
+/// Scripts `replies[i]` to answer the `i`-th packet `bus` sends from now
+/// on, for a sequence of unicast exchanges.
+pub(crate) fn script<P: Protocol, const N: usize>(
+    bus: &mut TestBus<'_, P, N>,
+    replies: &[Vec<u8>],
+) {
+    let next = bus.transport.flushes() + 1;
+    for (i, reply) in replies.iter().enumerate() {
+        bus.transport.reply_to(next + i, reply);
+    }
+}
+
 /// Instruction codes of both protocols.
 pub(crate) const PING: u8 = 0x01;
 pub(crate) const READ: u8 = 0x02;
 pub(crate) const WRITE: u8 = 0x03;
 pub(crate) const SYNC_READ: u8 = 0x82;
 pub(crate) const SYNC_WRITE: u8 = 0x83;
+pub(crate) const REBOOT: u8 = 0x08;
+pub(crate) const BULK_READ: u8 = 0x92;
+pub(crate) const BULK_WRITE: u8 = 0x93;
 /// The broadcast ID of both protocols.
 pub(crate) const BROADCAST: u8 = 0xFE;
 
@@ -255,6 +270,29 @@ pub(crate) fn p2_sync_read(addr: u16, size: u16, ids: &[u8]) -> Vec<u8> {
     p2_instruction(BROADCAST, SYNC_READ, &params)
 }
 
+/// A Protocol 2 Bulk Read, one `(id, addr, size)` per target.
+pub(crate) fn p2_bulk_read(entries: &[(u8, u16, u16)]) -> Vec<u8> {
+    let mut params = Vec::new();
+    for &(id, addr, size) in entries {
+        params.push(id);
+        params.extend_from_slice(&addr.to_le_bytes());
+        params.extend_from_slice(&size.to_le_bytes());
+    }
+    p2_instruction(BROADCAST, BULK_READ, &params)
+}
+
+/// A Protocol 2 Bulk Write, one `(id, addr, data)` per target.
+pub(crate) fn p2_bulk_write(entries: &[(u8, u16, &[u8])]) -> Vec<u8> {
+    let mut params = Vec::new();
+    for &(id, addr, data) in entries {
+        params.push(id);
+        params.extend_from_slice(&addr.to_le_bytes());
+        params.extend_from_slice(&u16::try_from(data.len()).unwrap().to_le_bytes());
+        params.extend_from_slice(data);
+    }
+    p2_instruction(BROADCAST, BULK_WRITE, &params)
+}
+
 /// A Protocol 1 packet: `FF FF ID LEN <head> params CHECKSUM`.
 fn p1_packet(id: u8, head: u8, params: &[u8]) -> Vec<u8> {
     let len = u8::try_from(params.len() + 2).unwrap();
@@ -300,6 +338,15 @@ pub(crate) fn p1_sync_write(addr: u8, size: u8, entries: &[(u8, &[u8])]) -> Vec<
     p1_instruction(BROADCAST, SYNC_WRITE, &params)
 }
 
+/// A Protocol 1 Bulk Read, one `(id, addr, len)` per target.
+pub(crate) fn p1_bulk_read(entries: &[(u8, u8, u8)]) -> Vec<u8> {
+    let mut params = std::vec![0x00];
+    for &(id, addr, len) in entries {
+        params.extend_from_slice(&[len, id, addr]);
+    }
+    p1_instruction(BROADCAST, BULK_READ, &params)
+}
+
 /// The concatenation of `packets`, for `assert_sent`.
 pub(crate) fn concat(packets: &[Vec<u8>]) -> Vec<u8> {
     packets.concat()
@@ -315,6 +362,12 @@ pub(crate) const AX12: u16 = 12;
 pub(crate) const RX28: u16 = 28;
 /// XM430-W350 firmware used by the fixtures.
 pub(crate) const XM430_FW: u8 = 52;
+/// MX-64 on Protocol 1.0 model number.
+pub(crate) const MX64_P1: u16 = 310;
+/// MX-64(2.0) model number.
+pub(crate) const MX64: u16 = 311;
+/// MX-64(2.0) firmware used by the fixtures.
+pub(crate) const MX64_FW: u8 = 45;
 
 /// Scripts an XM430-W350 at `id` on Protocol 2 answering Setup from flush
 /// `at`: ping, Min Position Limit (52), Max Position Limit (48), Operating
@@ -331,9 +384,15 @@ pub(crate) fn xm430_p2(
     xm430_p2_reads(line, at + 1, id, min, max, mode)
 }
 
+/// The Velocity Limit(44) the XM430-W350 fixtures report: 200 × 0.229 rpm.
+pub(crate) const XM430_VELOCITY_LIMIT: u32 = 200;
+/// The Current Limit(38) the XM430-W350 fixtures report: 1000 × 2.69 mA.
+pub(crate) const XM430_CURRENT_LIMIT: u16 = 1000;
+
 /// Scripts the Setup reads of an XM430-W350 at `id` after its ping, from
-/// flush `at`: Min and Max Position Limit, Operating Mode. Returns the next
-/// free flush number.
+/// flush `at`: Min and Max Position Limit, Operating Mode, and in velocity
+/// mode (1) Velocity Limit, in current (0) and current-based position (5)
+/// mode Current Limit. Returns the next free flush number.
 pub(crate) fn xm430_p2_reads(
     line: &mut MockTransport<'_>,
     at: usize,
@@ -345,22 +404,79 @@ pub(crate) fn xm430_p2_reads(
     line.reply_to(at, &p2_status(id, 0, &min.to_le_bytes()))
         .reply_to(at + 1, &p2_status(id, 0, &max.to_le_bytes()))
         .reply_to(at + 2, &p2_status(id, 0, &[mode]));
-    at + 3
+    match mode {
+        1 => {
+            line.reply_to(
+                at + 3,
+                &p2_status(id, 0, &XM430_VELOCITY_LIMIT.to_le_bytes()),
+            );
+            at + 4
+        }
+        0 | 5 => {
+            line.reply_to(
+                at + 3,
+                &p2_status(id, 0, &XM430_CURRENT_LIMIT.to_le_bytes()),
+            );
+            at + 4
+        }
+        _ => at + 3,
+    }
 }
 
-/// What the Setup reads of [`xm430_p2_reads`] send.
+/// What the Setup reads of [`xm430_p2_reads`] send in position mode.
 pub(crate) fn xm430_p2_reads_sent(id: u8) -> Vec<u8> {
-    concat(&[p2_read(id, 52, 4), p2_read(id, 48, 4), p2_read(id, 11, 1)])
+    xm430_p2_reads_sent_in(id, 3)
 }
 
-/// What Setup of [`xm430_p2`] sends.
+/// What the Setup reads of [`xm430_p2_reads`] send in Operating Mode
+/// `mode`.
+pub(crate) fn xm430_p2_reads_sent_in(id: u8, mode: u8) -> Vec<u8> {
+    let mut sent = concat(&[p2_read(id, 52, 4), p2_read(id, 48, 4), p2_read(id, 11, 1)]);
+    match mode {
+        1 => sent.extend(p2_read(id, 44, 4)),
+        0 | 5 => sent.extend(p2_read(id, 38, 2)),
+        _ => {}
+    }
+    sent
+}
+
+/// What Setup of [`xm430_p2`] sends in position mode.
 pub(crate) fn xm430_p2_sent(id: u8) -> Vec<u8> {
-    concat(&[
-        p2_instruction(id, PING, &[]),
-        p2_read(id, 52, 4),
-        p2_read(id, 48, 4),
-        p2_read(id, 11, 1),
-    ])
+    let mut sent = p2_instruction(id, PING, &[]);
+    sent.extend(xm430_p2_reads_sent(id));
+    sent
+}
+
+/// Scripts an MX-64(2.0) at `id` on Protocol 2 answering Setup from flush
+/// `at`, as [`xm430_p2`] does: its control table has the same Setup
+/// registers (Min/Max Position Limit 52/48, Operating Mode 11, Velocity
+/// Limit 44, Current Limit 38). Returns the next free flush number.
+pub(crate) fn mx64_p2(
+    line: &mut MockTransport<'_>,
+    at: usize,
+    id: u8,
+    min: i32,
+    max: i32,
+    mode: u8,
+) -> usize {
+    line.reply_to(at, &p2_pong(id, MX64, MX64_FW));
+    xm430_p2_reads(line, at + 1, id, min, max, mode)
+}
+
+/// Scripts an MX-64 on Protocol 1.0 at `id` answering Setup from flush
+/// `at`: as [`angle_p1`], then Torque Ctrl Mode Enable(70) = `switch`.
+/// Returns the next free flush number.
+pub(crate) fn mx64_p1(
+    line: &mut MockTransport<'_>,
+    at: usize,
+    id: u8,
+    cw: u16,
+    ccw: u16,
+    switch: u8,
+) -> usize {
+    let next = angle_p1(line, at, id, MX64_P1, cw, ccw);
+    line.reply_to(next, &p1_status(id, 0, &[switch]));
+    next + 1
 }
 
 /// Scripts an XL-320 at `id` on Protocol 2 answering Setup from flush `at`:
@@ -523,6 +639,58 @@ mod tests {
                 0xFF, 0xFF, 0xFE, 0x0E, 0x83, 0x1E, 0x04, 0x00, 0x10, 0x00, 0x50, 0x01, 0x01, 0x20,
                 0x02, 0x60, 0x03, 0x67
             ]
+        );
+    }
+
+    #[test]
+    fn p2_bulk_read_matches_the_e_manual() {
+        assert_eq!(
+            p2_bulk_read(&[(1, 144, 2), (2, 146, 1)]),
+            [
+                0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x0D, 0x00, 0x92, 0x01, 0x90, 0x00, 0x02, 0x00, 0x02,
+                0x92, 0x00, 0x01, 0x00, 0x1A, 0x05
+            ]
+        );
+    }
+
+    #[test]
+    fn p2_bulk_write_matches_the_e_manual() {
+        assert_eq!(
+            p2_bulk_write(&[(1, 32, &160u16.to_le_bytes()), (2, 31, &[80])]),
+            [
+                0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x10, 0x00, 0x93, 0x01, 0x20, 0x00, 0x02, 0x00, 0xA0,
+                0x00, 0x02, 0x1F, 0x00, 0x01, 0x00, 0x50, 0xB7, 0x68
+            ]
+        );
+    }
+
+    #[test]
+    fn p2_reboot_matches_the_e_manual() {
+        assert_eq!(
+            p2_instruction(1, REBOOT, &[]),
+            [0xFF, 0xFF, 0xFD, 0x00, 0x01, 0x03, 0x00, 0x08, 0x2F, 0x4E]
+        );
+    }
+
+    #[test]
+    fn p1_bulk_read_matches_the_e_manual() {
+        assert_eq!(
+            p1_bulk_read(&[(1, 30, 2), (2, 36, 2)]),
+            [
+                0xFF, 0xFF, 0xFE, 0x09, 0x92, 0x00, 0x02, 0x01, 0x1E, 0x02, 0x02, 0x24, 0x1D
+            ]
+        );
+        assert_eq!(
+            p1_status(1, 0, &[0x00, 0x80]),
+            [0xFF, 0xFF, 0x01, 0x04, 0x00, 0x00, 0x80, 0x7A]
+        );
+    }
+
+    #[test]
+    fn p1_read_matches_the_e_manual() {
+        assert_eq!(
+            p1_read(1, 43, 1),
+            [0xFF, 0xFF, 0x01, 0x04, 0x02, 0x2B, 0x01, 0xCC]
         );
     }
 

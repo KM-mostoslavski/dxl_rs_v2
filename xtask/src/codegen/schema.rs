@@ -2,7 +2,8 @@
 //! tables, as serde types, and how to read them.
 //!
 //! Unknown fields are ignored, so metadata the tables module adds (legacy
-//! `tables`, `instructions`, ...) needs no codegen change. The FR-9 fields
+//! `tables`, ...) needs no codegen change. `instructions` is read for the
+//! Protocol 1 Bulk Read capability (specs/011-bus-fr9). The FR-9 fields
 //! (`unit_source`, `unit_info`, `torque_control_mode`, per-mode
 //! `operating_modes` lists, row `range`) are read; `unit_info` counts only
 //! in a table with `unit_source` (specs/009-tables-fr9).
@@ -95,6 +96,10 @@ pub(crate) struct ControlTable {
     pub(crate) source: Source,
     /// The protocols the e-Manual serves this layout on.
     pub(crate) protocols: Vec<ProtocolTag>,
+    /// The instructions the e-Manual lists for the model, per protocol;
+    /// empty in a table that does not record them.
+    #[serde(default)]
+    pub(crate) instructions: Vec<InstructionList>,
     /// Whether the FR-9 data (`unit_info`, `torque_control_mode`, per-mode
     /// lists, row ranges) was checked against the e-Manual; absent in a
     /// table that has none of it.
@@ -146,6 +151,74 @@ pub(crate) struct UnitEntry {
     /// The first firmware with the register.
     #[serde(default)]
     pub(crate) from_fw: Option<u8>,
+}
+
+/// One `instructions` entry: the instructions a model supports on one
+/// protocol, from `from_fw` on.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct InstructionList {
+    /// The protocol the list is for.
+    pub(crate) protocol: ProtocolTag,
+    /// The e-Manual page the list comes from; docs only.
+    #[allow(
+        dead_code,
+        reason = "parsed to check its shape; codegen does not use it"
+    )]
+    pub(crate) source: String,
+    /// The instructions.
+    pub(crate) list: Vec<Instruction>,
+    /// The first firmware the list applies to; absent = all.
+    #[serde(default)]
+    pub(crate) from_fw: Option<u8>,
+}
+
+impl InstructionList {
+    /// Whether the list names `instruction` on `protocol` for every
+    /// firmware.
+    pub(crate) fn always_has(&self, protocol: ProtocolTag, instruction: Instruction) -> bool {
+        self.protocol == protocol
+            && self.from_fw.unwrap_or(0) == 0
+            && self.list.contains(&instruction)
+    }
+}
+
+/// An instruction name, as `control_tables/check_tables.py` lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[allow(
+    dead_code,
+    reason = "parsed to check the table; codegen reads only BulkRead"
+)]
+pub(crate) enum Instruction {
+    /// `Ping`.
+    Ping,
+    /// `Read`.
+    Read,
+    /// `Write`.
+    Write,
+    /// `RegWrite`.
+    RegWrite,
+    /// `Action`.
+    Action,
+    /// `FactoryReset`.
+    FactoryReset,
+    /// `Reboot`.
+    Reboot,
+    /// `Clear`.
+    Clear,
+    /// `ControlTableBackup`.
+    ControlTableBackup,
+    /// `SyncRead`.
+    SyncRead,
+    /// `SyncWrite`.
+    SyncWrite,
+    /// `FastSyncRead`.
+    FastSyncRead,
+    /// `BulkRead`.
+    BulkRead,
+    /// `BulkWrite`.
+    BulkWrite,
+    /// `FastBulkRead`.
+    FastBulkRead,
 }
 
 /// A raw range, both ends included.
@@ -482,11 +555,17 @@ mod tests {
     }
 
     #[test]
-    fn ignores_instructions_and_reads_legacy_unit_info() {
+    fn reads_instructions_and_legacy_unit_info() {
         let head = r#"source: Unverified, protocols: [P1],
-            instructions: [(protocol: P1, source: "x", list: [Ping, Read])],
+            instructions: [(protocol: P1, source: "x", list: [Ping, Read]),
+                (protocol: P1, source: "x", list: [BulkRead], from_fw: 40)],
             unit_info: [{ data_name: "Position", value: 0.29, unit: "deg", sign_type: "unsigned" }],"#;
         let t = table(head, ROWS).unwrap();
+        assert!(t.instructions[0].always_has(ProtocolTag::P1, Instruction::Read));
+        assert!(!t.instructions[0].always_has(ProtocolTag::P2, Instruction::Read));
+        assert!(!t.instructions[0].always_has(ProtocolTag::P1, Instruction::BulkRead));
+        assert!(!t.instructions[1].always_has(ProtocolTag::P1, Instruction::BulkRead));
+        assert_eq!(t.instructions[1].from_fw, Some(40));
         assert_eq!(t.unit_source, None);
         assert_eq!(t.unit_info[0].sign_type, "unsigned");
         assert_eq!(t.unit_info[0].modes, None);

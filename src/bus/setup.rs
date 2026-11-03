@@ -7,6 +7,7 @@ use crate::models::{self, ActuatorKind};
 use crate::protocol::{Clock, Pong, Protocol};
 use crate::{Id, Transport};
 
+use super::field;
 use super::slots::Slots;
 use super::wire::Wire;
 
@@ -176,7 +177,10 @@ fn read_model_number<P: Protocol, T: Transport, C: Clock>(
 /// 4. The limit mode: the mode register's value through the model's own
 ///    lists, or the angle limits where the model has no mode register (on
 ///    MX-64 Protocol 1, unless its torque control switch is on).
-/// 5. The slot, `Off`. No torque write.
+/// 5. The EEPROM bound of the goal that mode uses, where the model's table
+///    records one: Velocity Limit in velocity mode, Current Limit in
+///    current and current-based position mode (FR-9.3).
+/// 6. The slot, `Off`. No torque write.
 fn init_one<P, T, C, S>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
@@ -212,7 +216,14 @@ where
         None => LimitMode::from_angle_limits(limits),
     };
     kind.cache_mut().record_mode(mode);
-    slots.push(kind)?;
+    let bound = match field::bounded_goal(mode)
+        .and_then(|role| data.role(role))
+        .and_then(|goal| goal.bounded_by())
+    {
+        Some(reg) => Some(wire.read_value(id, reg)?.cast_unsigned()),
+        None => None,
+    };
+    slots.push(kind, bound)?;
     Ok(())
 }
 

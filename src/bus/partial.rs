@@ -2,15 +2,13 @@
 //! research R-8 step 6, SRS FR-4.7 as decided by the architect on
 //! 2026-10-28).
 
-use crate::actuator::Describe;
 use crate::error::Error;
 use crate::protocol::{Clock, Protocol};
 use crate::units::Position;
 use crate::{Id, Transport};
 
 use super::Bus;
-use super::field::sealed::Value;
-use super::field::{PresentPosition, Raw, ReadField};
+use super::field::{self, PresentPosition, Raw, ReadField};
 use super::group::{self, OnFailedGroup, Stage};
 use super::slots::Slots;
 use super::wire::{AnyProtocol, Wire};
@@ -33,7 +31,7 @@ where
     F: ReadField,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states) = slots.split_mut();
+    let (kinds, states, _) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_out(stages.len(), out.len())?;
     group::stage_reads::<F>(kinds, stages)?;
@@ -45,7 +43,7 @@ where
         OnFailedGroup::Share,
         |target, kind, _, result| {
             if let Some(slot) = out.get_mut(target) {
-                *slot = result.map(|raw| F::Value::from_raw(raw, &kind.data().scale));
+                *slot = result.and_then(|raw| field::decode::<F>(kind, raw));
             }
         },
     )
@@ -152,6 +150,32 @@ assert_eq!(out[1], Err(TransportError::Timeout { id: Some(b) }.into()));
         out: &mut [Result<i32, Error>],
     ) -> Result<(), Error> {
         self.read_partial::<Raw<PresentPosition>, I>(ids, out)
+    }
+
+    /// Reads field `F` of every target, with one result per target:
+    /// `out[i]` is target `i`'s value or its own error. Both protocols; any
+    /// readable [`field`](crate::field). Same rules as
+    /// [`read_positions_partial`](Bus::read_positions_partial), each value
+    /// converted with its own model's scale.
+    ///
+    /// # Errors
+    ///
+    /// Only refusals, with nothing sent and `out` unchanged: those of
+    /// [`read_positions_partial`](Bus::read_positions_partial), and
+    /// [`ValidationError::Unsupported`] or [`ValidationError::NoUnit`] for
+    /// a target whose model lacks the register or gives it no unit in its
+    /// mode.
+    ///
+    /// [`ValidationError::Unsupported`]: crate::ValidationError::Unsupported
+    /// [`ValidationError::NoUnit`]: crate::ValidationError::NoUnit
+    pub fn read_field_partial<F: ReadField, I: IntoIterator<Item = Id>>(
+        &mut self,
+        field: F,
+        ids: I,
+        out: &mut [Result<F::Value, Error>],
+    ) -> Result<(), Error> {
+        let _ = field;
+        self.read_partial::<F, I>(ids, out)
     }
 
     /// Reads field `F` of `ids` into `out`, one result per target.
@@ -384,7 +408,7 @@ mod tests {
             let mut stages = [Stage::EMPTY; 32];
             let mut got: [Option<Result<i32, Error>>; 3] = [None; 3];
             let (mut wire, mut slots) = bus.split();
-            let (kinds, states) = slots.split_mut();
+            let (kinds, states, _) = slots.split_mut();
             let staged = group::resolve(kinds, [id(1), id(2), id(3)], &mut stages).unwrap();
             group::stage_reads::<Raw<PresentPosition>>(kinds, staged).unwrap();
             group::read_each::<P2, _, _, Raw<PresentPosition>, XlLayoutBreaks, _>(

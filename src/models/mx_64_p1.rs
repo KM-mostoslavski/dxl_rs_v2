@@ -5,7 +5,7 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMoving,
     HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
     HasRealtimeTick, HasSpeedLimit, HasTorqueCtrlModeEnable, LimitMode, LimitRegisters, ModeScale,
-    ModeSet, ModeSource, ModelData, Protocols, RoleRegister, Roles,
+    ModeSet, ModeSource, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -66,6 +66,7 @@ impl Mx64P1 {
             torque_ctrl_mode_enable: Some(<Self as HasTorqueCtrlModeEnable>::ROLE),
             ..Roles::NONE
         },
+        bulk_read_p1: true,
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -123,6 +124,10 @@ impl Describe for Mx64P1 {
 }
 
 impl Actuator for Mx64P1 {}
+
+impl Model for Mx64P1 {
+    const DATA: &'static ModelData = &Self::DATA;
+}
 
 /// Present Temperature: 1 °C per raw step in every mode.
 impl HasPresentTemperature for Mx64P1 {

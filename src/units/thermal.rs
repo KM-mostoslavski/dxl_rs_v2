@@ -10,7 +10,10 @@ use super::scale::RegisterScale;
 ///     let _ = scale.temperature_to_raw(t);
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+///
+/// [`Default`] is zero, to fill a caller-owned buffer before a
+/// multi-actuator read.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
 pub struct Temperature(f32);
 
 impl Temperature {

@@ -317,6 +317,10 @@ pub use crate::actuator::{
     HasTorqueCtrlModeEnable, RoleRegister,
 };
 
+/// The model types, for the typed handle of
+/// [`ActuatorRef::model`](crate::ActuatorRef::model).
+pub use crate::actuator::Model;
+
 #[cfg(test)]
 mod tests;
 

@@ -128,6 +128,8 @@ impl fmt::Display for FitsIn {
 ///         | V::NotVelocityMode { .. }
 ///         | V::NotCurrentMode { .. }
 ///         | V::Unsupported { .. }
+///         | V::NoUnit { .. }
+///         | V::UnsupportedInstruction { .. }
 ///         | V::InvalidSlopeStep(_) => false,
 ///     }
 /// }
@@ -302,6 +304,34 @@ pub enum ValidationError {
     /// A compliance slope step outside the e-Manual's `1..=7`.
     #[error("compliance slope step {0} is outside 1..=7")]
     InvalidSlopeStep(u8),
+
+    /// The register has no typed form in the actuator's operating mode:
+    /// its control table gives no unit for that mode, or one that is not
+    /// the value's quantity (AX-12A wheel-mode Moving Speed is a share of
+    /// output in %, not a velocity). The raw form still works.
+    #[error(
+        "{register} of actuator {} has no typed form in {mode:?} mode; use its raw form",
+        id.get()
+    )]
+    NoUnit {
+        /// The actuator the call was for.
+        id: Id,
+        /// The register's name, as the control table writes it.
+        register: &'static str,
+        /// The mode recorded at Setup.
+        mode: LimitMode,
+    },
+
+    /// The actuator's control table does not list the instruction for the
+    /// bus protocol (AX and RX have no Protocol 1 Bulk Read), so nothing is
+    /// sent.
+    #[error("actuator {} does not support the {instruction} instruction", id.get())]
+    UnsupportedInstruction {
+        /// The actuator the call was for.
+        id: Id,
+        /// The instruction's e-Manual name, e.g. `"Bulk Read"`.
+        instruction: &'static str,
+    },
 }
 
 /// The bus could not be set up as declared: an actuator is missing, unknown
@@ -789,6 +819,55 @@ mod tests {
                 "actuator 4 is not in a position mode; it ignores goal positions",
             ),
         ]
+    }
+
+    #[test]
+    fn fr9_validation_messages() {
+        use crate::actuator::LimitMode;
+        for (err, msg) in [
+            (
+                ValidationError::NotVelocityMode {
+                    id: id(2),
+                    mode: LimitMode::Bounded,
+                },
+                "actuator 2 is in Bounded mode; only velocity or wheel mode uses a goal velocity",
+            ),
+            (
+                ValidationError::NotCurrentMode {
+                    id: id(2),
+                    mode: LimitMode::Velocity,
+                },
+                "actuator 2 is in Velocity mode; only current or current-based position mode uses a goal current",
+            ),
+            (
+                ValidationError::Unsupported {
+                    id: id(1),
+                    register: "Present Current",
+                },
+                "actuator 1 has no Present Current register",
+            ),
+            (
+                ValidationError::NoUnit {
+                    id: id(1),
+                    register: "Moving Speed",
+                    mode: LimitMode::Wheel,
+                },
+                "Moving Speed of actuator 1 has no typed form in Wheel mode; use its raw form",
+            ),
+            (
+                ValidationError::UnsupportedInstruction {
+                    id: id(3),
+                    instruction: "Bulk Read",
+                },
+                "actuator 3 does not support the Bulk Read instruction",
+            ),
+            (
+                ValidationError::InvalidSlopeStep(9),
+                "compliance slope step 9 is outside 1..=7",
+            ),
+        ] {
+            assert_eq!(Error::from(err).to_string(), msg);
+        }
     }
 
     #[test]

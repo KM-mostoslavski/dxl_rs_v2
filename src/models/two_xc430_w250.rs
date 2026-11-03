@@ -5,7 +5,7 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
     HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
     HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitRegisters, ModeSource, ModeValues,
-    ModelData, Protocols, RoleRegister, Roles,
+    Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -69,6 +69,7 @@ impl TwoXc430W250 {
             d_gain: Some(<Self as HasDGain>::ROLE),
             ..Roles::NONE
         },
+        bulk_read_p1: false,
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -139,6 +140,10 @@ impl Describe for TwoXc430W250 {
 }
 
 impl Actuator for TwoXc430W250 {}
+
+impl Model for TwoXc430W250 {
+    const DATA: &'static ModelData = &Self::DATA;
+}
 
 /// Present Temperature: raw only, no unit in the table.
 impl HasPresentTemperature for TwoXc430W250 {

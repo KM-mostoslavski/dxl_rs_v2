@@ -8,8 +8,8 @@ use super::Diagnostic;
 use super::fr9::{self, GenRole};
 use super::names::{const_ident, is_reserved_module, module_ident, type_ident};
 use super::schema::{
-    Access, Area, ControlTable, ModelEntry, ModelMap, OperatingModes, ProtocolTag, Row, Source,
-    TableRef, TypeInfo,
+    Access, Area, ControlTable, Instruction, ModelEntry, ModelMap, OperatingModes, ProtocolTag,
+    Row, Source, TableRef, TypeInfo,
 };
 
 /// The family names, each a Cargo feature (FR-005, plus `rx` since T1).
@@ -65,6 +65,9 @@ pub(crate) struct GenModel {
     pub(crate) roles: Roles,
     /// The FR-9 typed registers the table has, in `fr9::ROLES` order.
     pub(crate) typed: Vec<GenRole>,
+    /// Whether the table's `instructions` list Bulk Read on Protocol 1 for
+    /// every firmware.
+    pub(crate) bulk_read_p1: bool,
 }
 
 /// The rows that serve the common operations, matched by exact e-Manual
@@ -340,6 +343,10 @@ pub(crate) fn resolve(
             registers,
             roles,
             typed,
+            bulk_read_p1: table
+                .instructions
+                .iter()
+                .any(|list| list.always_has(ProtocolTag::P1, Instruction::BulkRead)),
         });
     }
     out.resolved.models.sort_by(|a, b| {

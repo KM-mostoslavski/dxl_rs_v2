@@ -5,7 +5,7 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
     HasLedBlue, HasLedGreen, HasLedRed, HasMoving, HasPGain, HasPresentCurrent,
     HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
-    LimitRegisters, ModeSource, ModeValues, ModelData, Protocols, RoleRegister, Roles,
+    LimitRegisters, ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -75,6 +75,7 @@ impl H4220S300Ra {
             d_gain: Some(<Self as HasDGain>::ROLE),
             ..Roles::NONE
         },
+        bulk_read_p1: false,
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -157,6 +158,10 @@ impl Describe for H4220S300Ra {
 }
 
 impl Actuator for H4220S300Ra {}
+
+impl Model for H4220S300Ra {
+    const DATA: &'static ModelData = &Self::DATA;
+}
 
 /// Present Temperature: raw only, no unit in the table.
 impl HasPresentTemperature for H4220S300Ra {

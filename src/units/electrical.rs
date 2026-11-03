@@ -32,7 +32,10 @@ impl Current {
 ///     let _ = scale.voltage_to_raw(v);
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+///
+/// [`Default`] is zero, to fill a caller-owned buffer before a
+/// multi-actuator read.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
 pub struct Voltage(f32);
 
 impl Voltage {

@@ -10,25 +10,29 @@ use crate::actuator::{Actuator, ModelNumber, TorqueState};
 use crate::error::{Error, SetupError};
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, P2, Protocol, StdClock};
-use crate::units::Position;
+use crate::units::{Current, Position, Velocity};
 use crate::{Id, Transport};
 
 #[cfg(doc)]
 use super::Bus;
-use super::field::{GoalPosition, PresentPosition, Raw, ReadField, WriteField};
+use super::bulk::{self, ReadParts, WriteParts};
+use super::field::{
+    GoalCurrent, GoalPosition, GoalVelocity, PresentPosition, Raw, ReadField, WriteField,
+};
 use super::group::Stage;
-use super::slots::{Slots, find};
+use super::slots::{Bound, Held, Slots, find};
 use super::wire::{AnyProtocol, ReadMany, SyncRead, Wire};
 use super::{ActuatorRef, Config, IdSet, multi, setup};
 
 /// Every `Id` there is: the most a Setup can find.
 const ALL_IDS: usize = Id::MAX as usize + 1;
 
-/// The slots of a `DynBus`: its actuator and torque-state Vecs, grown by
-/// Setup.
+/// The slots of a `DynBus`: its actuator, torque-state and goal-bound
+/// Vecs, grown by Setup.
 struct DynSlots<'a> {
     actuators: &'a mut Vec<ActuatorKind>,
     states: &'a mut Vec<TorqueState>,
+    bounds: &'a mut Vec<Bound>,
 }
 
 impl Slots for DynSlots<'_> {
@@ -36,18 +40,20 @@ impl Slots for DynSlots<'_> {
         self.actuators
     }
 
-    fn split_mut(&mut self) -> (&mut [ActuatorKind], &mut [TorqueState]) {
-        (self.actuators, self.states)
+    fn split_mut(&mut self) -> Held<'_> {
+        (self.actuators, self.states, self.bounds)
     }
 
     fn clear(&mut self) {
         self.actuators.clear();
         self.states.clear();
+        self.bounds.clear();
     }
 
-    fn push(&mut self, kind: ActuatorKind) -> Result<(), SetupError> {
+    fn push(&mut self, kind: ActuatorKind, bound: Bound) -> Result<(), SetupError> {
         self.actuators.push(kind);
         self.states.push(TorqueState::Off);
+        self.bounds.push(bound);
         Ok(())
     }
 }
@@ -88,6 +94,9 @@ pub struct DynBus<P: Protocol, T: Transport, C = StdClock> {
     actuators: Vec<ActuatorKind>,
     /// `states[i]` belongs to `actuators[i]`; same length.
     states: Vec<TorqueState>,
+    /// `bounds[i]` is the goal bound Setup read for `actuators[i]`; same
+    /// length.
+    bounds: Vec<Bound>,
     /// Staging for multi-actuator calls; as long as `actuators` after Setup.
     stages: Vec<Stage>,
     protocol: PhantomData<P>,
@@ -102,6 +111,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
             config,
             actuators: Vec::new(),
             states: Vec::new(),
+            bounds: Vec::new(),
             stages: Vec::new(),
             protocol: PhantomData,
         }
@@ -166,8 +176,9 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
         let index = find(&self.actuators, id)?;
         let kind = self.actuators.get_mut(index)?;
         let state = self.states.get_mut(index)?;
+        let bound = self.bounds.get(index).copied().flatten();
         let wire = Wire::new(&mut self.transport, &mut self.clock, &self.config);
-        Some(ActuatorRef::new(kind, state, wire))
+        Some(ActuatorRef::new(kind, state, bound, wire))
     }
 
     /// The torque state of the actuator with `id`; `None` for an `Id` the
@@ -277,6 +288,61 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
         self.read::<Raw<PresentPosition>, AnyProtocol, I>(ids, out)
     }
 
+    /// Sends goal velocities in rad/s, as [`Bus::write_goal_velocities`]
+    /// does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::write_goal_velocities`].
+    pub fn write_goal_velocities<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        goals: &[Velocity],
+    ) -> Result<(), Error> {
+        self.sync_write(GoalVelocity, ids, goals)
+    }
+
+    /// Sends goal currents in amperes, as [`Bus::write_goal_currents`]
+    /// does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::write_goal_currents`].
+    pub fn write_goal_currents<I: IntoIterator<Item = Id>>(
+        &mut self,
+        ids: I,
+        goals: &[Current],
+    ) -> Result<(), Error> {
+        self.sync_write(GoalCurrent, ids, goals)
+    }
+
+    /// Reads field `F` of every target, as [`Bus::read_field`] does. Both
+    /// protocols.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::read_field`].
+    pub fn read_field<F: ReadField, I: IntoIterator<Item = Id>>(
+        &mut self,
+        field: F,
+        ids: I,
+        out: &mut [F::Value],
+    ) -> Result<(), Error> {
+        let _ = field;
+        self.read::<F, AnyProtocol, I>(ids, out)
+    }
+
+    /// Reads every part with one Bulk Read, as [`Bus::bulk_read`] does.
+    /// Protocol 2, and Protocol 1 on MX firmware.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::bulk_read`].
+    pub fn bulk_read<B: ReadParts>(&mut self, mut parts: B) -> Result<(), Error> {
+        let (mut wire, mut slots, stages) = self.split_staged();
+        bulk::bulk_read(&mut wire, &mut slots, stages, &mut parts)
+    }
+
     /// Reads field `F` of `ids` into `out` through `R`.
     fn read<F: ReadField, R: ReadMany<P, T, C>, I: IntoIterator<Item = Id>>(
         &mut self,
@@ -295,6 +361,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
             DynSlots {
                 actuators: &mut self.actuators,
                 states: &mut self.states,
+                bounds: &mut self.bounds,
             },
         )
     }
@@ -306,6 +373,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
             DynSlots {
                 actuators: &mut self.actuators,
                 states: &mut self.states,
+                bounds: &mut self.bounds,
             },
             &mut self.stages,
         )
@@ -328,6 +396,17 @@ impl<T: Transport, C: Clock> DynBus<P2, T, C> {
     ) -> Result<(), Error> {
         let _ = field;
         self.read::<F, SyncRead, I>(ids, out)
+    }
+
+    /// Writes every part with one Bulk Write, as [`Bus::bulk_write`] does.
+    /// Protocol 2 only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::bulk_write`].
+    pub fn bulk_write<B: WriteParts>(&mut self, mut parts: B) -> Result<(), Error> {
+        let (mut wire, mut slots, stages) = self.split_staged();
+        bulk::bulk_write(&mut wire, &mut slots, stages, &mut parts)
     }
 }
 
@@ -363,6 +442,22 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
         out: &mut [Result<i32, Error>],
     ) -> Result<(), Error> {
         self.read_partial::<Raw<PresentPosition>, I>(ids, out)
+    }
+
+    /// Reads field `F` of every target with one result per target, as
+    /// [`Bus::read_field_partial`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::read_field_partial`]: only refusals, with nothing sent.
+    pub fn read_field_partial<F: ReadField, I: IntoIterator<Item = Id>>(
+        &mut self,
+        field: F,
+        ids: I,
+        out: &mut [Result<F::Value, Error>],
+    ) -> Result<(), Error> {
+        let _ = field;
+        self.read_partial::<F, I>(ids, out)
     }
 
     /// Reads field `F` of `ids` into `out`, one result per target.

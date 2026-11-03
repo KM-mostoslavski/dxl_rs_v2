@@ -4,7 +4,11 @@
 //! [`Bus::declare`] sets it up from a list; [`Bus::actuator`] lends a
 //! short-lived [`ActuatorRef`] to command one actuator, and
 //! [`Bus::enable_torque`], [`Bus::write_goal_positions`] and
-//! [`Bus::sync_write`] command many in one call.
+//! [`Bus::sync_write`] command many in one call. Every register of FR-9
+//! (temperature, voltage, velocity, load, current, LED, gains, ...) is a
+//! [`field`]: read and written on one actuator, on many with
+//! [`Bus::read_field`] and [`Bus::sync_write`], and several at once with
+//! [`Bus::bulk_read`] and [`Bus::bulk_write`] ([`bulk`]).
 //!
 //! Rules that hold for every call:
 //!
@@ -13,12 +17,20 @@
 //!   sent.
 //! - Goals follow the limits and operating mode read at Setup: position
 //!   mode applies the EEPROM limits, extended position modes only the
-//!   register size, and other modes refuse goals.
+//!   register size, and other modes refuse goal positions. Goal velocities
+//!   need velocity or wheel mode and stay within the Velocity Limit, goal
+//!   currents need a current mode and stay within the Current Limit, both
+//!   read at Setup. LED, speed limit and gains move nothing and are
+//!   written with torque off too.
+//! - A model whose table lacks a register refuses a typed call for it with
+//!   [`ValidationError::Unsupported`](crate::ValidationError::Unsupported)
+//!   before any byte; on the Tier 2 handle ([`ModelRef`]) the call does not
+//!   compile.
 //! - A reply reporting a hardware fault returns [`Error::Status`] and marks
 //!   that actuator [`Faulted`](crate::TorqueState::Faulted) on the same call.
 //!   Only [`ActuatorRef::clear_fault`] clears it, after asking the actuator.
-//!   An X-series actuator needs a reboot outside this crate before its fault
-//!   clears.
+//!   An X-series actuator needs a reboot before its fault clears: on
+//!   Protocol 2, [`ActuatorRef::reboot`].
 //! - Broadcast writes get no reply, so a loop that only writes sees a fault
 //!   on its next read.
 //! - A multi-actuator call validates every target before any byte, so a
@@ -65,11 +77,15 @@ assert!((present.radians() - 0.5).abs() < 0.01);
 )]
 
 mod actuator_ref;
+pub mod bulk;
 #[cfg(feature = "std")]
 mod dyn_bus;
 pub mod field;
+#[cfg(test)]
+mod fr9_tests;
 mod group;
 mod id_set;
+mod model_ref;
 mod multi;
 mod observe;
 #[cfg(feature = "partial-reads")]
@@ -97,10 +113,11 @@ pub use actuator_ref::ActuatorRef;
 #[cfg(feature = "std")]
 pub use dyn_bus::DynBus;
 pub use id_set::{IdSet, IdSetIter};
+pub use model_ref::ModelRef;
 #[cfg(feature = "std")]
 pub use serial::SerialBus;
 
-use slots::{FixedSlots, Slots, find};
+use slots::{Bound, FixedSlots, Slots, find};
 use wire::Wire;
 
 /// No clock. Implements no `Clock`, so a no_std bus must name its clock.
@@ -206,16 +223,17 @@ impl Default for Config {
 ///
 /// Nothing is sent until Setup ([`declare`](Bus::declare) or
 /// [`autoscan`](Bus::autoscan)). Setup reads each
-/// actuator's model, firmware variant, EEPROM limits and operating mode,
-/// and holds it with torque off. Each actuator is then reached through a
+/// actuator's model, firmware variant, EEPROM limits, operating mode and
+/// the EEPROM bound of the goal that mode uses, and holds it with torque
+/// off. Each actuator is then reached through a
 /// short-lived [`ActuatorRef`] from [`actuator`](Bus::actuator).
 ///
 /// A reply reporting a hardware fault returns [`Error::Status`] and marks
 /// that actuator [`Faulted`](TorqueState::Faulted) on the same call; only
 /// [`ActuatorRef::clear_fault`] clears it, after asking the actuator. An
-/// X-series actuator must be rebooted (outside this crate) before its fault
-/// clears. Broadcast writes get no reply, so a loop that only writes sees a
-/// fault on its next read.
+/// X-series actuator must be rebooted before its fault clears
+/// ([`ActuatorRef::reboot`] on Protocol 2). Broadcast writes get no reply,
+/// so a loop that only writes sees a fault on its next read.
 ///
 /// The clock bounds every wait for a reply. Any `FnMut() -> u64` closure
 /// returning microseconds is a [`Clock`]. With the `std` feature the clock
@@ -292,6 +310,9 @@ pub struct Bus<P: Protocol, T: Transport, C = DefaultClock, const N: usize = 32>
     /// `states[i]` belongs to `actuators[i]`. Entries at `i >= len` are
     /// unused and kept `Off`.
     states: [TorqueState; N],
+    /// `bounds[i]` is the goal bound Setup read for `actuators[i]`.
+    /// Entries at `i >= len` are unused and kept `None`.
+    bounds: [Bound; N],
     protocol: PhantomData<P>,
 }
 
@@ -307,6 +328,7 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
             config,
             actuators: heapless::Vec::new(),
             states: [TorqueState::Off; N],
+            bounds: [None; N],
             protocol: PhantomData,
         }
     }
@@ -329,8 +351,12 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Protocol 1), reads the firmware where the model's table depends on
     /// it, the EEPROM position limits and the operating mode (none on
     /// models whose mode follows from the angle limits; on MX-64 Protocol 1
-    /// the Torque Ctrl Mode Enable(70) switch, after the limits), and holds
-    /// it with torque `Off`. Nothing is written. It never sweeps the bus.
+    /// the Torque Ctrl Mode Enable(70) switch, after the limits), then, in
+    /// velocity mode, Velocity Limit and, in current and current-based
+    /// position mode, Current Limit, where the model's table bounds the
+    /// goal with it (FR-9.3). It holds the actuator with torque `Off`.
+    /// Nothing is written. It never sweeps the bus. No other register is
+    /// read after Setup unless a call asks for it (FR-9.6).
     ///
     /// # Errors
     ///
@@ -427,10 +453,11 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     pub fn actuator(&mut self, id: Id) -> Option<ActuatorRef<'_, P, T, C>> {
         let (wire, slots) = self.split();
         let index = find(slots.kinds(), id)?;
-        let (kinds, states) = slots.into_split();
+        let (kinds, states, bounds) = slots.into_split();
         let kind = kinds.get_mut(index)?;
         let state = states.get_mut(index)?;
-        Some(ActuatorRef::new(kind, state, wire))
+        let bound = bounds.get(index).copied().flatten();
+        Some(ActuatorRef::new(kind, state, bound, wire))
     }
 
     /// The torque state of the actuator with `id`; `None` for an `Id` the
@@ -451,7 +478,7 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     fn split(&mut self) -> (Wire<'_, P, T, C>, FixedSlots<'_, N>) {
         (
             Wire::new(&mut self.transport, &mut self.clock, &self.config),
-            FixedSlots::new(&mut self.actuators, &mut self.states),
+            FixedSlots::new(&mut self.actuators, &mut self.states, &mut self.bounds),
         )
     }
 }

@@ -130,6 +130,23 @@ impl<'b, P: Protocol, T: Transport, C: Clock> Wire<'b, P, T, C> {
         P::read_many(&mut link, addr, u16::from(size), ids, scratch, on_reply)
     }
 
+    /// Reads each `(id, addr, size)` entry with one Bulk Read: `on_reply`
+    /// gets each ID's data or error, in entry order. Never retried; `Err`
+    /// only for an invalid request or a failing transport.
+    pub(crate) fn bulk_read<I, F>(
+        &mut self,
+        entries: I,
+        scratch: &mut [u8],
+        on_reply: F,
+    ) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, u16, u16)> + Clone,
+        F: FnMut(Id, Result<&[u8], Error>),
+    {
+        let mut link = self.link();
+        P::bulk_read(&mut link, entries, scratch, on_reply)
+    }
+
     /// A `Link` with the unicast timeout.
     fn link(&mut self) -> Link<'_, T, C> {
         Link {
@@ -161,6 +178,23 @@ impl<'b, P: Protocol, T: Transport, C: Clock> Wire<'b, P, T, C> {
 }
 
 impl<T: Transport, C: Clock> Wire<'_, P2, T, C> {
+    /// Writes each `(id, addr, data)` entry with one Bulk Write. No reply,
+    /// so never retried.
+    pub(crate) fn bulk_write<'d, I>(&mut self, entries: I) -> Result<(), Error>
+    where
+        I: Iterator<Item = (Id, u16, &'d [u8])> + Clone,
+    {
+        let mut link = self.link();
+        P2::bulk_write(&mut link, entries)
+    }
+
+    /// Reboots `id` and waits for its status. Never retried: a reply lost
+    /// after the actuator took the instruction would reboot it twice.
+    pub(crate) fn reboot(&mut self, id: Id) -> Result<(), Error> {
+        let mut link = self.link();
+        P2::reboot(&mut link, id)
+    }
+
     /// One Sync Read of `size` bytes at `addr` from every ID in `ids`, as
     /// [`read_many`](Wire::read_many) on Protocol 2. Never retried.
     pub(crate) fn sync_read<I, F>(
