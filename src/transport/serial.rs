@@ -214,6 +214,10 @@ mod pty_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "serialport sets the baud with the IOSSIOSPEED ioctl, which macOS ptys reject (ENOTTY)"
+    )]
     fn open_configures_8n1_without_flow_control() {
         let (_master, slave) = TTYPort::pair().unwrap();
         let path = slave.name().unwrap();
@@ -228,6 +232,10 @@ mod pty_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "serialport sets the baud with the IOSSIOSPEED ioctl, which macOS ptys reject (ENOTTY)"
+    )]
     fn open_busy_port_is_no_device() {
         let (_master, slave) = TTYPort::pair().unwrap();
         let path = slave.name().unwrap();

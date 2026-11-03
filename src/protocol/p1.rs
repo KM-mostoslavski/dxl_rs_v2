@@ -194,6 +194,11 @@ fn short_addr(addr: u16) -> Result<u8, Error> {
 
 /// Sends an instruction to `id` and parses its status packet into `out`,
 /// checking it carries exactly `out.len()` data bytes.
+///
+/// A packet from another ID is a late reply to an earlier instruction (its
+/// actuator answered after that exchange timed out, e.g. behind a USB
+/// adapter's latency timer). It is dropped and the wait goes on until the
+/// deadline, so it is never taken for this reply.
 fn unicast<T: Transport, C: Clock, I>(
     link: &mut Link<'_, T, C>,
     id: Id,
@@ -207,7 +212,12 @@ where
     drain(link)?;
     send(link.transport, id.get(), instruction, params)?;
     let deadline = link.deadline();
-    let status = receive(link, &mut StatusParser::new(out), deadline, Some(id))?;
+    let status = loop {
+        let status = receive(link, &mut StatusParser::new(out), deadline, Some(id))?;
+        if status.id == id.get() {
+            break status;
+        }
+    };
     check::<P1>(status, id, out)
 }
 
@@ -473,6 +483,26 @@ mod tests {
         assert_eq!(
             P1::ping(&mut link!(line, clock), id(1)),
             Err(ProtocolError::Malformed.into())
+        );
+    }
+
+    #[test]
+    fn a_late_reply_from_another_id_is_dropped() {
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let late_from_2 = [0xFF, 0xFF, 0x02, 0x02, 0x00, 0xFB];
+
+        let mut line = MockTransport::new(&time);
+        let mut stream = std::vec::Vec::from(late_from_2);
+        stream.extend_from_slice(v::OK_REPLY);
+        line.reply(&stream);
+        assert_eq!(P1::ping(&mut link!(line, clock), id(1)).unwrap().id, id(1));
+
+        let mut line = MockTransport::new(&time);
+        line.reply(&late_from_2);
+        assert_eq!(
+            P1::ping(&mut link!(line, clock), id(1)),
+            Err(TransportError::Timeout { id: Some(id(1)) }.into())
         );
     }
 
