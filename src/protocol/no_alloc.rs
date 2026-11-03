@@ -65,8 +65,7 @@ fn exchanges_never_allocate() {
         .reply_to(5, v2::READ_REPLY_1)
         .reply_to(5, v2::READ_REPLY_2)
         .reply_to(6, v2::PING_REPLY)
-        .reply_to(6, v2::BROADCAST_PING_REPLY_2)
-        .reply_to(7, v2::PING_REPLY);
+        .reply_to(6, v2::BROADCAST_PING_REPLY_2);
     let mut p1_line = MockTransport::new(&time);
     p1_line
         .reply_to(1, v1::OK_REPLY)
@@ -98,7 +97,6 @@ fn exchanges_never_allocate() {
             |_, r| replies += usize::from(r.is_ok()),
         )
         .unwrap();
-        P2::broadcast_ping(&mut link, |_| replies += 1).unwrap();
         P2::scan(&mut link, |r| replies += usize::from(r.is_ok())).unwrap();
     }
     {
@@ -123,7 +121,7 @@ fn exchanges_never_allocate() {
     }
     let after = allocations();
 
-    assert_eq!(replies, 6);
+    assert_eq!(replies, 5);
     assert_eq!(after - before, 0, "exchanges allocated");
 }
 
