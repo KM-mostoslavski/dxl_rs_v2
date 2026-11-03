@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::Diagnostic;
+use super::fr9::{self, GenRole};
 use super::names::{const_ident, is_reserved_module, module_ident, type_ident};
 use super::schema::{
     Access, Area, ControlTable, ModelEntry, ModelMap, OperatingModes, ProtocolTag, Row, Source,
@@ -62,6 +63,8 @@ pub(crate) struct GenModel {
     pub(crate) registers: Vec<(String, Row)>,
     /// The rows that serve the common operations.
     pub(crate) roles: Roles,
+    /// The FR-9 typed registers the table has, in `fr9::ROLES` order.
+    pub(crate) typed: Vec<GenRole>,
 }
 
 /// The rows that serve the common operations, matched by exact e-Manual
@@ -118,6 +121,16 @@ pub(crate) enum ModeRole {
     },
     /// No mode row: the mode follows from the CW/CCW Angle Limits.
     AngleLimits,
+    /// No mode row: the angle limits, overridden by the table's
+    /// `torque_control_mode` switch (MX on Protocol 1).
+    TorqueControl {
+        /// The 1-byte switch row.
+        row: Row,
+        /// The value that turns torque control on.
+        on: u8,
+        /// The values the switch takes.
+        values: (u8, u8),
+    },
 }
 
 /// The tables of one model number on one protocol, by firmware.
@@ -292,9 +305,26 @@ pub(crate) fn resolve(
         }
         let registers = registers(file, table, &mut out.errors);
         check_scale(file, &table.type_info, &mut out.errors);
-        let Some(roles) = roles(file, table, &mut out.errors) else {
+        let before = out.errors.len();
+        fr9::check_unit_source(file, table, &mut out.errors);
+        fr9::check_unit_info(file, table, &mut out.errors);
+        fr9::check_per_mode(file, table, &mut out.errors);
+        let Some(mut roles) = roles(file, table, &mut out.errors) else {
             continue;
         };
+        let angle_limits = roles.mode == ModeRole::AngleLimits;
+        let switch = fr9::torque_switch(file, table, angle_limits, &mut out.errors);
+        if out.errors.len() > before {
+            continue;
+        }
+        if let Some(switch) = &switch {
+            roles.mode = ModeRole::TorqueControl {
+                row: switch.row.clone(),
+                on: switch.on,
+                values: switch.values,
+            };
+        }
+        let typed = fr9::roles(file, table, switch.as_ref(), &mut out.errors);
         out.resolved.models.push(GenModel {
             file: file.to_string(),
             type_ident: ty,
@@ -309,6 +339,7 @@ pub(crate) fn resolve(
             scale: table.type_info,
             registers,
             roles,
+            typed,
         });
     }
     out.resolved.models.sort_by(|a, b| {
@@ -708,8 +739,8 @@ fn check_firmware_version(resolved: &Resolved, errors: &mut Vec<Diagnostic>) {
     }
 }
 
-/// Check 14: a table listed under `p1` keeps every role within P1's 8-bit
-/// addresses.
+/// Check 14: a table listed under `p1` keeps every role, FR-9 roles and
+/// their bounding rows included, within P1's 8-bit addresses.
 fn check_p1_addresses(model: &GenModel, errors: &mut Vec<Diagnostic>) {
     if !model.appearances.iter().any(|a| a.0 == ProtocolTag::P1) {
         return;
@@ -720,7 +751,7 @@ fn check_p1_addresses(model: &GenModel, errors: &mut Vec<Diagnostic>) {
         Limits::CwCcw { cw, ccw } => (cw, ccw),
     };
     let mode = match &roles.mode {
-        ModeRole::Register { row, .. } => Some(row),
+        ModeRole::Register { row, .. } | ModeRole::TorqueControl { row, .. } => Some(row),
         ModeRole::AngleLimits => None,
     };
     let rows = [
@@ -734,7 +765,11 @@ fn check_p1_addresses(model: &GenModel, errors: &mut Vec<Diagnostic>) {
         roles.hardware_error.as_ref(),
         mode,
     ];
-    for row in rows.into_iter().flatten() {
+    let typed = model
+        .typed
+        .iter()
+        .flat_map(|role| [Some(&role.row), role.bounded_by.as_ref()]);
+    for row in rows.into_iter().chain(typed).flatten() {
         if row.address > 255 {
             errors.push(Diagnostic::new(
                 model.file.as_str(),
@@ -946,6 +981,10 @@ mod tests {
             bounded: bounded.to_vec(),
             unbounded: unbounded.to_vec(),
             no_position: no_position.to_vec(),
+            current: None,
+            velocity: None,
+            pwm: None,
+            current_position: None,
         }
     }
 

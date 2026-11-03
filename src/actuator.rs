@@ -7,7 +7,22 @@ use crate::Id;
 use crate::error::ValidationError;
 use crate::protocol::ProtocolVersion;
 use crate::register::Register;
-use crate::units::{Limits, Position, PositionScale};
+use crate::units::{Limits, Position, PositionScale, RegisterScale};
+
+mod roles;
+
+pub use roles::{
+    HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
+    HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasLedBlue,
+    HasLedGreen, HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentLoad,
+    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
+    HasTorqueCtrlModeEnable, RoleRegister,
+};
+#[allow(
+    unused_imports,
+    reason = "used by generated models and the bus part of FR-9"
+)]
+pub(crate) use roles::{ModeScale, ModeSet, Role, Roles};
 
 /// A model number as the actuator reports it (Model Number register, address
 /// 0, 2 bytes).
@@ -314,6 +329,32 @@ pub struct ModelData {
     pub(crate) mode: ModeSource,
     /// Tick to radian mapping, from the table's `type_info`.
     pub(crate) scale: PositionScale,
+    /// The FR-9 registers the table has.
+    pub(crate) roles: Roles,
+}
+
+impl ModelData {
+    /// The FR-9 register of `role`, or `None` when the model's table lacks
+    /// it (a typed call then fails with `ValidationError::Unsupported`).
+    #[allow(dead_code, reason = "used by the bus part of FR-9")]
+    pub(crate) const fn role(&self, role: Role) -> Option<&RoleRegister> {
+        self.roles.get(role)
+    }
+
+    /// The register of `role` and its scale in limit mode `mode`: `None`
+    /// when the model lacks the register; a `None` scale when the register
+    /// has no typed form in that mode, only raw (FR-9.2).
+    #[allow(dead_code, reason = "used by the bus part of FR-9")]
+    pub(crate) const fn typed(
+        &self,
+        role: Role,
+        mode: LimitMode,
+    ) -> Option<(Register, Option<RegisterScale>)> {
+        match self.roles.get(role) {
+            Some(found) => Some((found.register, found.scale(mode))),
+            None => None,
+        }
+    }
 }
 
 /// The two registers that hold a model's position limits.
@@ -411,6 +452,20 @@ pub(crate) enum ModeSource {
     /// CW and CCW Angle Limits Setup reads anyway; see
     /// [`LimitMode::from_angle_limits`].
     AngleLimits,
+    /// MX-64 on Protocol 1: the angle limits, overridden by a torque
+    /// control switch. Setup reads the 1-byte `register` (Torque Ctrl Mode
+    /// Enable(70)); `on` gives [`LimitMode::Current`], any other value in
+    /// `values` leaves the angle-limit rule. The e-Manual: "1 | Turn on the
+    /// torque mode. Cannot control the position or moving speed but only
+    /// Torque" (<https://emanual.robotis.com/docs/en/dxl/mx/mx-64/>).
+    TorqueControl {
+        /// The 1-byte switch register.
+        register: Register,
+        /// The value that turns torque control on.
+        on: u8,
+        /// Every value the register takes, `min..=max` from the table.
+        values: (u8, u8),
+    },
 }
 
 impl ModeSource {
@@ -419,21 +474,29 @@ impl ModeSource {
     #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) const fn register(self) -> Option<Register> {
         match self {
-            Self::Register { register, .. } => Some(register),
+            Self::Register { register, .. } | Self::TorqueControl { register, .. } => {
+                Some(register)
+            }
             Self::AngleLimits => None,
         }
     }
 
-    /// The limit mode of mode value `value`, read from the mode register.
+    /// The limit mode of mode value `value`, read from the mode register,
+    /// with `limits` the angle limits Setup read.
     ///
-    /// `None`: the value is in none of the model's lists; Setup fails with
+    /// `None`: the value is in none of the model's lists, or outside the
+    /// switch register's values; Setup fails with
     /// `SetupError::UnknownOperatingMode`, no mode is guessed. Also `None`
     /// for [`AngleLimits`](ModeSource::AngleLimits), which has no register.
     #[allow(dead_code, reason = "used by bus-1")]
-    pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode> {
+    pub(crate) const fn limit_mode(self, value: u8, limits: Limits) -> Option<LimitMode> {
         match self {
             Self::Register { values, .. } => values.limit_mode(value),
-            Self::AngleLimits => None,
+            Self::TorqueControl { on, .. } if value == on => Some(LimitMode::Current),
+            Self::TorqueControl {
+                values: (min, max), ..
+            } if value >= min && value <= max => Some(LimitMode::from_angle_limits(limits)),
+            Self::TorqueControl { .. } | Self::AngleLimits => None,
         }
     }
 }
@@ -447,7 +510,13 @@ impl ModeSource {
 /// change only. The lists are disjoint: codegen and the tables check refuse
 /// overlaps. Example, XM430-W350 Operating Mode(11)
 /// (<https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>): `bounded`
-/// `[3]`, `unbounded` `[4, 5]`, `no_position` `[0, 1, 16]`.
+/// `[3]`, `unbounded` `[4, 5]`, `no_position` `[0, 1, 16]`, and per mode
+/// `current` `[0]`, `velocity` `[1]`, `pwm` `[16]`, `current_position`
+/// `[5]`.
+///
+/// The per-mode lists are all empty for a table that does not give them
+/// yet; its `no_position` values then give [`LimitMode::Pwm`], which
+/// refuses every goal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code, reason = "built only from a table's `operating_modes`")]
 pub(crate) struct ModeValues {
@@ -457,13 +526,25 @@ pub(crate) struct ModeValues {
     /// position).
     pub(crate) unbounded: &'static [u8],
     /// Values whose mode ignores Goal Position (current, velocity, PWM).
-    /// They give [`LimitMode::Pwm`], which refuses every goal, until the
-    /// tables list them per mode.
+    /// Those not in a per-mode list give [`LimitMode::Pwm`].
     pub(crate) no_position: &'static [u8],
+    /// Current control values, a split of `no_position`: give
+    /// [`LimitMode::Current`].
+    pub(crate) current: &'static [u8],
+    /// Velocity control values, a split of `no_position`: give
+    /// [`LimitMode::Velocity`].
+    pub(crate) velocity: &'static [u8],
+    /// PWM control values, a split of `no_position`: give
+    /// [`LimitMode::Pwm`].
+    pub(crate) pwm: &'static [u8],
+    /// Current-based position values, a subset of `unbounded`: give
+    /// [`LimitMode::UnboundedCurrent`].
+    pub(crate) current_position: &'static [u8],
 }
 
 impl ModeValues {
-    /// The mode of the list that holds `value`.
+    /// The mode of the list that holds `value`; a per-mode list wins over
+    /// the coarse list holding the same value.
     ///
     /// `None`: the value is in none of the model's lists; Setup fails with
     /// `SetupError::UnknownOperatingMode`, no mode is guessed.
@@ -471,9 +552,15 @@ impl ModeValues {
     pub(crate) const fn limit_mode(self, value: u8) -> Option<LimitMode> {
         if holds(self.bounded, value) {
             Some(LimitMode::Bounded)
+        } else if holds(self.current_position, value) {
+            Some(LimitMode::UnboundedCurrent)
         } else if holds(self.unbounded, value) {
             Some(LimitMode::Unbounded)
-        } else if holds(self.no_position, value) {
+        } else if holds(self.current, value) {
+            Some(LimitMode::Current)
+        } else if holds(self.velocity, value) {
+            Some(LimitMode::Velocity)
+        } else if holds(self.pwm, value) || holds(self.no_position, value) {
             Some(LimitMode::Pwm)
         } else {
             None
@@ -850,7 +937,28 @@ mod tests {
         bounded: &[3],
         unbounded: &[4, 5],
         no_position: &[0, 1, 16],
+        current: &[0],
+        velocity: &[1],
+        pwm: &[16],
+        current_position: &[5],
     };
+
+    /// Mode values of a table that gives only the three coarse lists.
+    const fn coarse(
+        bounded: &'static [u8],
+        unbounded: &'static [u8],
+        no_position: &'static [u8],
+    ) -> ModeValues {
+        ModeValues {
+            bounded,
+            unbounded,
+            no_position,
+            current: &[],
+            velocity: &[],
+            pwm: &[],
+            current_position: &[],
+        }
+    }
 
     const XM430: ModelData = ModelData {
         name: "XM430-W350",
@@ -869,6 +977,7 @@ mod tests {
             values: X_MODES,
         },
         scale: PositionScale::new(2048, 0, 4095, -PI, PI),
+        roles: Roles::NONE,
     };
 
     const AX12A: ModelData = ModelData {
@@ -888,6 +997,7 @@ mod tests {
         hardware_error: None,
         mode: ModeSource::AngleLimits,
         scale: PositionScale::new(512, 0, 1023, 0.0, 5.2359877),
+        roles: Roles::NONE,
     };
 
     struct Fake {
@@ -991,30 +1101,29 @@ mod tests {
         use super::*;
 
         /// RH-P12-RN Operating Mode values (e-Manual, Operating Mode(11)).
-        const RH_P12_RN_MODES: ModeValues = ModeValues {
-            bounded: &[5],
-            unbounded: &[],
-            no_position: &[0],
-        };
+        const RH_P12_RN_MODES: ModeValues = coarse(&[5], &[], &[0]);
 
         /// XL-320 Control Mode values (e-Manual, Control Mode(11)).
-        const XL320_MODES: ModeValues = ModeValues {
-            bounded: &[2],
-            unbounded: &[],
-            no_position: &[1],
-        };
+        const XL320_MODES: ModeValues = coarse(&[2], &[], &[1]);
 
-        const NO_MODES: ModeValues = ModeValues {
-            bounded: &[],
-            unbounded: &[],
-            no_position: &[],
-        };
+        const NO_MODES: ModeValues = coarse(&[], &[], &[]);
+
+        /// The XM430-W350 lists without their per-mode split.
+        const X_COARSE: ModeValues = coarse(&[3], &[4, 5], &[0, 1, 16]);
+
+        fn limits(cw: i32, ccw: i32) -> Limits {
+            Limits::new(id(1), cw, ccw).unwrap()
+        }
 
         /// The mode of the list that holds `value`, read from the lists.
         fn listed(values: ModeValues, value: u8) -> Option<LimitMode> {
             [
                 (values.bounded, LimitMode::Bounded),
+                (values.current_position, LimitMode::UnboundedCurrent),
                 (values.unbounded, LimitMode::Unbounded),
+                (values.current, LimitMode::Current),
+                (values.velocity, LimitMode::Velocity),
+                (values.pwm, LimitMode::Pwm),
                 (values.no_position, LimitMode::Pwm),
             ]
             .into_iter()
@@ -1024,20 +1133,34 @@ mod tests {
 
         #[test]
         fn values_map_to_their_list() {
-            for values in [X_MODES, RH_P12_RN_MODES, XL320_MODES] {
+            for values in [X_MODES, X_COARSE, RH_P12_RN_MODES, XL320_MODES] {
                 for value in 0..=255 {
                     assert_eq!(values.limit_mode(value), listed(values, value));
                 }
             }
             for value in [0, 1, 16] {
-                assert_eq!(X_MODES.limit_mode(value), Some(LimitMode::Pwm));
+                assert_eq!(X_COARSE.limit_mode(value), Some(LimitMode::Pwm));
             }
             assert_eq!(X_MODES.limit_mode(3), Some(LimitMode::Bounded));
-            for value in [4, 5] {
-                assert_eq!(X_MODES.limit_mode(value), Some(LimitMode::Unbounded));
+            assert_eq!(X_MODES.limit_mode(4), Some(LimitMode::Unbounded));
+            for values in [X_MODES, X_COARSE] {
+                let listed_count = (0..=255).filter(|&v| values.limit_mode(v).is_some());
+                assert_eq!(listed_count.count(), 6);
             }
-            let listed_count = (0..=255).filter(|&v| X_MODES.limit_mode(v).is_some());
-            assert_eq!(listed_count.count(), 6);
+        }
+
+        #[test]
+        fn per_mode_lists_split_the_coarse_ones() {
+            assert_eq!(X_MODES.limit_mode(0), Some(LimitMode::Current));
+            assert_eq!(X_MODES.limit_mode(1), Some(LimitMode::Velocity));
+            assert_eq!(X_MODES.limit_mode(16), Some(LimitMode::Pwm));
+            assert_eq!(X_MODES.limit_mode(5), Some(LimitMode::UnboundedCurrent));
+            assert_eq!(X_COARSE.limit_mode(5), Some(LimitMode::Unbounded));
+            let pwm_only = ModeValues {
+                pwm: &[7],
+                ..NO_MODES
+            };
+            assert_eq!(pwm_only.limit_mode(7), Some(LimitMode::Pwm));
         }
 
         #[test]
@@ -1050,8 +1173,14 @@ mod tests {
                 register: MODE_11,
                 values: X_MODES,
             };
-            assert_eq!(gripper.limit_mode(5), Some(LimitMode::Bounded));
-            assert_eq!(x.limit_mode(5), Some(LimitMode::Unbounded));
+            assert_eq!(
+                gripper.limit_mode(5, limits(0, 0)),
+                Some(LimitMode::Bounded)
+            );
+            assert_eq!(
+                x.limit_mode(5, limits(0, 0)),
+                Some(LimitMode::UnboundedCurrent)
+            );
         }
 
         #[test]
@@ -1066,7 +1195,7 @@ mod tests {
                     2 => Some(LimitMode::Bounded),
                     _ => None,
                 };
-                assert_eq!(control_mode.limit_mode(value), expected);
+                assert_eq!(control_mode.limit_mode(value, limits(0, 0)), expected);
             }
         }
 
@@ -1078,7 +1207,7 @@ mod tests {
             };
             for value in 0..=255 {
                 assert_eq!(NO_MODES.limit_mode(value), None);
-                assert_eq!(source.limit_mode(value), None);
+                assert_eq!(source.limit_mode(value, limits(0, 1023)), None);
             }
         }
 
@@ -1102,10 +1231,48 @@ mod tests {
             assert_eq!(source.register(), Some(register));
             assert_eq!(ModeSource::AngleLimits.register(), None);
             for value in 0..=255 {
-                assert_eq!(ModeSource::AngleLimits.limit_mode(value), None);
+                assert_eq!(
+                    ModeSource::AngleLimits.limit_mode(value, limits(0, 1023)),
+                    None
+                );
             }
             assert_eq!(XM430.mode, source);
             assert_eq!(AX12A.mode, ModeSource::AngleLimits);
+        }
+
+        /// MX-64 (Protocol 1.0) Torque Ctrl Mode Enable(70), values 0 and
+        /// 1 (<https://emanual.robotis.com/docs/en/dxl/mx/mx-64/>).
+        const MX64_P1_TORQUE: ModeSource = ModeSource::TorqueControl {
+            register: Register {
+                addr: 70,
+                size: 1,
+                access: Access::RW,
+                area: Area::Ram,
+            },
+            on: 1,
+            values: (0, 1),
+        };
+
+        #[test]
+        fn torque_switch_overrides_the_angle_limits() {
+            assert_eq!(MX64_P1_TORQUE.register().map(|r| r.addr), Some(70));
+            for (cw, ccw) in [(0, 0), (4095, 4095), (0, 4095)] {
+                assert_eq!(
+                    MX64_P1_TORQUE.limit_mode(1, limits(cw, ccw)),
+                    Some(LimitMode::Current)
+                );
+                assert_eq!(
+                    MX64_P1_TORQUE.limit_mode(0, limits(cw, ccw)),
+                    Some(LimitMode::from_angle_limits(limits(cw, ccw)))
+                );
+            }
+            assert_eq!(
+                MX64_P1_TORQUE.limit_mode(0, limits(0, 0)),
+                Some(LimitMode::Wheel)
+            );
+            for value in 2..=255 {
+                assert_eq!(MX64_P1_TORQUE.limit_mode(value, limits(0, 4095)), None);
+            }
         }
 
         #[test]
@@ -1455,6 +1622,22 @@ mod tests {
                     matches!(data.limits, LimitRegisters::CwCcw { .. }),
                     "{name}: angle-limit mode without CW/CCW limits"
                 ),
+                ModeSource::TorqueControl {
+                    register,
+                    on,
+                    values: (min, max),
+                } => {
+                    assert!(
+                        matches!(data.limits, LimitRegisters::CwCcw { .. }),
+                        "{name}: torque switch without CW/CCW limits"
+                    );
+                    assert_eq!(
+                        (register.size, register.access, register.area),
+                        (1, Access::RW, Area::Ram),
+                        "{name}"
+                    );
+                    assert!(min <= on && on <= max, "{name}");
+                }
             }
         }
 
@@ -1573,11 +1756,15 @@ mod tests {
         ) -> ModeSource {
             ModeSource::Register {
                 register: reg(addr, 1, Access::RW, Area::Eeprom),
-                values: ModeValues {
-                    bounded,
-                    unbounded,
-                    no_position,
-                },
+                values: coarse(bounded, unbounded, no_position),
+            }
+        }
+
+        /// The XM430-W350 and MX-64 (Protocol 2.0) Operating Mode(11).
+        fn x_mode_register() -> ModeSource {
+            ModeSource::Register {
+                register: reg(11, 1, Access::RW, Area::Eeprom),
+                values: X_MODES,
             }
         }
 
@@ -1590,8 +1777,7 @@ mod tests {
             #[cfg(feature = "x-series")]
             {
                 use crate::models::{Xl320, Xm430W350};
-                let xm = mode_register(11, &[3], &[4, 5], &[0, 1, 16]);
-                assert_eq!(mode_of(&Xm430W350::new(id(1))), xm);
+                assert_eq!(mode_of(&Xm430W350::new(id(1))), x_mode_register());
                 assert_eq!(
                     mode_of(&Xl320::new(id(1))),
                     mode_register(11, &[2], &[], &[1])
@@ -1599,8 +1785,15 @@ mod tests {
             }
             #[cfg(feature = "mx")]
             {
-                let mx = mode_register(11, &[3], &[4, 5], &[0, 1, 16]);
-                assert_eq!(mode_of(&crate::models::Mx64::new(id(1))), mx);
+                assert_eq!(mode_of(&crate::models::Mx64::new(id(1))), x_mode_register());
+                assert!(matches!(
+                    mode_of(&crate::models::Mx64P1::new(id(1))),
+                    ModeSource::TorqueControl {
+                        on: 1,
+                        values: (0, 1),
+                        ..
+                    }
+                ));
             }
             #[cfg(feature = "pro")]
             {

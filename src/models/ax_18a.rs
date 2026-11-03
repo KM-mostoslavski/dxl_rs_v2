@@ -2,7 +2,10 @@
 // Source: control_tables/ax_18a.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, LimitRegisters, ModeSource, ModelData, Protocols,
+    Actuator, Cache, Describe, HasCcwComplianceMargin, HasCcwComplianceSlope,
+    HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMoving,
+    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
+    LimitRegisters, ModeSource, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -43,6 +46,21 @@ impl Ax18a {
         hardware_error: None,
         mode: ModeSource::AngleLimits,
         scale: PositionScale::new(512, 0, 1023, -2.620553, 2.6154346),
+        roles: Roles {
+            present_temperature: Some(<Self as HasPresentTemperature>::ROLE),
+            present_voltage: Some(<Self as HasPresentVoltage>::ROLE),
+            present_velocity: Some(<Self as HasPresentVelocity>::ROLE),
+            goal_velocity: Some(<Self as HasGoalVelocity>::ROLE),
+            speed_limit: Some(<Self as HasSpeedLimit>::ROLE),
+            present_load: Some(<Self as HasPresentLoad>::ROLE),
+            moving: Some(<Self as HasMoving>::ROLE),
+            led: Some(<Self as HasLed>::ROLE),
+            cw_compliance_margin: Some(<Self as HasCwComplianceMargin>::ROLE),
+            ccw_compliance_margin: Some(<Self as HasCcwComplianceMargin>::ROLE),
+            cw_compliance_slope: Some(<Self as HasCwComplianceSlope>::ROLE),
+            ccw_compliance_slope: Some(<Self as HasCcwComplianceSlope>::ROLE),
+            ..Roles::NONE
+        },
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -94,3 +112,135 @@ impl Describe for Ax18a {
 }
 
 impl Actuator for Ax18a {}
+
+/// Present Temperature: raw only, no unit in the table.
+impl HasPresentTemperature for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Temperature",
+        register: Self::PRESENT_TEMPERATURE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Voltage: raw only, no unit in the table.
+impl HasPresentVoltage for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Voltage",
+        register: Self::PRESENT_VOLTAGE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Speed: raw only, no unit in the table.
+impl HasPresentVelocity for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Speed",
+        register: Self::PRESENT_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: raw only, no unit in the table.
+impl HasGoalVelocity for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: raw only, no unit in the table.
+impl HasSpeedLimit for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Load: raw only, no unit in the table.
+impl HasPresentLoad for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Load",
+        register: Self::PRESENT_LOAD,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving: in register units, no scale.
+impl HasMoving for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving",
+        register: Self::MOVING,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// LED: in register units, no scale.
+impl HasLed for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "LED",
+        register: Self::LED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CW Compliance Margin: raw only, no unit in the table.
+impl HasCwComplianceMargin for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CW Compliance Margin",
+        register: Self::CW_COMPLIANCE_MARGIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CCW Compliance Margin: raw only, no unit in the table.
+impl HasCcwComplianceMargin for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CCW Compliance Margin",
+        register: Self::CCW_COMPLIANCE_MARGIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CW Compliance Slope: in register units, no scale.
+impl HasCwComplianceSlope for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CW Compliance Slope",
+        register: Self::CW_COMPLIANCE_SLOPE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CCW Compliance Slope: in register units, no scale.
+impl HasCcwComplianceSlope for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CCW Compliance Slope",
+        register: Self::CCW_COMPLIANCE_SLOPE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}

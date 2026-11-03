@@ -6,6 +6,7 @@
 
 #[cfg(test)]
 mod fixtures;
+mod fr9;
 mod names;
 mod output;
 mod render;
@@ -462,16 +463,49 @@ mod tests {
                         }
                     );
                     assert!(text.contains(&reg_line(oracle)));
+                    let list = |l: &Option<Vec<u8>>| l.clone().unwrap_or_default();
                     let expected = compact(&format!(
-                        "mode:ModeSource::Register{{register:Self::{constant},values:ModeValues{{bounded:&{:?},unbounded:&{:?},no_position:&{:?}}}}}",
-                        values.bounded, values.unbounded, values.no_position
+                        "mode:ModeSource::Register{{register:Self::{constant},values:ModeValues{{bounded:&{:?},unbounded:&{:?},no_position:&{:?},current:&{:?},velocity:&{:?},pwm:&{:?},current_position:&{:?}}}}}",
+                        values.bounded,
+                        values.unbounded,
+                        values.no_position,
+                        list(&values.current),
+                        list(&values.velocity),
+                        list(&values.pwm),
+                        list(&values.current_position)
                     ));
                     assert!(c.contains(&expected), "{}: {expected}", model.file);
                 }
-                (None, None) => {
-                    assert_eq!(roles.mode, ModeRole::AngleLimits);
-                    assert!(c.contains("mode:ModeSource::AngleLimits"), "{}", model.file);
-                }
+                (None, None) => match &table.torque_control_mode {
+                    Some(switch) => {
+                        let oracle = row(&switch.register).unwrap();
+                        let range = oracle.range.unwrap();
+                        let values = (
+                            u8::try_from(range.min).unwrap(),
+                            u8::try_from(range.max).unwrap(),
+                        );
+                        assert_eq!(
+                            roles.mode,
+                            ModeRole::TorqueControl {
+                                row: oracle.clone(),
+                                on: switch.on,
+                                values,
+                            }
+                        );
+                        let expected = compact(&format!(
+                            "mode:ModeSource::TorqueControl{{register:Self::{},on:{},values:({},{})}}",
+                            names::const_ident(&oracle.data_name),
+                            switch.on,
+                            values.0,
+                            values.1
+                        ));
+                        assert!(c.contains(&expected), "{}: {expected}", model.file);
+                    }
+                    None => {
+                        assert_eq!(roles.mode, ModeRole::AngleLimits);
+                        assert!(c.contains("mode:ModeSource::AngleLimits"), "{}", model.file);
+                    }
+                },
                 other => panic!("{}: mode {other:?}", model.file),
             }
             let t = &table.type_info;
@@ -532,6 +566,123 @@ mod tests {
         assert!(
             matches!(&ym.roles.mode, ModeRole::Register { row, .. } if row.data_name == "Operating Mode" && row.address == 33)
         );
+    }
+
+    #[test]
+    fn real_tables_fr9_roles_match_oracle() {
+        use fr9::{ALL, SignKind, Switch};
+        let real = real();
+        for model in &real.resolved.models {
+            let table = &real.tables[&model.file];
+            let c = compact(real.text(&model.file));
+            let switch = table.torque_control_mode.as_ref();
+            for def in &fr9::ROLES {
+                let mut rows: Vec<&schema::Row> = def
+                    .rows
+                    .iter()
+                    .filter_map(|(name, _)| find(table, name))
+                    .collect();
+                match def.switch {
+                    Some(Switch::Register) => {
+                        rows.extend(switch.and_then(|s| find(table, &s.register)));
+                    }
+                    Some(Switch::Goal) => rows.extend(switch.and_then(|s| find(table, &s.goal))),
+                    None => {}
+                }
+                assert!(rows.len() <= 1, "{}: {}", model.file, def.field);
+                let found = model.typed.iter().find(|r| r.def.field == def.field);
+                assert_eq!(
+                    found.map(|r| &r.row),
+                    rows.first().copied(),
+                    "{}: {}",
+                    model.file,
+                    def.field
+                );
+                let tier2 = format!("impl{}for{}{{", def.has, model.type_ident);
+                assert_eq!(c.contains(&tier2), found.is_some(), "{tier2}");
+                let tier1 = format!("{}:Some(<Selfas{}>::ROLE)", def.field, def.has);
+                assert_eq!(c.contains(&tier1), found.is_some(), "{tier1}");
+                if table.unit_source.is_none() {
+                    assert!(found.is_none_or(|r| r.scales.is_empty()), "{}", model.file);
+                }
+            }
+        }
+
+        let role = |file: &str, field: &str| {
+            real.model(file)
+                .typed
+                .iter()
+                .find(|r| r.def.field == field)
+                .unwrap_or_else(|| panic!("{file}: no {field}"))
+                .clone()
+        };
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-12;
+        let rpm = std::f64::consts::PI / 30.0;
+
+        let speed = role("ax_12a", "speed_limit");
+        assert_eq!((speed.row.address, speed.row.size), (32, 2));
+        let [joint] = speed.scales.as_slice() else {
+            panic!("AX-12A speed limit: {:?}", speed.scales);
+        };
+        assert!(close(joint.si_per_raw, 0.111 * rpm));
+        assert_eq!((joint.modes, joint.sign), (1, SignKind::Unsigned));
+        assert!(joint.zero_is_unlimited);
+        assert_eq!(joint.range, Some((0, 1023)));
+        let goal = role("ax_12a", "goal_velocity");
+        assert!(goal.scales.is_empty());
+        assert_eq!(goal.untyped[0].unit, "%");
+        let load = role("ax_12a", "present_load");
+        assert_eq!(
+            (load.row.address, load.scales[0].sign),
+            (40, SignKind::DirectionBit(10))
+        );
+        assert!(close(load.scales[0].si_per_raw, 0.001));
+        assert_eq!(role("ax_12a", "led").row.address, 25);
+        assert_eq!(role("ax_12a", "moving").row.address, 46);
+        assert_eq!(role("ax_12a", "cw_compliance_slope").row.address, 28);
+
+        let torque = role("mx_64_p1", "goal_current");
+        assert_eq!(
+            (torque.row.data_name.as_str(), torque.row.address),
+            ("Goal Torque", 71)
+        );
+        assert!(close(torque.scales[0].si_per_raw, 0.0045));
+        assert_eq!(torque.scales[0].sign, SignKind::DirectionBit(10));
+        assert_eq!(torque.scales[0].range, Some((0, 2047)));
+        let tick = role("mx_64_p1", "realtime_tick");
+        assert_eq!((tick.row.address, tick.from_fw), (50, 40));
+        assert_eq!(tick.scales[0].range, Some((0, 32_767)));
+        let wheel = role("mx_64_p1", "goal_velocity");
+        assert_eq!(wheel.scales[0].modes, 1 << 6);
+        assert!(close(wheel.scales[0].si_per_raw, 0.114 * rpm));
+        assert_eq!(role("mx_64_p1", "torque_ctrl_mode_enable").row.address, 70);
+        assert_eq!(role("mx_64_p1", "p_gain").row.address, 28);
+        assert!(matches!(
+            &real.model("mx_64_p1").roles.mode,
+            resolve::ModeRole::TorqueControl { row, on: 1, values: (0, 1) } if row.address == 70
+        ));
+
+        let current = role("xm430_w350", "goal_current");
+        assert_eq!((current.row.address, current.row.size), (102, 2));
+        assert!(close(current.scales[0].si_per_raw, 0.00269));
+        assert_eq!(current.scales[0].sign, SignKind::TwosComplement);
+        assert_eq!(current.bounded_by.as_ref().map(|r| r.address), Some(38));
+        let profile = role("xm430_w350", "speed_limit");
+        assert_eq!(profile.row.address, 112);
+        assert_eq!(profile.scales[0].profile.as_deref(), Some("velocity_based"));
+        assert_eq!(profile.scales[0].modes, ALL);
+        assert_eq!(role("xm430_w350", "realtime_tick").row.address, 120);
+        assert_eq!(role("xm430_w350", "present_voltage").row.address, 144);
+        assert!(close(
+            role("mx_64", "present_current").scales[0].si_per_raw,
+            0.00336
+        ));
+        assert!(close(
+            role("rx_28", "ccw_compliance_margin").scales[0].si_per_raw,
+            0.29 * std::f64::consts::PI / 180.0
+        ));
+        assert!(role("xl430_w250", "present_velocity").scales.is_empty());
+        assert_eq!(role("ph54_200_s500", "led_red").row.data_name, "LED Red");
     }
 
     #[test]
@@ -657,7 +808,7 @@ mod tests {
             case.root.assert_unchanged(&snapshot);
             covered.insert(case.check);
         }
-        assert_eq!(covered, (1..=17).collect());
+        assert_eq!(covered, (1..=22).collect());
     }
 
     #[test]

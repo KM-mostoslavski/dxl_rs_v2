@@ -2,7 +2,10 @@
 // Source: control_tables/xl320.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, LimitRegisters, ModeSource, ModeValues, ModelData, Protocols,
+    Actuator, Cache, Describe, HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+    HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
+    HasPresentVoltage, HasSpeedLimit, LimitRegisters, ModeSource, ModeValues, ModelData, Protocols,
+    RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -47,9 +50,27 @@ impl Xl320 {
                 bounded: &[2],
                 unbounded: &[],
                 no_position: &[1],
+                current: &[],
+                velocity: &[],
+                pwm: &[],
+                current_position: &[],
             },
         },
         scale: PositionScale::new(512, 0, 1023, -2.620553, 2.6154346),
+        roles: Roles {
+            present_temperature: Some(<Self as HasPresentTemperature>::ROLE),
+            present_voltage: Some(<Self as HasPresentVoltage>::ROLE),
+            present_velocity: Some(<Self as HasPresentVelocity>::ROLE),
+            goal_velocity: Some(<Self as HasGoalVelocity>::ROLE),
+            speed_limit: Some(<Self as HasSpeedLimit>::ROLE),
+            present_load: Some(<Self as HasPresentLoad>::ROLE),
+            moving: Some(<Self as HasMoving>::ROLE),
+            led: Some(<Self as HasLed>::ROLE),
+            hardware_error_status: Some(<Self as HasHardwareErrorStatus>::ROLE),
+            p_gain: Some(<Self as HasPGain>::ROLE),
+            d_gain: Some(<Self as HasDGain>::ROLE),
+            ..Roles::NONE
+        },
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -100,3 +121,124 @@ impl Describe for Xl320 {
 }
 
 impl Actuator for Xl320 {}
+
+/// Present Temperature: raw only, no unit in the table.
+impl HasPresentTemperature for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Temperature",
+        register: Self::PRESENT_TEMPERATURE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Voltage: raw only, no unit in the table.
+impl HasPresentVoltage for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Voltage",
+        register: Self::PRESENT_VOLTAGE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Speed: raw only, no unit in the table.
+impl HasPresentVelocity for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Speed",
+        register: Self::PRESENT_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: raw only, no unit in the table.
+impl HasGoalVelocity for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: raw only, no unit in the table.
+impl HasSpeedLimit for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Load: raw only, no unit in the table.
+impl HasPresentLoad for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Load",
+        register: Self::PRESENT_LOAD,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving: in register units, no scale.
+impl HasMoving for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving",
+        register: Self::MOVING,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// LED: in register units, no scale.
+impl HasLed for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "LED",
+        register: Self::LED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Hardware Error Status: in register units, no scale.
+impl HasHardwareErrorStatus for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Hardware Error Status",
+        register: Self::HARDWARE_ERROR_STATUS,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// P Gain: in register units, no scale.
+impl HasPGain for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "P Gain",
+        register: Self::P_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// D Gain: in register units, no scale.
+impl HasDGain for Xl320 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "D Gain",
+        register: Self::D_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}

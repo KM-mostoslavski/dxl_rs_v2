@@ -2,7 +2,9 @@
 // Source: control_tables/ym080_230_r099.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, LimitRegisters, ModeSource, ModeValues, ModelData, Protocols,
+    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain,
+    HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
+    LimitRegisters, ModeSource, ModeValues, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -47,9 +49,26 @@ impl Ym080230R099 {
                 bounded: &[3],
                 unbounded: &[],
                 no_position: &[0, 1],
+                current: &[],
+                velocity: &[],
+                pwm: &[],
+                current_position: &[],
             },
         },
         scale: PositionScale::new(0, -25952256, 25952256, -3.1415927, 3.1415927),
+        roles: Roles {
+            present_voltage: Some(<Self as HasPresentVoltage>::ROLE),
+            present_velocity: Some(<Self as HasPresentVelocity>::ROLE),
+            goal_velocity: Some(<Self as HasGoalVelocity>::ROLE),
+            speed_limit: Some(<Self as HasSpeedLimit>::ROLE),
+            present_current: Some(<Self as HasPresentCurrent>::ROLE),
+            goal_current: Some(<Self as HasGoalCurrent>::ROLE),
+            led: Some(<Self as HasLed>::ROLE),
+            realtime_tick: Some(<Self as HasRealtimeTick>::ROLE),
+            p_gain: Some(<Self as HasPGain>::ROLE),
+            d_gain: Some(<Self as HasDGain>::ROLE),
+            ..Roles::NONE
+        },
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -175,3 +194,113 @@ impl Describe for Ym080230R099 {
 }
 
 impl Actuator for Ym080230R099 {}
+
+/// Present Input Voltage: raw only, no unit in the table.
+impl HasPresentVoltage for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Input Voltage",
+        register: Self::PRESENT_INPUT_VOLTAGE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Velocity: raw only, no unit in the table.
+impl HasPresentVelocity for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Velocity",
+        register: Self::PRESENT_VELOCITY,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Goal Velocity: raw only, no unit in the table.
+impl HasGoalVelocity for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Goal Velocity",
+        register: Self::GOAL_VELOCITY,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Profile Velocity: raw only, no unit in the table.
+impl HasSpeedLimit for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Profile Velocity",
+        register: Self::PROFILE_VELOCITY,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Current: raw only, no unit in the table.
+impl HasPresentCurrent for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Current",
+        register: Self::PRESENT_CURRENT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Goal Current: raw only, no unit in the table.
+impl HasGoalCurrent for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Goal Current",
+        register: Self::GOAL_CURRENT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// LED: in register units, no scale.
+impl HasLed for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "LED",
+        register: Self::LED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Realtime Tick: raw only, no unit in the table.
+impl HasRealtimeTick for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Realtime Tick",
+        register: Self::REALTIME_TICK,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Position P Gain: in register units, no scale.
+impl HasPGain for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Position P Gain",
+        register: Self::POSITION_P_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Position D Gain: in register units, no scale.
+impl HasDGain for Ym080230R099 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Position D Gain",
+        register: Self::POSITION_D_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}

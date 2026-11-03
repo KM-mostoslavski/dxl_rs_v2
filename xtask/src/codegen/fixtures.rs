@@ -52,20 +52,31 @@ type RowSpec = (u16, u8, String, &'static str, &'static str);
 #[derive(Debug, Clone)]
 pub(crate) struct Table {
     source: Option<String>,
+    unit_source: Option<String>,
     protocols: Option<String>,
     operating_modes: Option<String>,
+    torque_control_mode: Option<String>,
     type_info: (i32, i32, i32, f32, f32),
+    units: Vec<String>,
     rows: Vec<RowSpec>,
+    ranges: BTreeMap<String, (i64, i64)>,
 }
+
+/// The `unit_source` of the FR-9 fixtures.
+pub(crate) const UNIT_SOURCE: &str = "Verified(url: \"https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/\", verified: \"2026-11-03\")";
 
 impl Table {
     fn new(protocols: &str, type_info: (i32, i32, i32, f32, f32), rows: &[RowSpec]) -> Self {
         Self {
             source: Some("Unverified".to_string()),
+            unit_source: None,
             protocols: Some(protocols.to_string()),
             operating_modes: None,
+            torque_control_mode: None,
             type_info,
+            units: Vec::new(),
             rows: rows.to_vec(),
+            ranges: BTreeMap::new(),
         }
     }
 
@@ -130,9 +141,107 @@ impl Table {
         t
     }
 
-    /// Removes the row named `name`.
+    /// [`Table::ax`] with the FR-9 rows of an AX-12A and their units, as
+    /// the verified AX-12A table gives them.
+    pub(crate) fn ax_fr9() -> Self {
+        Self::ax()
+            .with_row(25, 1, "LED", "RW", "RAM")
+            .with_row(26, 1, "CW Compliance Margin", "RW", "RAM")
+            .with_row(27, 1, "CCW Compliance Margin", "RW", "RAM")
+            .with_row(28, 1, "CW Compliance Slope", "RW", "RAM")
+            .with_row(29, 1, "CCW Compliance Slope", "RW", "RAM")
+            .with_row(32, 2, "Moving Speed", "RW", "RAM")
+            .with_row(38, 2, "Present Speed", "R", "RAM")
+            .with_row(40, 2, "Present Load", "R", "RAM")
+            .with_row(42, 1, "Present Voltage", "R", "RAM")
+            .with_row(43, 1, "Present Temperature", "R", "RAM")
+            .with_row(46, 1, "Moving", "R", "RAM")
+            .unit_source(UNIT_SOURCE)
+            .unit(r#"data_name: "CW Compliance Margin", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 255)"#)
+            .unit(r#"data_name: "Moving Speed", value: 0.111, unit: "rpm", sign_type: "unsigned", modes: ["joint"], zero_is_unlimited: true, range: (min: 0, max: 1023)"#)
+            .unit(r#"data_name: "Moving Speed", value: 0.1, unit: "%", sign_type: "direction_bit_10", modes: ["wheel"], range: (min: 0, max: 2047)"#)
+            .unit(r#"data_name: "Present Speed", value: 0.111, unit: "rpm", sign_type: "direction_bit_10", modes: ["joint"]"#)
+            .unit(r#"data_name: "Present Speed", value: 0.1, unit: "%", sign_type: "direction_bit_10", modes: ["wheel"]"#)
+            .unit(r#"data_name: "Present Load", value: 0.1, unit: "%", sign_type: "direction_bit_10", range: (min: 0, max: 2047)"#)
+            .unit(r#"data_name: "Present Voltage", value: 0.1, unit: "V", sign_type: "unsigned""#)
+            .unit(r#"data_name: "Present Temperature", value: 1.0, unit: "°C", sign_type: "unsigned""#)
+    }
+
+    /// [`Table::ax`] as an MX-64 on Protocol 1: wheel-mode speed, Realtime
+    /// Tick from firmware 40, and the torque control switch.
+    pub(crate) fn mx_p1() -> Self {
+        Self::ax()
+            .with_row(28, 1, "P Gain", "RW", "RAM")
+            .with_row(32, 2, "Moving Speed", "RW", "RAM")
+            .with_row(50, 2, "Realtime Tick", "R", "RAM")
+            .with_row(70, 1, "Torque Ctrl Mode Enable", "RW", "RAM")
+            .with_row(71, 2, "Goal Torque", "RW", "RAM")
+            .row_range("Torque Ctrl Mode Enable", 0, 1)
+            .unit_source(UNIT_SOURCE)
+            .torque_control_mode(r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque")"#)
+            .unit(r#"data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "unsigned", modes: ["joint", "multi_turn"], zero_is_unlimited: true"#)
+            .unit(r#"data_name: "Moving Speed", value: 0.114, unit: "rpm", sign_type: "direction_bit_10", modes: ["wheel"]"#)
+            .unit(r#"data_name: "Realtime Tick", value: 1.0, unit: "ms", sign_type: "unsigned", range: (min: 0, max: 32767), from_fw: 40"#)
+            .unit(r#"data_name: "Goal Torque", value: 4.5, unit: "mA", sign_type: "direction_bit_10", range: (min: 0, max: 2047)"#)
+    }
+
+    /// [`Table::xm`] with the FR-9 rows and units of an XM430-W350 and its
+    /// per-mode lists.
+    pub(crate) fn xm_fr9() -> Self {
+        Self::xm()
+            .with_row(38, 2, "Current Limit", "RW", "EEPROM")
+            .with_row(44, 4, "Velocity Limit", "RW", "EEPROM")
+            .with_row(65, 1, "LED", "RW", "RAM")
+            .with_row(102, 2, "Goal Current", "RW", "RAM")
+            .with_row(104, 4, "Goal Velocity", "RW", "RAM")
+            .with_row(112, 4, "Profile Velocity", "RW", "RAM")
+            .with_row(126, 2, "Present Current", "R", "RAM")
+            .with_row(128, 4, "Present Velocity", "R", "RAM")
+            .with_row(144, 2, "Present Input Voltage", "R", "RAM")
+            .with_row(146, 1, "Present Temperature", "R", "RAM")
+            .unit_source(UNIT_SOURCE)
+            .operating_modes("(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [16], current_position: [5])")
+            .unit(r#"data_name: "Current Limit", value: 2.69, unit: "mA", sign_type: "unsigned""#)
+            .unit(r#"data_name: "Velocity Limit", value: 0.229, unit: "rpm", sign_type: "unsigned""#)
+            .unit(r#"data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "twos_complement", bounded_by: "Current Limit""#)
+            .unit(r#"data_name: "Goal Velocity", value: 0.229, unit: "rpm", sign_type: "twos_complement", bounded_by: "Velocity Limit""#)
+            .unit(r#"data_name: "Profile Velocity", value: 0.229, unit: "rpm", sign_type: "unsigned", profile: "velocity_based", zero_is_unlimited: true, range: (min: 0, max: 32767)"#)
+            .unit(r#"data_name: "Profile Velocity", value: 1.0, unit: "ms", sign_type: "unsigned", profile: "time_based", from_fw: 42"#)
+            .unit(r#"data_name: "Present Current", value: 2.69, unit: "mA", sign_type: "twos_complement""#)
+            .unit(r#"data_name: "Present Velocity", value: 0.229, unit: "rpm", sign_type: "twos_complement""#)
+            .unit(r#"data_name: "Present Input Voltage", value: 0.1, unit: "V", sign_type: "unsigned""#)
+            .unit(r#"data_name: "Present Temperature", value: 1.0, unit: "°C", sign_type: "unsigned""#)
+    }
+
+    /// Sets the `unit_source` text, e.g. [`UNIT_SOURCE`].
+    pub(crate) fn unit_source(mut self, text: &str) -> Self {
+        self.unit_source = Some(text.to_string());
+        self
+    }
+
+    /// Appends one `unit_info` entry; `fields` is the text inside its
+    /// braces.
+    pub(crate) fn unit(mut self, fields: &str) -> Self {
+        self.units.push(fields.to_string());
+        self
+    }
+
+    /// Sets the `torque_control_mode` text.
+    pub(crate) fn torque_control_mode(mut self, text: &str) -> Self {
+        self.torque_control_mode = Some(text.to_string());
+        self
+    }
+
+    /// Gives the row named `name` a `range`.
+    pub(crate) fn row_range(mut self, name: &str, min: i64, max: i64) -> Self {
+        self.ranges.insert(name.to_string(), (min, max));
+        self
+    }
+
+    /// Removes the row named `name`, and its range.
     pub(crate) fn without(mut self, name: &str) -> Self {
         self.rows.retain(|row| row.2 != name);
+        self.ranges.remove(name);
         self
     }
 
@@ -182,10 +291,12 @@ impl Table {
         self
     }
 
-    /// Leaves out `source`, `protocols` or `operating_modes`.
+    /// Leaves out `source`, `unit_source`, `protocols` or
+    /// `operating_modes`.
     pub(crate) fn omit_field(mut self, field: &str) -> Self {
         match field {
             "source" => self.source = None,
+            "unit_source" => self.unit_source = None,
             "protocols" => self.protocols = None,
             "operating_modes" => self.operating_modes = None,
             _ => panic!("unknown field {field}"),
@@ -210,11 +321,17 @@ impl Table {
         if let Some(source) = &self.source {
             let _ = writeln!(out, "  source: {source},");
         }
+        if let Some(source) = &self.unit_source {
+            let _ = writeln!(out, "  unit_source: {source},");
+        }
         if let Some(protocols) = &self.protocols {
             let _ = writeln!(out, "  protocols: {protocols},");
         }
         if let Some(modes) = &self.operating_modes {
             let _ = writeln!(out, "  operating_modes: {modes},");
+        }
+        if let Some(mode) = &self.torque_control_mode {
+            let _ = writeln!(out, "  torque_control_mode: {mode},");
         }
         let (zero, min, max, min_rad, max_rad) = self.type_info;
         let _ = writeln!(
@@ -223,11 +340,21 @@ impl Table {
              value_of_max_radian_position: {max},\n    value_of_min_radian_position: {min},\n    \
              min_radian: {min_rad:?},\n    max_radian: {max_rad:?},\n  }},"
         );
-        out.push_str("  unit_info: [],\n  control_table: [\n");
+        out.push_str("  unit_info: [\n");
+        for fields in &self.units {
+            let _ = writeln!(out, "    {{ {fields} }},");
+        }
+        out.push_str("  ],\n  control_table: [\n");
         for (address, size, name, access, area) in &self.rows {
+            let range = self
+                .ranges
+                .get(name)
+                .map_or_else(String::new, |(min, max)| {
+                    format!(", range: (min: {min}, max: {max})")
+                });
             let _ = writeln!(
                 out,
-                "    {{ address: {address}, size: {size}, data_name: {name:?}, access: {access}, area: {area} }},"
+                "    {{ address: {address}, size: {size}, data_name: {name:?}, access: {access}, area: {area}{range} }},"
             );
         }
         out.push_str("  ],\n)\n");
@@ -456,9 +583,10 @@ impl Root {
     }
 }
 
-/// A root that fails exactly one check of data-model §3.
+/// A root that fails exactly one check of data-model §3, or one FR-9
+/// check (18 to 22, `fr9`).
 pub(crate) struct Failing {
-    /// The check number, 1 to 17.
+    /// The check number, 1 to 22.
     pub check: u8,
     /// The root.
     pub root: Root,
@@ -684,6 +812,48 @@ pub(crate) fn failing() -> Vec<Failing> {
             root: xm_root(Table::xm().omit_field("operating_modes")),
             file: "xm",
             keywords: &["\"Operating Mode\" row without operating_modes"],
+        },
+        Failing {
+            check: 18,
+            root: xm_root(Table::xm_fr9().unit_source("Unverified")),
+            file: "xm",
+            keywords: &["unit_source must be Verified"],
+        },
+        Failing {
+            check: 19,
+            root: xm_root(Table::xm_fr9().unit(
+                r#"data_name: "Goal PWM", value: 0.113, unit: "%", sign_type: "twos_complement""#,
+            )),
+            file: "xm",
+            keywords: &["unit_info \"Goal PWM\"", "names no row"],
+        },
+        Failing {
+            check: 20,
+            root: xm_root(Table::xm_fr9().operating_modes(
+                "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0])",
+            )),
+            file: "xm",
+            keywords: &["operating_modes", "all together"],
+        },
+        Failing {
+            check: 21,
+            root: Root::new(
+                &Map::single(12, "ax", "MX-64", "ax", &Table::mx_p1()),
+                &[(
+                    "ax",
+                    Table::mx_p1().torque_control_mode(
+                        r#"(register: "Torque Mode", on: 1, goal: "Goal Torque")"#,
+                    ),
+                )],
+            ),
+            file: "ax",
+            keywords: &["torque_control_mode", "\"Torque Mode\" names no row"],
+        },
+        Failing {
+            check: 22,
+            root: xm_root(Table::xm_fr9().with_row(42, 1, "Present Voltage", "R", "RAM")),
+            file: "xm",
+            keywords: &["role present_voltage has two rows"],
         },
     ]
 }

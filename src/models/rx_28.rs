@@ -2,11 +2,15 @@
 // Source: control_tables/rx_28.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, LimitRegisters, ModeSource, ModelData, Protocols,
+    Actuator, Cache, Describe, HasCcwComplianceMargin, HasCcwComplianceSlope,
+    HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMoving,
+    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
+    LimitMode, LimitRegisters, ModeScale, ModeSet, ModeSource, ModelData, Protocols, RoleRegister,
+    Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
-use crate::units::PositionScale;
+use crate::units::{PositionScale, RegisterScale, Sign};
 
 /// RX-28 (model number 28).
 ///
@@ -43,6 +47,21 @@ impl Rx28 {
         hardware_error: None,
         mode: ModeSource::AngleLimits,
         scale: PositionScale::new(512, 0, 1023, -2.620553, 2.6154346),
+        roles: Roles {
+            present_temperature: Some(<Self as HasPresentTemperature>::ROLE),
+            present_voltage: Some(<Self as HasPresentVoltage>::ROLE),
+            present_velocity: Some(<Self as HasPresentVelocity>::ROLE),
+            goal_velocity: Some(<Self as HasGoalVelocity>::ROLE),
+            speed_limit: Some(<Self as HasSpeedLimit>::ROLE),
+            present_load: Some(<Self as HasPresentLoad>::ROLE),
+            moving: Some(<Self as HasMoving>::ROLE),
+            led: Some(<Self as HasLed>::ROLE),
+            cw_compliance_margin: Some(<Self as HasCwComplianceMargin>::ROLE),
+            ccw_compliance_margin: Some(<Self as HasCcwComplianceMargin>::ROLE),
+            cw_compliance_slope: Some(<Self as HasCwComplianceSlope>::ROLE),
+            ccw_compliance_slope: Some(<Self as HasCcwComplianceSlope>::ROLE),
+            ..Roles::NONE
+        },
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -94,3 +113,165 @@ impl Describe for Rx28 {
 }
 
 impl Actuator for Rx28 {}
+
+/// Present Temperature: 1 °C per raw step in every mode.
+impl HasPresentTemperature for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Temperature",
+        register: Self::PRESENT_TEMPERATURE,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(1.0, Sign::Unsigned, 1, false),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Voltage: 0.1 V per raw step in every mode.
+impl HasPresentVoltage for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Voltage",
+        register: Self::PRESENT_VOLTAGE,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.1, Sign::Unsigned, 1, false),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Speed: 0.111 rpm per raw step in Bounded mode.
+/// No typed form for 0.1 % per raw step in Wheel mode: not a present velocity.
+impl HasPresentVelocity for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Speed",
+        register: Self::PRESENT_SPEED,
+        scales: &[ModeScale {
+            modes: ModeSet::of(&[LimitMode::Bounded]),
+            scale: RegisterScale::new(0.011623893, Sign::DirectionBit(10), 2, false),
+            range: Some((0, 2047)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: raw only, no unit in the table.
+/// No typed form for 0.1 % per raw step in Wheel mode: not a goal velocity.
+impl HasGoalVelocity for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: 0.111 rpm per raw step in Bounded mode, raw 0 meaning no limit.
+impl HasSpeedLimit for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[ModeScale {
+            modes: ModeSet::of(&[LimitMode::Bounded]),
+            scale: RegisterScale::new(0.011623893, Sign::Unsigned, 2, true),
+            range: Some((0, 1023)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Load: 0.1 % per raw step in every mode.
+impl HasPresentLoad for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Load",
+        register: Self::PRESENT_LOAD,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.001, Sign::DirectionBit(10), 2, false),
+            range: Some((0, 2047)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving: in register units, no scale.
+impl HasMoving for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving",
+        register: Self::MOVING,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// LED: in register units, no scale.
+impl HasLed for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "LED",
+        register: Self::LED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CW Compliance Margin: 0.29 deg per raw step in every mode.
+impl HasCwComplianceMargin for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CW Compliance Margin",
+        register: Self::CW_COMPLIANCE_MARGIN,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false),
+            range: Some((0, 255)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CCW Compliance Margin: 0.29 deg per raw step in every mode.
+impl HasCcwComplianceMargin for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CCW Compliance Margin",
+        register: Self::CCW_COMPLIANCE_MARGIN,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false),
+            range: Some((0, 255)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CW Compliance Slope: in register units, no scale.
+impl HasCwComplianceSlope for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CW Compliance Slope",
+        register: Self::CW_COMPLIANCE_SLOPE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// CCW Compliance Slope: in register units, no scale.
+impl HasCcwComplianceSlope for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CCW Compliance Slope",
+        register: Self::CCW_COMPLIANCE_SLOPE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}

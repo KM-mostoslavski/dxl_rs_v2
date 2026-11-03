@@ -3,6 +3,7 @@
 
 use std::fmt::Write as _;
 
+use super::fr9::{self, ALL, GenRole, GenScale, Quantity, SignKind};
 use super::names::const_ident;
 use super::resolve::{GenModel, Limits, ModeRole, Resolved};
 use super::schema::{Access, Area, ProtocolTag, Row, Source, TypeInfo};
@@ -160,22 +161,224 @@ pub(crate) fn limits_value(limits: &Limits) -> String {
     }
 }
 
-/// The `mode:` value of `DATA`.
+/// The `mode:` value of `DATA`. A table without the per-mode lists gets
+/// them empty, so its `no_position` values keep giving `LimitMode::Pwm`.
 pub(crate) fn mode_value(mode: &ModeRole) -> String {
+    let list = |l: &Option<Vec<u8>>| slice(l.as_deref().unwrap_or(&[]));
     match mode {
         ModeRole::Register { row, values } => format!(
-            "ModeSource::Register {{ register: {}, values: ModeValues {{ bounded: {}, unbounded: {}, no_position: {} }} }}",
+            "ModeSource::Register {{ register: {}, values: ModeValues {{ bounded: {}, unbounded: {}, no_position: {}, current: {}, velocity: {}, pwm: {}, current_position: {} }} }}",
             role(row),
             slice(&values.bounded),
             slice(&values.unbounded),
-            slice(&values.no_position)
+            slice(&values.no_position),
+            list(&values.current),
+            list(&values.velocity),
+            list(&values.pwm),
+            list(&values.current_position)
         ),
         ModeRole::AngleLimits => "ModeSource::AngleLimits".to_string(),
+        ModeRole::TorqueControl { row, on, values } => format!(
+            "ModeSource::TorqueControl {{ register: {}, on: {on}, values: ({}, {}) }}",
+            role(row),
+            values.0,
+            values.1
+        ),
     }
 }
 
+/// `ModeSet::ALL`, or `ModeSet::of(&[LimitMode::..])`.
+pub(crate) fn modes_value(modes: fr9::Modes) -> String {
+    if modes == ALL {
+        return "ModeSet::ALL".to_string();
+    }
+    let names: Vec<String> = fr9::mode_names(modes)
+        .into_iter()
+        .map(|m| format!("LimitMode::{m}"))
+        .collect();
+    format!("ModeSet::of(&[{}])", names.join(", "))
+}
+
+/// `Sign::..` for one sign encoding.
+pub(crate) fn sign_value(sign: SignKind) -> String {
+    match sign {
+        SignKind::Unsigned => "Sign::Unsigned".to_string(),
+        SignKind::TwosComplement => "Sign::TwosComplement".to_string(),
+        SignKind::DirectionBit(n) => format!("Sign::DirectionBit({n})"),
+    }
+}
+
+/// The SI step of a scale, in Rust's shortest `f32` form.
+pub(crate) fn si_literal(scale: &GenScale) -> String {
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the generated scale is an f32"
+    )]
+    let si = scale.si_per_raw as f32;
+    format!("{si:?}")
+}
+
+/// One `ModeScale { .. }` literal.
+fn mode_scale_value(scale: &GenScale) -> String {
+    let range = scale.range.map_or_else(
+        || "None".to_string(),
+        |(min, max)| format!("Some(({min}, {max}))"),
+    );
+    format!(
+        "ModeScale {{ modes: {}, scale: RegisterScale::new({}, {}, {}, {}), range: {range} }}",
+        modes_value(scale.modes),
+        si_literal(scale),
+        sign_value(scale.sign),
+        scale.size,
+        scale.zero_is_unlimited
+    )
+}
+
+/// `0.229 rpm per raw step in every mode, velocity-based profile`.
+fn unit_phrase(value: f64, unit: &str, modes: fr9::Modes, profile: Option<&str>) -> String {
+    let modes = if modes == ALL {
+        "every mode".to_string()
+    } else {
+        format!("{} mode", fr9::mode_names(modes).join(" and "))
+    };
+    let profile = profile.map_or_else(String::new, |p| {
+        format!(", {} profile", p.replace('_', "-"))
+    });
+    format!("{value} {unit} per raw step in {modes}{profile}")
+}
+
+/// The doc lines of one role's trait impl: the table's units per mode.
+fn role_doc(role: &GenRole) -> String {
+    let mut doc = if role.def.quantity == Quantity::Raw {
+        format!("/// {}: in register units, no scale.", role.row.data_name)
+    } else if role.scales.is_empty() {
+        format!(
+            "/// {}: raw only, no unit in the table.",
+            role.row.data_name
+        )
+    } else {
+        let parts: Vec<String> = role
+            .scales
+            .iter()
+            .map(|s| {
+                let phrase = unit_phrase(s.value, &s.unit, s.modes, s.profile.as_deref());
+                if s.zero_is_unlimited {
+                    format!("{phrase}, raw 0 meaning no limit")
+                } else {
+                    phrase
+                }
+            })
+            .collect();
+        format!("/// {}: {}.", role.row.data_name, parts.join("; "))
+    };
+    for untyped in &role.untyped {
+        let _ = write!(
+            doc,
+            "\n/// No typed form for {}: not a {}.",
+            unit_phrase(
+                untyped.value,
+                &untyped.unit,
+                untyped.modes,
+                untyped.profile.as_deref()
+            ),
+            role.def.field.replace('_', " ")
+        );
+    }
+    if role.scales.iter().any(|s| s.profile.is_some()) {
+        doc.push_str(
+            "\n/// The scale holds only with that Drive Mode profile; Setup does not read Drive Mode.",
+        );
+    }
+    if role.from_fw > 0 {
+        let _ = write!(doc, "\n/// From firmware v{} on.", role.from_fw);
+    }
+    doc
+}
+
+/// The Tier 2 trait impl of one role, holding its `RoleRegister`.
+fn render_role(out: &mut String, ty: &str, role: &GenRole) {
+    let scales: Vec<String> = role.scales.iter().map(mode_scale_value).collect();
+    let bounded_by = role.bounded_by.as_ref().map_or_else(
+        || "None".to_string(),
+        |row| format!("Some({})", self::role(row)),
+    );
+    let _ = writeln!(
+        out,
+        "{doc}\nimpl {has} for {ty} {{\n    const ROLE: RoleRegister = RoleRegister {{\n\
+         \x20       name: {name:?},\n\
+         \x20       register: {register},\n\
+         \x20       scales: &[{scales}],\n\
+         \x20       bounded_by: {bounded_by},\n\
+         \x20       from_fw: {from_fw},\n\
+         \x20   }};\n}}\n",
+        doc = role_doc(role),
+        has = role.def.has,
+        name = role.row.data_name,
+        register = self::role(&role.row),
+        scales = scales.join(", "),
+        from_fw = role.from_fw,
+    );
+}
+
+/// The `roles:` value of `DATA`.
+pub(crate) fn roles_value(model: &GenModel) -> String {
+    if model.typed.is_empty() {
+        return "Roles::NONE".to_string();
+    }
+    let fields: Vec<String> = model
+        .typed
+        .iter()
+        .map(|r| format!("{}: Some(<Self as {}>::ROLE)", r.def.field, r.def.has))
+        .collect();
+    let rest = if model.typed.len() < fr9::ROLES.len() {
+        ", ..Roles::NONE"
+    } else {
+        ""
+    };
+    format!("Roles {{ {}{rest} }}", fields.join(", "))
+}
+
+/// The `use` lines of a model file.
+fn model_imports(model: &GenModel) -> String {
+    let mut actuator: Vec<&str> = vec![
+        "Actuator",
+        "Cache",
+        "Describe",
+        "LimitRegisters",
+        "ModeSource",
+    ];
+    if matches!(model.roles.mode, ModeRole::Register { .. }) {
+        actuator.push("ModeValues");
+    }
+    actuator.extend(["ModelData", "Protocols", "Roles"]);
+    let scales = || model.typed.iter().flat_map(|r| r.scales.iter());
+    if scales().next().is_some() {
+        actuator.extend(["ModeScale", "ModeSet"]);
+    }
+    if scales().any(|s| s.modes != ALL) {
+        actuator.push("LimitMode");
+    }
+    if !model.typed.is_empty() {
+        actuator.push("RoleRegister");
+    }
+    actuator.extend(model.typed.iter().map(|r| r.def.has));
+    actuator.sort_unstable();
+    let units = if scales().next().is_some() {
+        "{PositionScale, RegisterScale, Sign}"
+    } else {
+        "PositionScale"
+    };
+    format!(
+        "use crate::actuator::{{{}}};\n\
+         use crate::id::Id;\n\
+         use crate::register::{{Access, Area, Register}};\n\
+         use crate::units::{units};\n",
+        actuator.join(", ")
+    )
+}
+
 /// The `scale:` value of `DATA`; radians in Rust's shortest `f32` form.
-pub(crate) fn scale_value(scale: &TypeInfo) -> String {
+pub(crate) fn position_scale_value(scale: &TypeInfo) -> String {
     format!(
         "PositionScale::new({}, {}, {}, {:?}, {:?})",
         scale.value_of_zero_radian_position,
@@ -190,18 +393,11 @@ fn render_model(model: &GenModel) -> String {
     let ty = &model.type_ident;
     let roles = &model.roles;
     let mut out = String::from(HEADER);
-    let mode_values = match roles.mode {
-        ModeRole::Register { .. } => " ModeValues,",
-        ModeRole::AngleLimits => "",
-    };
     let _ = writeln!(
         out,
-        "// Source: control_tables/{}.ron\n\n\
-         use crate::actuator::{{Actuator, Cache, Describe, LimitRegisters, ModeSource,{mode_values} ModelData, Protocols}};\n\
-         use crate::id::Id;\n\
-         use crate::register::{{Access, Area, Register}};\n\
-         use crate::units::PositionScale;\n",
-        model.file
+        "// Source: control_tables/{}.ron\n\n{}",
+        model.file,
+        model_imports(model)
     );
     let _ = writeln!(
         out,
@@ -232,6 +428,7 @@ fn render_model(model: &GenModel) -> String {
          \x20       hardware_error: {hardware_error},\n\
          \x20       mode: {mode},\n\
          \x20       scale: {scale},\n\
+         \x20       roles: {roles},\n\
          \x20   }};\n",
         name = model.name,
         number = model.number,
@@ -242,7 +439,8 @@ fn render_model(model: &GenModel) -> String {
         present = role(&roles.present_position),
         limits = limits_value(&roles.limits),
         mode = mode_value(&roles.mode),
-        scale = scale_value(&model.scale),
+        scale = position_scale_value(&model.scale),
+        roles = roles_value(model),
     );
     for (name, row) in &model.registers {
         let _ = writeln!(
@@ -259,6 +457,10 @@ fn render_model(model: &GenModel) -> String {
          \x20   fn cache_mut(&mut self) -> &mut Cache {{\n        &mut self.cache\n    }}\n}}\n"
     );
     let _ = writeln!(out, "impl Actuator for {ty} {{}}");
+    for role in &model.typed {
+        out.push('\n');
+        render_role(&mut out, ty, role);
+    }
     out
 }
 
@@ -364,6 +566,17 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
             model.module_ident, model.module_ident, model.type_ident
         );
     }
+
+    let mut traits: Vec<&str> = fr9::ROLES.iter().map(|r| r.has).collect();
+    traits.push("RoleRegister");
+    traits.sort_unstable();
+    let _ = writeln!(
+        out,
+        "\n/// The FR-9 typed registers: one trait per register role, implemented by\n\
+         /// each model type whose table has the register.\n\
+         pub use crate::actuator::{{{}}};",
+        traits.join(", ")
+    );
 
     if has_tests {
         out.push_str("\n#[cfg(test)]\nmod tests;\n");
@@ -488,7 +701,9 @@ mod tests {
         for part in [
             "limits:LimitRegisters::MinMax{min:Self::MIN_POSITION_LIMIT,max:Self::MAX_POSITION_LIMIT}",
             "hardware_error:Some(Self::HARDWARE_ERROR_STATUS)",
-            "mode:ModeSource::Register{register:Self::OPERATING_MODE,values:ModeValues{bounded:&[3],unbounded:&[4,5],no_position:&[0,1,16]}}",
+            "mode:ModeSource::Register{register:Self::OPERATING_MODE,values:ModeValues{bounded:&[3],unbounded:&[4,5],no_position:&[0,1,16],current:&[],velocity:&[],pwm:&[],current_position:&[]}}",
+            "roles:Roles{hardware_error_status:Some(<SelfasHasHardwareErrorStatus>::ROLE),..Roles::NONE},",
+            "implHasHardwareErrorStatusforXm{constROLE:RoleRegister=RoleRegister{name:\"HardwareErrorStatus\",register:Self::HARDWARE_ERROR_STATUS,scales:&[],bounded_by:None,from_fw:0,};}",
             "protocols:Protocols{p1:true,p2:true}",
             "implActuatorforXm{}",
             "implDescribeforXm{fndata(&self)->&'staticModelData{&Self::DATA}fncache(&self)->&Cache{&self.cache}fncache_mut(&mutself)->&mutCache{&mutself.cache}}",
@@ -502,7 +717,7 @@ mod tests {
         assert_eq!(
             uses(xm),
             [
-                "usecrate::actuator::{Actuator,Cache,Describe,LimitRegisters,ModeSource,ModeValues,ModelData,Protocols}",
+                "usecrate::actuator::{Actuator,Cache,Describe,HasHardwareErrorStatus,LimitRegisters,ModeSource,ModeValues,ModelData,Protocols,RoleRegister,Roles}",
                 "usecrate::id::Id",
                 "usecrate::register::{Access,Area,Register}",
                 "usecrate::units::PositionScale",
@@ -521,7 +736,7 @@ mod tests {
         assert!(c.contains("hardware_error:None"));
         assert!(c.contains("mode:ModeSource::AngleLimits"));
         assert!(uses(ax).contains(
-            &"usecrate::actuator::{Actuator,Cache,Describe,LimitRegisters,ModeSource,ModelData,Protocols}"
+            &"usecrate::actuator::{Actuator,Cache,Describe,LimitRegisters,ModeSource,ModelData,Protocols,Roles}"
                 .to_string()
         ));
     }
@@ -534,8 +749,121 @@ mod tests {
             "limits:LimitRegisters::CwCcw{cw:Self::CW_ANGLE_LIMIT,ccw:Self::CCW_ANGLE_LIMIT}"
         ));
         assert!(c.contains(
-            "mode:ModeSource::Register{register:Self::CONTROL_MODE,values:ModeValues{bounded:&[2],unbounded:&[],no_position:&[1]}}"
+            "mode:ModeSource::Register{register:Self::CONTROL_MODE,values:ModeValues{bounded:&[2],unbounded:&[],no_position:&[1],current:&[],velocity:&[],pwm:&[],current_position:&[]}}"
         ));
+    }
+
+    #[test]
+    fn model_file_with_fr9_roles() {
+        let files = one("ax", Table::ax_fr9());
+        let ax = file(&files, "models/ax.rs");
+        let c = compact(ax);
+        for part in [
+            "roles:Roles{present_temperature:Some(<SelfasHasPresentTemperature>::ROLE),",
+            "speed_limit:Some(<SelfasHasSpeedLimit>::ROLE),",
+            "..Roles::NONE}",
+            "implHasSpeedLimitforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[ModeScale{modes:ModeSet::of(&[LimitMode::Bounded]),scale:RegisterScale::new(0.011623893,Sign::Unsigned,2,true),range:Some((0,1023))}],bounded_by:None,from_fw:0,};}",
+            "implHasGoalVelocityforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[],",
+            "scale:RegisterScale::new(0.001,Sign::DirectionBit(10),2,false),range:Some((0,2047))",
+            "scale:RegisterScale::new(0.0050614546,Sign::Unsigned,1,false)",
+        ] {
+            assert!(c.contains(part), "{part}");
+        }
+        for line in [
+            "/// Moving Speed: 0.111 rpm per raw step in Bounded mode, raw 0 meaning no limit.",
+            "/// Moving Speed: raw only, no unit in the table.",
+            "/// No typed form for 0.1 % per raw step in Wheel mode: not a goal velocity.",
+            "/// Moving: in register units, no scale.",
+            "/// Present Load: 0.1 % per raw step in every mode.",
+        ] {
+            assert!(ax.lines().any(|l| l == line), "{line}");
+        }
+        let header = &uses(ax)[0];
+        for name in [
+            "HasSpeedLimit",
+            "LimitMode",
+            "ModeScale",
+            "ModeSet",
+            "RoleRegister",
+            "Roles",
+        ] {
+            assert!(header.contains(name), "{name}");
+        }
+        assert_eq!(
+            uses(ax)[3],
+            "usecrate::units::{PositionScale,RegisterScale,Sign}"
+        );
+    }
+
+    #[test]
+    fn model_file_with_torque_switch() {
+        let files = one("mx", Table::mx_p1());
+        let mx = file(&files, "models/mx.rs");
+        let c = compact(mx);
+        assert!(c.contains(
+            "mode:ModeSource::TorqueControl{register:Self::TORQUE_CTRL_MODE_ENABLE,on:1,values:(0,1)}"
+        ));
+        assert!(c.contains("implHasGoalCurrentforMx{constROLE:RoleRegister=RoleRegister{name:\"GoalTorque\",register:Self::GOAL_TORQUE,scales:&[ModeScale{modes:ModeSet::ALL,scale:RegisterScale::new(0.0045,Sign::DirectionBit(10),2,false),range:Some((0,2047))}]"));
+        assert!(c.contains("implHasTorqueCtrlModeEnableforMx{"));
+        assert!(c.contains("modes:ModeSet::of(&[LimitMode::Bounded,LimitMode::Unbounded])"));
+        assert!(c.contains("modes:ModeSet::of(&[LimitMode::Wheel])"));
+        assert!(c.contains("from_fw:40,"));
+        assert!(mx.contains(
+            "/// Realtime Tick: 1 ms per raw step in every mode.\n/// From firmware v40 on.\n"
+        ));
+        assert!(mx.contains(
+            "pub(crate) const TORQUE_CTRL_MODE_ENABLE: Register = super::reg(70, 1, Access::RW, Area::Ram);"
+        ));
+        assert!(!uses(mx)[0].contains("ModeValues"));
+    }
+
+    #[test]
+    fn model_file_with_profile_and_bounds() {
+        let files = one("xm", Table::xm_fr9());
+        let xm = file(&files, "models/xm.rs");
+        let c = compact(xm);
+        assert!(c.contains("current:&[0],velocity:&[1],pwm:&[16],current_position:&[5]"));
+        assert!(c.contains("register:Self::GOAL_VELOCITY,scales:&[ModeScale{modes:ModeSet::ALL,scale:RegisterScale::new(0.023980824,Sign::TwosComplement,4,false),range:None}],bounded_by:Some(Self::VELOCITY_LIMIT),"));
+        assert!(c.contains("bounded_by:Some(Self::CURRENT_LIMIT),"));
+        assert!(c.contains("RegisterScale::new(0.00269,Sign::TwosComplement,2,false)"));
+        for line in [
+            "/// Profile Velocity: 0.229 rpm per raw step in every mode, velocity-based profile, raw 0 meaning no limit.",
+            "/// No typed form for 1 ms per raw step in every mode, time-based profile: not a speed limit.",
+            "/// The scale holds only with that Drive Mode profile; Setup does not read Drive Mode.",
+        ] {
+            assert!(xm.lines().any(|l| l == line), "{line}");
+        }
+        assert!(!uses(xm)[0].contains("LimitMode"));
+    }
+
+    #[test]
+    fn module_reexports_the_role_traits() {
+        let files = one("xm", Table::xm());
+        let module = file(&files, "models.rs");
+        let c = compact(module);
+        assert!(c.contains("pubusecrate::actuator::{HasCcwComplianceMargin,"));
+        for role in &fr9::ROLES {
+            assert!(c.contains(&format!("{},", role.has)), "{}", role.has);
+        }
+        assert!(c.contains("RoleRegister};"));
+    }
+
+    #[test]
+    fn value_helpers() {
+        assert_eq!(
+            sign_value(SignKind::DirectionBit(10)),
+            "Sign::DirectionBit(10)"
+        );
+        assert_eq!(sign_value(SignKind::TwosComplement), "Sign::TwosComplement");
+        assert_eq!(modes_value(ALL), "ModeSet::ALL");
+        assert_eq!(
+            modes_value(0b100_0001),
+            "ModeSet::of(&[LimitMode::Bounded, LimitMode::Wheel])"
+        );
+        assert_eq!(
+            unit_phrase(1.0, "ms", ALL, Some("time_based")),
+            "1 ms per raw step in every mode, time-based profile"
+        );
     }
 
     #[test]

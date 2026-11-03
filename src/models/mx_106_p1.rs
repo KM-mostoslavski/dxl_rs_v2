@@ -2,7 +2,9 @@
 // Source: control_tables/mx_106_p1.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, LimitRegisters, ModeSource, ModelData, Protocols,
+    Actuator, Cache, Describe, HasDGain, HasGoalVelocity, HasLed, HasMoving, HasPGain,
+    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+    HasSpeedLimit, LimitRegisters, ModeSource, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -43,6 +45,20 @@ impl Mx106P1 {
         hardware_error: None,
         mode: ModeSource::AngleLimits,
         scale: PositionScale::new(2048, 0, 4095, -3.1415927, 3.1400588),
+        roles: Roles {
+            present_temperature: Some(<Self as HasPresentTemperature>::ROLE),
+            present_voltage: Some(<Self as HasPresentVoltage>::ROLE),
+            present_velocity: Some(<Self as HasPresentVelocity>::ROLE),
+            goal_velocity: Some(<Self as HasGoalVelocity>::ROLE),
+            speed_limit: Some(<Self as HasSpeedLimit>::ROLE),
+            present_load: Some(<Self as HasPresentLoad>::ROLE),
+            moving: Some(<Self as HasMoving>::ROLE),
+            led: Some(<Self as HasLed>::ROLE),
+            realtime_tick: Some(<Self as HasRealtimeTick>::ROLE),
+            p_gain: Some(<Self as HasPGain>::ROLE),
+            d_gain: Some(<Self as HasDGain>::ROLE),
+            ..Roles::NONE
+        },
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -101,3 +117,124 @@ impl Describe for Mx106P1 {
 }
 
 impl Actuator for Mx106P1 {}
+
+/// Present Temperature: raw only, no unit in the table.
+impl HasPresentTemperature for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Temperature",
+        register: Self::PRESENT_TEMPERATURE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Voltage: raw only, no unit in the table.
+impl HasPresentVoltage for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Voltage",
+        register: Self::PRESENT_VOLTAGE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Speed: raw only, no unit in the table.
+impl HasPresentVelocity for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Speed",
+        register: Self::PRESENT_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: raw only, no unit in the table.
+impl HasGoalVelocity for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving Speed: raw only, no unit in the table.
+impl HasSpeedLimit for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: Self::MOVING_SPEED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Load: raw only, no unit in the table.
+impl HasPresentLoad for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Load",
+        register: Self::PRESENT_LOAD,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Moving: in register units, no scale.
+impl HasMoving for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving",
+        register: Self::MOVING,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// LED: in register units, no scale.
+impl HasLed for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "LED",
+        register: Self::LED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Realtime Tick: raw only, no unit in the table.
+impl HasRealtimeTick for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Realtime Tick",
+        register: Self::REALTIME_TICK,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// P Gain: in register units, no scale.
+impl HasPGain for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "P Gain",
+        register: Self::P_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// D Gain: in register units, no scale.
+impl HasDGain for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "D Gain",
+        register: Self::D_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}

@@ -2,11 +2,14 @@
 // Source: control_tables/xm430_w350.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, LimitRegisters, ModeSource, ModeValues, ModelData, Protocols,
+    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+    HasLed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
+    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitRegisters, ModeScale, ModeSet,
+    ModeSource, ModeValues, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
-use crate::units::PositionScale;
+use crate::units::{PositionScale, RegisterScale, Sign};
 
 /// XM430-W350 (model number 1020).
 ///
@@ -44,9 +47,29 @@ impl Xm430W350 {
                 bounded: &[3],
                 unbounded: &[4, 5],
                 no_position: &[0, 1, 16],
+                current: &[0],
+                velocity: &[1],
+                pwm: &[16],
+                current_position: &[5],
             },
         },
         scale: PositionScale::new(2048, 0, 4095, -3.1415927, 3.1400588),
+        roles: Roles {
+            present_temperature: Some(<Self as HasPresentTemperature>::ROLE),
+            present_voltage: Some(<Self as HasPresentVoltage>::ROLE),
+            present_velocity: Some(<Self as HasPresentVelocity>::ROLE),
+            goal_velocity: Some(<Self as HasGoalVelocity>::ROLE),
+            speed_limit: Some(<Self as HasSpeedLimit>::ROLE),
+            present_current: Some(<Self as HasPresentCurrent>::ROLE),
+            goal_current: Some(<Self as HasGoalCurrent>::ROLE),
+            moving: Some(<Self as HasMoving>::ROLE),
+            led: Some(<Self as HasLed>::ROLE),
+            hardware_error_status: Some(<Self as HasHardwareErrorStatus>::ROLE),
+            realtime_tick: Some(<Self as HasRealtimeTick>::ROLE),
+            p_gain: Some(<Self as HasPGain>::ROLE),
+            d_gain: Some(<Self as HasDGain>::ROLE),
+            ..Roles::NONE
+        },
     };
 
     pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
@@ -119,3 +142,180 @@ impl Describe for Xm430W350 {
 }
 
 impl Actuator for Xm430W350 {}
+
+/// Present Temperature: 1 °C per raw step in every mode.
+impl HasPresentTemperature for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Temperature",
+        register: Self::PRESENT_TEMPERATURE,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(1.0, Sign::Unsigned, 1, false),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Input Voltage: 0.1 V per raw step in every mode.
+impl HasPresentVoltage for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Input Voltage",
+        register: Self::PRESENT_INPUT_VOLTAGE,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.1, Sign::Unsigned, 2, false),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Velocity: 0.229 rpm per raw step in every mode.
+impl HasPresentVelocity for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Velocity",
+        register: Self::PRESENT_VELOCITY,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.023980824, Sign::TwosComplement, 4, false),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Goal Velocity: 0.229 rpm per raw step in every mode.
+impl HasGoalVelocity for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Goal Velocity",
+        register: Self::GOAL_VELOCITY,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.023980824, Sign::TwosComplement, 4, false),
+            range: None,
+        }],
+        bounded_by: Some(Self::VELOCITY_LIMIT),
+        from_fw: 0,
+    };
+}
+
+/// Profile Velocity: 0.229 rpm per raw step in every mode, velocity-based profile, raw 0 meaning no limit.
+/// No typed form for 1 ms per raw step in every mode, time-based profile: not a speed limit.
+/// The scale holds only with that Drive Mode profile; Setup does not read Drive Mode.
+impl HasSpeedLimit for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Profile Velocity",
+        register: Self::PROFILE_VELOCITY,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.023980824, Sign::Unsigned, 4, true),
+            range: Some((0, 32767)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Present Current: 2.69 mA per raw step in every mode.
+impl HasPresentCurrent for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Present Current",
+        register: Self::PRESENT_CURRENT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.00269, Sign::TwosComplement, 2, false),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Goal Current: 2.69 mA per raw step in every mode.
+impl HasGoalCurrent for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Goal Current",
+        register: Self::GOAL_CURRENT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.00269, Sign::TwosComplement, 2, false),
+            range: None,
+        }],
+        bounded_by: Some(Self::CURRENT_LIMIT),
+        from_fw: 0,
+    };
+}
+
+/// Moving: in register units, no scale.
+impl HasMoving for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving",
+        register: Self::MOVING,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// LED: in register units, no scale.
+impl HasLed for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "LED",
+        register: Self::LED,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Hardware Error Status: in register units, no scale.
+impl HasHardwareErrorStatus for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Hardware Error Status",
+        register: Self::HARDWARE_ERROR_STATUS,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Realtime Tick: 1 ms per raw step in every mode.
+impl HasRealtimeTick for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Realtime Tick",
+        register: Self::REALTIME_TICK,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: RegisterScale::new(0.001, Sign::Unsigned, 2, false),
+            range: Some((0, 32767)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Position P Gain: in register units, no scale.
+impl HasPGain for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Position P Gain",
+        register: Self::POSITION_P_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}
+
+/// Position D Gain: in register units, no scale.
+impl HasDGain for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Position D Gain",
+        register: Self::POSITION_D_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+    };
+}

@@ -12,6 +12,66 @@ fn id() -> Id {
     Id::new(1).unwrap()
 }
 
+/// Every limit mode.
+#[cfg(any(
+    feature = "ax",
+    feature = "mx",
+    feature = "pro",
+    feature = "rx",
+    feature = "x-series",
+    feature = "y-series"
+))]
+const ALL_MODES: [crate::actuator::LimitMode; 7] = {
+    use crate::actuator::LimitMode;
+    [
+        LimitMode::Bounded,
+        LimitMode::Unbounded,
+        LimitMode::Pwm,
+        LimitMode::UnboundedCurrent,
+        LimitMode::Velocity,
+        LimitMode::Current,
+        LimitMode::Wheel,
+    ]
+};
+
+/// Whether `got` is `want` to `f32` precision.
+#[cfg(any(
+    feature = "ax",
+    feature = "mx",
+    feature = "pro",
+    feature = "rx",
+    feature = "x-series",
+    feature = "y-series"
+))]
+fn close(got: f32, want: f32) -> bool {
+    (got - want).abs() <= 1e-5 * want.abs().max(1.0)
+}
+
+/// The Tier 1 lookup of a role finds the Tier 2 trait's register.
+#[cfg(any(
+    feature = "ax",
+    feature = "mx",
+    feature = "pro",
+    feature = "rx",
+    feature = "x-series",
+    feature = "y-series"
+))]
+fn same_role(
+    found: Option<&crate::actuator::RoleRegister>,
+    tier2: crate::actuator::RoleRegister,
+    register: crate::register::Register,
+    name: &str,
+) {
+    assert_eq!(found, Some(&tier2), "{name}");
+    assert_eq!(tier2.register(), register, "{name}");
+    assert_eq!(
+        (tier2.address(), tier2.size()),
+        (register.addr, register.size),
+        "{name}"
+    );
+    assert_eq!(tier2.name(), name);
+}
+
 #[test]
 fn unknown_model_number() {
     let id = id();
@@ -4981,4 +5041,14890 @@ fn h54_200_s500_ra_describe_round_trip() {
     expected.record_mode(LimitMode::Unbounded);
     assert!(expected.record_limits(10, 20).is_ok());
     assert_eq!(*kind.cache(), expected);
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_12a_roles() {
+    use crate::actuator::{
+        HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
+        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ax12a;
+    use crate::units::{Sign, SpeedLimit};
+
+    let data = &Ax12a::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Ax12a as HasPresentTemperature>::ROLE,
+            Ax12a::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Ax12a as HasPresentVoltage>::ROLE,
+            Ax12a::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ax12a as HasPresentVelocity>::ROLE,
+            Ax12a::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ax12a as HasGoalVelocity>::ROLE,
+            Ax12a::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ax12a as HasSpeedLimit>::ROLE,
+            Ax12a::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Ax12a as HasPresentLoad>::ROLE,
+            Ax12a::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Ax12a as HasMoving>::ROLE,
+            Ax12a::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Ax12a as HasLed>::ROLE, Ax12a::LED, "LED"),
+        (
+            Role::CwComplianceMargin,
+            <Ax12a as HasCwComplianceMargin>::ROLE,
+            Ax12a::CW_COMPLIANCE_MARGIN,
+            "CW Compliance Margin",
+        ),
+        (
+            Role::CcwComplianceMargin,
+            <Ax12a as HasCcwComplianceMargin>::ROLE,
+            Ax12a::CCW_COMPLIANCE_MARGIN,
+            "CCW Compliance Margin",
+        ),
+        (
+            Role::CwComplianceSlope,
+            <Ax12a as HasCwComplianceSlope>::ROLE,
+            Ax12a::CW_COMPLIANCE_SLOPE,
+            "CW Compliance Slope",
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Ax12a as HasCcwComplianceSlope>::ROLE,
+            Ax12a::CCW_COMPLIANCE_SLOPE,
+            "CCW Compliance Slope",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::RealtimeTick,
+        Role::PGain,
+        Role::DGain,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::GoalVelocity,
+            <Ax12a as HasGoalVelocity>::ROLE,
+            Ax12a::MOVING_SPEED,
+        ),
+        (Role::Moving, <Ax12a as HasMoving>::ROLE, Ax12a::MOVING),
+        (Role::Led, <Ax12a as HasLed>::ROLE, Ax12a::LED),
+        (
+            Role::CwComplianceSlope,
+            <Ax12a as HasCwComplianceSlope>::ROLE,
+            Ax12a::CW_COMPLIANCE_SLOPE,
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Ax12a as HasCcwComplianceSlope>::ROLE,
+            Ax12a::CCW_COMPLIANCE_SLOPE,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+    {
+        let role = <Ax12a as HasPresentTemperature>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentTemperature, LimitMode::Bounded),
+                Some((Ax12a::PRESENT_TEMPERATURE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasPresentVoltage>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVoltage, LimitMode::Bounded),
+                Some((Ax12a::PRESENT_VOLTAGE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasPresentVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        for mode in [
+            LimitMode::Unbounded,
+            LimitMode::Pwm,
+            LimitMode::UnboundedCurrent,
+            LimitMode::Velocity,
+            LimitMode::Current,
+            LimitMode::Wheel,
+        ] {
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(
+                data.typed(Role::PresentVelocity, mode),
+                Some((Ax12a::PRESENT_SPEED, None))
+            );
+        }
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 1.1623893));
+            assert!(close(scale.velocity(1124).rad_per_s(), -1.1623893));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=2047));
+            let mode = LimitMode::Bounded;
+            assert_eq!(role.scale(mode), Some(scale));
+            assert_eq!(
+                data.typed(Role::PresentVelocity, LimitMode::Bounded),
+                Some((Ax12a::PRESENT_SPEED, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasSpeedLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        for mode in [
+            LimitMode::Unbounded,
+            LimitMode::Pwm,
+            LimitMode::UnboundedCurrent,
+            LimitMode::Velocity,
+            LimitMode::Current,
+            LimitMode::Wheel,
+        ] {
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(
+                data.typed(Role::SpeedLimit, mode),
+                Some((Ax12a::MOVING_SPEED, None))
+            );
+        }
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, true)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 1.1623893));
+            assert_eq!(scale.speed_limit(0), SpeedLimit::Unlimited);
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=1023));
+            let mode = LimitMode::Bounded;
+            assert_eq!(role.scale(mode), Some(scale));
+            assert_eq!(
+                data.typed(Role::SpeedLimit, LimitMode::Bounded),
+                Some((Ax12a::MOVING_SPEED, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasPresentLoad>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.load(100).ratio(), 0.1));
+            assert!(close(scale.load(1124).ratio(), -0.1));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=2047));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentLoad, LimitMode::Bounded),
+                Some((Ax12a::PRESENT_LOAD, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasCwComplianceMargin>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.5061455));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=255));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::CwComplianceMargin, LimitMode::Bounded),
+                Some((Ax12a::CW_COMPLIANCE_MARGIN, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasCcwComplianceMargin>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.5061455));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=255));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::CcwComplianceMargin, LimitMode::Bounded),
+                Some((Ax12a::CCW_COMPLIANCE_MARGIN, Some(scale)))
+            );
+        }
+    }
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_12a_mode_source() {
+    use crate::models::Ax12a;
+    use crate::units::Limits;
+
+    let mode = Ax12a::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), None);
+    for value in [0, u8::MAX] {
+        assert_eq!(mode.limit_mode(value, limits), None);
+    }
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_18a_roles() {
+    use crate::actuator::{
+        HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
+        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ax18a;
+
+    let data = &Ax18a::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Ax18a as HasPresentTemperature>::ROLE,
+            Ax18a::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Ax18a as HasPresentVoltage>::ROLE,
+            Ax18a::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ax18a as HasPresentVelocity>::ROLE,
+            Ax18a::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ax18a as HasGoalVelocity>::ROLE,
+            Ax18a::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ax18a as HasSpeedLimit>::ROLE,
+            Ax18a::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Ax18a as HasPresentLoad>::ROLE,
+            Ax18a::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Ax18a as HasMoving>::ROLE,
+            Ax18a::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Ax18a as HasLed>::ROLE, Ax18a::LED, "LED"),
+        (
+            Role::CwComplianceMargin,
+            <Ax18a as HasCwComplianceMargin>::ROLE,
+            Ax18a::CW_COMPLIANCE_MARGIN,
+            "CW Compliance Margin",
+        ),
+        (
+            Role::CcwComplianceMargin,
+            <Ax18a as HasCcwComplianceMargin>::ROLE,
+            Ax18a::CCW_COMPLIANCE_MARGIN,
+            "CCW Compliance Margin",
+        ),
+        (
+            Role::CwComplianceSlope,
+            <Ax18a as HasCwComplianceSlope>::ROLE,
+            Ax18a::CW_COMPLIANCE_SLOPE,
+            "CW Compliance Slope",
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Ax18a as HasCcwComplianceSlope>::ROLE,
+            Ax18a::CCW_COMPLIANCE_SLOPE,
+            "CCW Compliance Slope",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::RealtimeTick,
+        Role::PGain,
+        Role::DGain,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Ax18a as HasPresentTemperature>::ROLE,
+            Ax18a::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Ax18a as HasPresentVoltage>::ROLE,
+            Ax18a::PRESENT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ax18a as HasPresentVelocity>::ROLE,
+            Ax18a::PRESENT_SPEED,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ax18a as HasGoalVelocity>::ROLE,
+            Ax18a::MOVING_SPEED,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ax18a as HasSpeedLimit>::ROLE,
+            Ax18a::MOVING_SPEED,
+        ),
+        (
+            Role::PresentLoad,
+            <Ax18a as HasPresentLoad>::ROLE,
+            Ax18a::PRESENT_LOAD,
+        ),
+        (Role::Moving, <Ax18a as HasMoving>::ROLE, Ax18a::MOVING),
+        (Role::Led, <Ax18a as HasLed>::ROLE, Ax18a::LED),
+        (
+            Role::CwComplianceMargin,
+            <Ax18a as HasCwComplianceMargin>::ROLE,
+            Ax18a::CW_COMPLIANCE_MARGIN,
+        ),
+        (
+            Role::CcwComplianceMargin,
+            <Ax18a as HasCcwComplianceMargin>::ROLE,
+            Ax18a::CCW_COMPLIANCE_MARGIN,
+        ),
+        (
+            Role::CwComplianceSlope,
+            <Ax18a as HasCwComplianceSlope>::ROLE,
+            Ax18a::CW_COMPLIANCE_SLOPE,
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Ax18a as HasCcwComplianceSlope>::ROLE,
+            Ax18a::CCW_COMPLIANCE_SLOPE,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_18a_mode_source() {
+    use crate::models::Ax18a;
+    use crate::units::Limits;
+
+    let mode = Ax18a::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), None);
+    for value in [0, u8::MAX] {
+        assert_eq!(mode.limit_mode(value, limits), None);
+    }
+}
+
+#[cfg(feature = "rx")]
+#[test]
+fn rx_28_roles() {
+    use crate::actuator::{
+        HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
+        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Rx28;
+    use crate::units::{Sign, SpeedLimit};
+
+    let data = &Rx28::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Rx28 as HasPresentTemperature>::ROLE,
+            Rx28::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Rx28 as HasPresentVoltage>::ROLE,
+            Rx28::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Rx28 as HasPresentVelocity>::ROLE,
+            Rx28::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Rx28 as HasGoalVelocity>::ROLE,
+            Rx28::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Rx28 as HasSpeedLimit>::ROLE,
+            Rx28::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Rx28 as HasPresentLoad>::ROLE,
+            Rx28::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Rx28 as HasMoving>::ROLE,
+            Rx28::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Rx28 as HasLed>::ROLE, Rx28::LED, "LED"),
+        (
+            Role::CwComplianceMargin,
+            <Rx28 as HasCwComplianceMargin>::ROLE,
+            Rx28::CW_COMPLIANCE_MARGIN,
+            "CW Compliance Margin",
+        ),
+        (
+            Role::CcwComplianceMargin,
+            <Rx28 as HasCcwComplianceMargin>::ROLE,
+            Rx28::CCW_COMPLIANCE_MARGIN,
+            "CCW Compliance Margin",
+        ),
+        (
+            Role::CwComplianceSlope,
+            <Rx28 as HasCwComplianceSlope>::ROLE,
+            Rx28::CW_COMPLIANCE_SLOPE,
+            "CW Compliance Slope",
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Rx28 as HasCcwComplianceSlope>::ROLE,
+            Rx28::CCW_COMPLIANCE_SLOPE,
+            "CCW Compliance Slope",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::RealtimeTick,
+        Role::PGain,
+        Role::DGain,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::GoalVelocity,
+            <Rx28 as HasGoalVelocity>::ROLE,
+            Rx28::MOVING_SPEED,
+        ),
+        (Role::Moving, <Rx28 as HasMoving>::ROLE, Rx28::MOVING),
+        (Role::Led, <Rx28 as HasLed>::ROLE, Rx28::LED),
+        (
+            Role::CwComplianceSlope,
+            <Rx28 as HasCwComplianceSlope>::ROLE,
+            Rx28::CW_COMPLIANCE_SLOPE,
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Rx28 as HasCcwComplianceSlope>::ROLE,
+            Rx28::CCW_COMPLIANCE_SLOPE,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+    {
+        let role = <Rx28 as HasPresentTemperature>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentTemperature, LimitMode::Bounded),
+                Some((Rx28::PRESENT_TEMPERATURE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasPresentVoltage>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVoltage, LimitMode::Bounded),
+                Some((Rx28::PRESENT_VOLTAGE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasPresentVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        for mode in [
+            LimitMode::Unbounded,
+            LimitMode::Pwm,
+            LimitMode::UnboundedCurrent,
+            LimitMode::Velocity,
+            LimitMode::Current,
+            LimitMode::Wheel,
+        ] {
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(
+                data.typed(Role::PresentVelocity, mode),
+                Some((Rx28::PRESENT_SPEED, None))
+            );
+        }
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 1.1623893));
+            assert!(close(scale.velocity(1124).rad_per_s(), -1.1623893));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=2047));
+            let mode = LimitMode::Bounded;
+            assert_eq!(role.scale(mode), Some(scale));
+            assert_eq!(
+                data.typed(Role::PresentVelocity, LimitMode::Bounded),
+                Some((Rx28::PRESENT_SPEED, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasSpeedLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        for mode in [
+            LimitMode::Unbounded,
+            LimitMode::Pwm,
+            LimitMode::UnboundedCurrent,
+            LimitMode::Velocity,
+            LimitMode::Current,
+            LimitMode::Wheel,
+        ] {
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(
+                data.typed(Role::SpeedLimit, mode),
+                Some((Rx28::MOVING_SPEED, None))
+            );
+        }
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, true)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 1.1623893));
+            assert_eq!(scale.speed_limit(0), SpeedLimit::Unlimited);
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=1023));
+            let mode = LimitMode::Bounded;
+            assert_eq!(role.scale(mode), Some(scale));
+            assert_eq!(
+                data.typed(Role::SpeedLimit, LimitMode::Bounded),
+                Some((Rx28::MOVING_SPEED, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasPresentLoad>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.load(100).ratio(), 0.1));
+            assert!(close(scale.load(1124).ratio(), -0.1));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=2047));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentLoad, LimitMode::Bounded),
+                Some((Rx28::PRESENT_LOAD, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasCwComplianceMargin>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.5061455));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=255));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::CwComplianceMargin, LimitMode::Bounded),
+                Some((Rx28::CW_COMPLIANCE_MARGIN, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasCcwComplianceMargin>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.5061455));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=255));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::CcwComplianceMargin, LimitMode::Bounded),
+                Some((Rx28::CCW_COMPLIANCE_MARGIN, Some(scale)))
+            );
+        }
+    }
+}
+
+#[cfg(feature = "rx")]
+#[test]
+fn rx_28_mode_source() {
+    use crate::models::Rx28;
+    use crate::units::Limits;
+
+    let mode = Rx28::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), None);
+    for value in [0, u8::MAX] {
+        assert_eq!(mode.limit_mode(value, limits), None);
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_28_p1_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasLed, HasMoving, HasPGain, HasPresentLoad,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Mx28P1;
+
+    let data = &Mx28P1::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Mx28P1 as HasPresentTemperature>::ROLE,
+            Mx28P1::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx28P1 as HasPresentVoltage>::ROLE,
+            Mx28P1::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx28P1 as HasPresentVelocity>::ROLE,
+            Mx28P1::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx28P1 as HasGoalVelocity>::ROLE,
+            Mx28P1::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx28P1 as HasSpeedLimit>::ROLE,
+            Mx28P1::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Mx28P1 as HasPresentLoad>::ROLE,
+            Mx28P1::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Mx28P1 as HasMoving>::ROLE,
+            Mx28P1::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Mx28P1 as HasLed>::ROLE, Mx28P1::LED, "LED"),
+        (
+            Role::RealtimeTick,
+            <Mx28P1 as HasRealtimeTick>::ROLE,
+            Mx28P1::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Mx28P1 as HasPGain>::ROLE,
+            Mx28P1::P_GAIN,
+            "P Gain",
+        ),
+        (
+            Role::DGain,
+            <Mx28P1 as HasDGain>::ROLE,
+            Mx28P1::D_GAIN,
+            "D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Mx28P1 as HasPresentTemperature>::ROLE,
+            Mx28P1::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx28P1 as HasPresentVoltage>::ROLE,
+            Mx28P1::PRESENT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx28P1 as HasPresentVelocity>::ROLE,
+            Mx28P1::PRESENT_SPEED,
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx28P1 as HasGoalVelocity>::ROLE,
+            Mx28P1::MOVING_SPEED,
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx28P1 as HasSpeedLimit>::ROLE,
+            Mx28P1::MOVING_SPEED,
+        ),
+        (
+            Role::PresentLoad,
+            <Mx28P1 as HasPresentLoad>::ROLE,
+            Mx28P1::PRESENT_LOAD,
+        ),
+        (Role::Moving, <Mx28P1 as HasMoving>::ROLE, Mx28P1::MOVING),
+        (Role::Led, <Mx28P1 as HasLed>::ROLE, Mx28P1::LED),
+        (
+            Role::RealtimeTick,
+            <Mx28P1 as HasRealtimeTick>::ROLE,
+            Mx28P1::REALTIME_TICK,
+        ),
+        (Role::PGain, <Mx28P1 as HasPGain>::ROLE, Mx28P1::P_GAIN),
+        (Role::DGain, <Mx28P1 as HasDGain>::ROLE, Mx28P1::D_GAIN),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_28_p1_mode_source() {
+    use crate::models::Mx28P1;
+    use crate::units::Limits;
+
+    let mode = Mx28P1::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), None);
+    for value in [0, u8::MAX] {
+        assert_eq!(mode.limit_mode(value, limits), None);
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_28_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
+        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Mx28;
+
+    let data = &Mx28::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Mx28 as HasPresentTemperature>::ROLE,
+            Mx28::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx28 as HasPresentVoltage>::ROLE,
+            Mx28::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx28 as HasPresentVelocity>::ROLE,
+            Mx28::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx28 as HasGoalVelocity>::ROLE,
+            Mx28::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx28 as HasSpeedLimit>::ROLE,
+            Mx28::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentLoad,
+            <Mx28 as HasPresentLoad>::ROLE,
+            Mx28::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Mx28 as HasMoving>::ROLE,
+            Mx28::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Mx28 as HasLed>::ROLE, Mx28::LED, "LED"),
+        (
+            Role::HardwareErrorStatus,
+            <Mx28 as HasHardwareErrorStatus>::ROLE,
+            Mx28::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Mx28 as HasRealtimeTick>::ROLE,
+            Mx28::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Mx28 as HasPGain>::ROLE,
+            Mx28::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Mx28 as HasDGain>::ROLE,
+            Mx28::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Mx28 as HasPresentTemperature>::ROLE,
+            Mx28::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx28 as HasPresentVoltage>::ROLE,
+            Mx28::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx28 as HasPresentVelocity>::ROLE,
+            Mx28::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx28 as HasGoalVelocity>::ROLE,
+            Mx28::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx28 as HasSpeedLimit>::ROLE,
+            Mx28::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentLoad,
+            <Mx28 as HasPresentLoad>::ROLE,
+            Mx28::PRESENT_LOAD,
+        ),
+        (Role::Moving, <Mx28 as HasMoving>::ROLE, Mx28::MOVING),
+        (Role::Led, <Mx28 as HasLed>::ROLE, Mx28::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Mx28 as HasHardwareErrorStatus>::ROLE,
+            Mx28::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Mx28 as HasRealtimeTick>::ROLE,
+            Mx28::REALTIME_TICK,
+        ),
+        (Role::PGain, <Mx28 as HasPGain>::ROLE, Mx28::POSITION_P_GAIN),
+        (Role::DGain, <Mx28 as HasDGain>::ROLE, Mx28::POSITION_D_GAIN),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_28_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Mx28;
+    use crate::units::Limits;
+
+    let mode = Mx28::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Mx28::OPERATING_MODE));
+    for (value, expected) in [
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (0, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_12w_roles() {
+    use crate::actuator::{
+        HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
+        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ax12w;
+
+    let data = &Ax12w::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Ax12w as HasPresentTemperature>::ROLE,
+            Ax12w::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Ax12w as HasPresentVoltage>::ROLE,
+            Ax12w::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ax12w as HasPresentVelocity>::ROLE,
+            Ax12w::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ax12w as HasGoalVelocity>::ROLE,
+            Ax12w::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ax12w as HasSpeedLimit>::ROLE,
+            Ax12w::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Ax12w as HasPresentLoad>::ROLE,
+            Ax12w::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Ax12w as HasMoving>::ROLE,
+            Ax12w::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Ax12w as HasLed>::ROLE, Ax12w::LED, "LED"),
+        (
+            Role::CwComplianceMargin,
+            <Ax12w as HasCwComplianceMargin>::ROLE,
+            Ax12w::CW_COMPLIANCE_MARGIN,
+            "CW Compliance Margin",
+        ),
+        (
+            Role::CcwComplianceMargin,
+            <Ax12w as HasCcwComplianceMargin>::ROLE,
+            Ax12w::CCW_COMPLIANCE_MARGIN,
+            "CCW Compliance Margin",
+        ),
+        (
+            Role::CwComplianceSlope,
+            <Ax12w as HasCwComplianceSlope>::ROLE,
+            Ax12w::CW_COMPLIANCE_SLOPE,
+            "CW Compliance Slope",
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Ax12w as HasCcwComplianceSlope>::ROLE,
+            Ax12w::CCW_COMPLIANCE_SLOPE,
+            "CCW Compliance Slope",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::RealtimeTick,
+        Role::PGain,
+        Role::DGain,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Ax12w as HasPresentTemperature>::ROLE,
+            Ax12w::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Ax12w as HasPresentVoltage>::ROLE,
+            Ax12w::PRESENT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ax12w as HasPresentVelocity>::ROLE,
+            Ax12w::PRESENT_SPEED,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ax12w as HasGoalVelocity>::ROLE,
+            Ax12w::MOVING_SPEED,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ax12w as HasSpeedLimit>::ROLE,
+            Ax12w::MOVING_SPEED,
+        ),
+        (
+            Role::PresentLoad,
+            <Ax12w as HasPresentLoad>::ROLE,
+            Ax12w::PRESENT_LOAD,
+        ),
+        (Role::Moving, <Ax12w as HasMoving>::ROLE, Ax12w::MOVING),
+        (Role::Led, <Ax12w as HasLed>::ROLE, Ax12w::LED),
+        (
+            Role::CwComplianceMargin,
+            <Ax12w as HasCwComplianceMargin>::ROLE,
+            Ax12w::CW_COMPLIANCE_MARGIN,
+        ),
+        (
+            Role::CcwComplianceMargin,
+            <Ax12w as HasCcwComplianceMargin>::ROLE,
+            Ax12w::CCW_COMPLIANCE_MARGIN,
+        ),
+        (
+            Role::CwComplianceSlope,
+            <Ax12w as HasCwComplianceSlope>::ROLE,
+            Ax12w::CW_COMPLIANCE_SLOPE,
+        ),
+        (
+            Role::CcwComplianceSlope,
+            <Ax12w as HasCcwComplianceSlope>::ROLE,
+            Ax12w::CCW_COMPLIANCE_SLOPE,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "ax")]
+#[test]
+fn ax_12w_mode_source() {
+    use crate::models::Ax12w;
+    use crate::units::Limits;
+
+    let mode = Ax12w::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), None);
+    for value in [0, u8::MAX] {
+        assert_eq!(mode.limit_mode(value, limits), None);
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_64_p1_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMoving, HasPGain, HasPresentLoad,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTorqueCtrlModeEnable, LimitMode, Role,
+    };
+    use crate::models::Mx64P1;
+    use crate::units::{Sign, SpeedLimit};
+
+    let data = &Mx64P1::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Mx64P1 as HasPresentTemperature>::ROLE,
+            Mx64P1::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx64P1 as HasPresentVoltage>::ROLE,
+            Mx64P1::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx64P1 as HasPresentVelocity>::ROLE,
+            Mx64P1::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx64P1 as HasGoalVelocity>::ROLE,
+            Mx64P1::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx64P1 as HasSpeedLimit>::ROLE,
+            Mx64P1::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Mx64P1 as HasPresentLoad>::ROLE,
+            Mx64P1::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::GoalCurrent,
+            <Mx64P1 as HasGoalCurrent>::ROLE,
+            Mx64P1::GOAL_TORQUE,
+            "Goal Torque",
+        ),
+        (
+            Role::Moving,
+            <Mx64P1 as HasMoving>::ROLE,
+            Mx64P1::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Mx64P1 as HasLed>::ROLE, Mx64P1::LED, "LED"),
+        (
+            Role::RealtimeTick,
+            <Mx64P1 as HasRealtimeTick>::ROLE,
+            Mx64P1::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Mx64P1 as HasPGain>::ROLE,
+            Mx64P1::P_GAIN,
+            "P Gain",
+        ),
+        (
+            Role::DGain,
+            <Mx64P1 as HasDGain>::ROLE,
+            Mx64P1::D_GAIN,
+            "D Gain",
+        ),
+        (
+            Role::TorqueCtrlModeEnable,
+            <Mx64P1 as HasTorqueCtrlModeEnable>::ROLE,
+            Mx64P1::TORQUE_CTRL_MODE_ENABLE,
+            "Torque Ctrl Mode Enable",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (Role::Moving, <Mx64P1 as HasMoving>::ROLE, Mx64P1::MOVING),
+        (Role::Led, <Mx64P1 as HasLed>::ROLE, Mx64P1::LED),
+        (Role::PGain, <Mx64P1 as HasPGain>::ROLE, Mx64P1::P_GAIN),
+        (Role::DGain, <Mx64P1 as HasDGain>::ROLE, Mx64P1::D_GAIN),
+        (
+            Role::TorqueCtrlModeEnable,
+            <Mx64P1 as HasTorqueCtrlModeEnable>::ROLE,
+            Mx64P1::TORQUE_CTRL_MODE_ENABLE,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+    {
+        let role = <Mx64P1 as HasPresentTemperature>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentTemperature, LimitMode::Bounded),
+                Some((Mx64P1::PRESENT_TEMPERATURE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasPresentVoltage>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVoltage, LimitMode::Bounded),
+                Some((Mx64P1::PRESENT_VOLTAGE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasPresentVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 1.1519173));
+            assert!(close(scale.velocity(1124).rad_per_s(), -1.1519173));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=2047));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVelocity, LimitMode::Bounded),
+                Some((Mx64P1::PRESENT_SPEED, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasGoalVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        for mode in [
+            LimitMode::Bounded,
+            LimitMode::Unbounded,
+            LimitMode::Pwm,
+            LimitMode::UnboundedCurrent,
+            LimitMode::Velocity,
+            LimitMode::Current,
+        ] {
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(
+                data.typed(Role::GoalVelocity, mode),
+                Some((Mx64P1::MOVING_SPEED, None))
+            );
+        }
+        {
+            let scale = role.scale(LimitMode::Wheel).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 1.1938052));
+            assert!(close(scale.velocity(1124).rad_per_s(), -1.1938052));
+            assert_eq!(role.raw_range(LimitMode::Wheel), Some(0..=2047));
+            let mode = LimitMode::Wheel;
+            assert_eq!(role.scale(mode), Some(scale));
+            assert_eq!(
+                data.typed(Role::GoalVelocity, LimitMode::Wheel),
+                Some((Mx64P1::MOVING_SPEED, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasSpeedLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        for mode in [
+            LimitMode::Pwm,
+            LimitMode::UnboundedCurrent,
+            LimitMode::Velocity,
+            LimitMode::Current,
+            LimitMode::Wheel,
+        ] {
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(
+                data.typed(Role::SpeedLimit, mode),
+                Some((Mx64P1::MOVING_SPEED, None))
+            );
+        }
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, true)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 1.1938052));
+            assert_eq!(scale.speed_limit(0), SpeedLimit::Unlimited);
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=1023));
+            for mode in [LimitMode::Bounded, LimitMode::Unbounded] {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::SpeedLimit, LimitMode::Bounded),
+                Some((Mx64P1::MOVING_SPEED, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasPresentLoad>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.load(100).ratio(), 0.1));
+            assert!(close(scale.load(1124).ratio(), -0.1));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=2047));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentLoad, LimitMode::Bounded),
+                Some((Mx64P1::PRESENT_LOAD, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasGoalCurrent>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::DirectionBit(10), 2, false)
+            );
+            assert!(close(scale.current(100).amps(), 0.45));
+            assert!(close(scale.current(1124).amps(), -0.45));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=2047));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::GoalCurrent, LimitMode::Bounded),
+                Some((Mx64P1::GOAL_TORQUE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasRealtimeTick>::ROLE;
+        assert_eq!(role.from_firmware(), 40);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.si_of(100), 0.1));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=32767));
+            assert_eq!(role.tick_modulus(LimitMode::Bounded), Some(32768));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::RealtimeTick, LimitMode::Bounded),
+                Some((Mx64P1::REALTIME_TICK, Some(scale)))
+            );
+        }
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_64_p1_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Mx64P1;
+    use crate::units::Limits;
+
+    let mode = Mx64P1::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Mx64P1::TORQUE_CTRL_MODE_ENABLE));
+    assert_eq!(mode.limit_mode(1, limits), Some(LimitMode::Current));
+    assert_eq!(
+        mode.limit_mode(0, limits),
+        Some(LimitMode::from_angle_limits(limits))
+    );
+    assert_eq!(mode.limit_mode(2, limits), None);
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_64_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Mx64;
+    use crate::units::{Sign, SpeedLimit};
+
+    let data = &Mx64::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Mx64 as HasPresentTemperature>::ROLE,
+            Mx64::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx64 as HasPresentVoltage>::ROLE,
+            Mx64::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx64 as HasPresentVelocity>::ROLE,
+            Mx64::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx64 as HasGoalVelocity>::ROLE,
+            Mx64::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx64 as HasSpeedLimit>::ROLE,
+            Mx64::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Mx64 as HasPresentCurrent>::ROLE,
+            Mx64::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Mx64 as HasGoalCurrent>::ROLE,
+            Mx64::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Mx64 as HasMoving>::ROLE,
+            Mx64::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Mx64 as HasLed>::ROLE, Mx64::LED, "LED"),
+        (
+            Role::HardwareErrorStatus,
+            <Mx64 as HasHardwareErrorStatus>::ROLE,
+            Mx64::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Mx64 as HasRealtimeTick>::ROLE,
+            Mx64::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Mx64 as HasPGain>::ROLE,
+            Mx64::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Mx64 as HasDGain>::ROLE,
+            Mx64::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (Role::Moving, <Mx64 as HasMoving>::ROLE, Mx64::MOVING),
+        (Role::Led, <Mx64 as HasLed>::ROLE, Mx64::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Mx64 as HasHardwareErrorStatus>::ROLE,
+            Mx64::HARDWARE_ERROR_STATUS,
+        ),
+        (Role::PGain, <Mx64 as HasPGain>::ROLE, Mx64::POSITION_P_GAIN),
+        (Role::DGain, <Mx64 as HasDGain>::ROLE, Mx64::POSITION_D_GAIN),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+    {
+        let role = <Mx64 as HasPresentTemperature>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentTemperature, LimitMode::Bounded),
+                Some((Mx64::PRESENT_TEMPERATURE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasPresentVoltage>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVoltage, LimitMode::Bounded),
+                Some((Mx64::PRESENT_INPUT_VOLTAGE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasPresentVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 4, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert!(close(scale.velocity(4294967196).rad_per_s(), -2.3980825));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVelocity, LimitMode::Bounded),
+                Some((Mx64::PRESENT_VELOCITY, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasGoalVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), Some(Mx64::VELOCITY_LIMIT));
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 4, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert!(close(scale.velocity(4294967196).rad_per_s(), -2.3980825));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::GoalVelocity, LimitMode::Bounded),
+                Some((Mx64::GOAL_VELOCITY, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasSpeedLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 4, true)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert_eq!(scale.speed_limit(0), SpeedLimit::Unlimited);
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=32767));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::SpeedLimit, LimitMode::Bounded),
+                Some((Mx64::PROFILE_VELOCITY, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasPresentCurrent>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 2, false)
+            );
+            assert!(close(scale.current(100).amps(), 0.336));
+            assert!(close(scale.current(65436).amps(), -0.336));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentCurrent, LimitMode::Bounded),
+                Some((Mx64::PRESENT_CURRENT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasGoalCurrent>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), Some(Mx64::CURRENT_LIMIT));
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 2, false)
+            );
+            assert!(close(scale.current(100).amps(), 0.336));
+            assert!(close(scale.current(65436).amps(), -0.336));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::GoalCurrent, LimitMode::Bounded),
+                Some((Mx64::GOAL_CURRENT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasRealtimeTick>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.si_of(100), 0.1));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=32767));
+            assert_eq!(role.tick_modulus(LimitMode::Bounded), Some(32768));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::RealtimeTick, LimitMode::Bounded),
+                Some((Mx64::REALTIME_TICK, Some(scale)))
+            );
+        }
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_64_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Mx64;
+    use crate::units::Limits;
+
+    let mode = Mx64::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Mx64::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Current)),
+        (1, Some(LimitMode::Velocity)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::UnboundedCurrent)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_106_p1_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasLed, HasMoving, HasPGain, HasPresentLoad,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Mx106P1;
+
+    let data = &Mx106P1::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Mx106P1 as HasPresentTemperature>::ROLE,
+            Mx106P1::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx106P1 as HasPresentVoltage>::ROLE,
+            Mx106P1::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx106P1 as HasPresentVelocity>::ROLE,
+            Mx106P1::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx106P1 as HasGoalVelocity>::ROLE,
+            Mx106P1::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx106P1 as HasSpeedLimit>::ROLE,
+            Mx106P1::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Mx106P1 as HasPresentLoad>::ROLE,
+            Mx106P1::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Mx106P1 as HasMoving>::ROLE,
+            Mx106P1::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Mx106P1 as HasLed>::ROLE, Mx106P1::LED, "LED"),
+        (
+            Role::RealtimeTick,
+            <Mx106P1 as HasRealtimeTick>::ROLE,
+            Mx106P1::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Mx106P1 as HasPGain>::ROLE,
+            Mx106P1::P_GAIN,
+            "P Gain",
+        ),
+        (
+            Role::DGain,
+            <Mx106P1 as HasDGain>::ROLE,
+            Mx106P1::D_GAIN,
+            "D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Mx106P1 as HasPresentTemperature>::ROLE,
+            Mx106P1::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx106P1 as HasPresentVoltage>::ROLE,
+            Mx106P1::PRESENT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx106P1 as HasPresentVelocity>::ROLE,
+            Mx106P1::PRESENT_SPEED,
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx106P1 as HasGoalVelocity>::ROLE,
+            Mx106P1::MOVING_SPEED,
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx106P1 as HasSpeedLimit>::ROLE,
+            Mx106P1::MOVING_SPEED,
+        ),
+        (
+            Role::PresentLoad,
+            <Mx106P1 as HasPresentLoad>::ROLE,
+            Mx106P1::PRESENT_LOAD,
+        ),
+        (Role::Moving, <Mx106P1 as HasMoving>::ROLE, Mx106P1::MOVING),
+        (Role::Led, <Mx106P1 as HasLed>::ROLE, Mx106P1::LED),
+        (
+            Role::RealtimeTick,
+            <Mx106P1 as HasRealtimeTick>::ROLE,
+            Mx106P1::REALTIME_TICK,
+        ),
+        (Role::PGain, <Mx106P1 as HasPGain>::ROLE, Mx106P1::P_GAIN),
+        (Role::DGain, <Mx106P1 as HasDGain>::ROLE, Mx106P1::D_GAIN),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_106_p1_mode_source() {
+    use crate::models::Mx106P1;
+    use crate::units::Limits;
+
+    let mode = Mx106P1::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), None);
+    for value in [0, u8::MAX] {
+        assert_eq!(mode.limit_mode(value, limits), None);
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_106_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Mx106;
+
+    let data = &Mx106::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Mx106 as HasPresentTemperature>::ROLE,
+            Mx106::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx106 as HasPresentVoltage>::ROLE,
+            Mx106::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx106 as HasPresentVelocity>::ROLE,
+            Mx106::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx106 as HasGoalVelocity>::ROLE,
+            Mx106::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx106 as HasSpeedLimit>::ROLE,
+            Mx106::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Mx106 as HasPresentCurrent>::ROLE,
+            Mx106::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Mx106 as HasGoalCurrent>::ROLE,
+            Mx106::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Mx106 as HasMoving>::ROLE,
+            Mx106::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Mx106 as HasLed>::ROLE, Mx106::LED, "LED"),
+        (
+            Role::HardwareErrorStatus,
+            <Mx106 as HasHardwareErrorStatus>::ROLE,
+            Mx106::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Mx106 as HasRealtimeTick>::ROLE,
+            Mx106::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Mx106 as HasPGain>::ROLE,
+            Mx106::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Mx106 as HasDGain>::ROLE,
+            Mx106::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Mx106 as HasPresentTemperature>::ROLE,
+            Mx106::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Mx106 as HasPresentVoltage>::ROLE,
+            Mx106::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Mx106 as HasPresentVelocity>::ROLE,
+            Mx106::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Mx106 as HasGoalVelocity>::ROLE,
+            Mx106::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Mx106 as HasSpeedLimit>::ROLE,
+            Mx106::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Mx106 as HasPresentCurrent>::ROLE,
+            Mx106::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Mx106 as HasGoalCurrent>::ROLE,
+            Mx106::GOAL_CURRENT,
+        ),
+        (Role::Moving, <Mx106 as HasMoving>::ROLE, Mx106::MOVING),
+        (Role::Led, <Mx106 as HasLed>::ROLE, Mx106::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Mx106 as HasHardwareErrorStatus>::ROLE,
+            Mx106::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Mx106 as HasRealtimeTick>::ROLE,
+            Mx106::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Mx106 as HasPGain>::ROLE,
+            Mx106::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Mx106 as HasDGain>::ROLE,
+            Mx106::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "mx")]
+#[test]
+fn mx_106_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Mx106;
+    use crate::units::Limits;
+
+    let mode = Mx106::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Mx106::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl320_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
+        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xl320;
+
+    let data = &Xl320::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xl320 as HasPresentTemperature>::ROLE,
+            Xl320::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl320 as HasPresentVoltage>::ROLE,
+            Xl320::PRESENT_VOLTAGE,
+            "Present Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl320 as HasPresentVelocity>::ROLE,
+            Xl320::PRESENT_SPEED,
+            "Present Speed",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl320 as HasGoalVelocity>::ROLE,
+            Xl320::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl320 as HasSpeedLimit>::ROLE,
+            Xl320::MOVING_SPEED,
+            "Moving Speed",
+        ),
+        (
+            Role::PresentLoad,
+            <Xl320 as HasPresentLoad>::ROLE,
+            Xl320::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Xl320 as HasMoving>::ROLE,
+            Xl320::MOVING,
+            "Moving",
+        ),
+        (Role::Led, <Xl320 as HasLed>::ROLE, Xl320::LED, "LED"),
+        (
+            Role::HardwareErrorStatus,
+            <Xl320 as HasHardwareErrorStatus>::ROLE,
+            Xl320::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::PGain,
+            <Xl320 as HasPGain>::ROLE,
+            Xl320::P_GAIN,
+            "P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xl320 as HasDGain>::ROLE,
+            Xl320::D_GAIN,
+            "D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::RealtimeTick,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xl320 as HasPresentTemperature>::ROLE,
+            Xl320::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl320 as HasPresentVoltage>::ROLE,
+            Xl320::PRESENT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl320 as HasPresentVelocity>::ROLE,
+            Xl320::PRESENT_SPEED,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl320 as HasGoalVelocity>::ROLE,
+            Xl320::MOVING_SPEED,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl320 as HasSpeedLimit>::ROLE,
+            Xl320::MOVING_SPEED,
+        ),
+        (
+            Role::PresentLoad,
+            <Xl320 as HasPresentLoad>::ROLE,
+            Xl320::PRESENT_LOAD,
+        ),
+        (Role::Moving, <Xl320 as HasMoving>::ROLE, Xl320::MOVING),
+        (Role::Led, <Xl320 as HasLed>::ROLE, Xl320::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xl320 as HasHardwareErrorStatus>::ROLE,
+            Xl320::HARDWARE_ERROR_STATUS,
+        ),
+        (Role::PGain, <Xl320 as HasPGain>::ROLE, Xl320::P_GAIN),
+        (Role::DGain, <Xl320 as HasDGain>::ROLE, Xl320::D_GAIN),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl320_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xl320;
+    use crate::units::Limits;
+
+    let mode = Xl320::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xl320::CONTROL_MODE));
+    for (value, expected) in [
+        (1, Some(LimitMode::Pwm)),
+        (2, Some(LimitMode::Bounded)),
+        (0, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_w350_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh430W350;
+
+    let data = &Xh430W350::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh430W350 as HasPresentTemperature>::ROLE,
+            Xh430W350::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430W350 as HasPresentVoltage>::ROLE,
+            Xh430W350::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430W350 as HasPresentVelocity>::ROLE,
+            Xh430W350::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430W350 as HasGoalVelocity>::ROLE,
+            Xh430W350::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430W350 as HasSpeedLimit>::ROLE,
+            Xh430W350::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430W350 as HasPresentCurrent>::ROLE,
+            Xh430W350::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430W350 as HasGoalCurrent>::ROLE,
+            Xh430W350::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh430W350 as HasMoving>::ROLE,
+            Xh430W350::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh430W350 as HasLed>::ROLE,
+            Xh430W350::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430W350 as HasHardwareErrorStatus>::ROLE,
+            Xh430W350::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430W350 as HasRealtimeTick>::ROLE,
+            Xh430W350::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh430W350 as HasPGain>::ROLE,
+            Xh430W350::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh430W350 as HasDGain>::ROLE,
+            Xh430W350::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh430W350 as HasPresentTemperature>::ROLE,
+            Xh430W350::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430W350 as HasPresentVoltage>::ROLE,
+            Xh430W350::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430W350 as HasPresentVelocity>::ROLE,
+            Xh430W350::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430W350 as HasGoalVelocity>::ROLE,
+            Xh430W350::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430W350 as HasSpeedLimit>::ROLE,
+            Xh430W350::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430W350 as HasPresentCurrent>::ROLE,
+            Xh430W350::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430W350 as HasGoalCurrent>::ROLE,
+            Xh430W350::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh430W350 as HasMoving>::ROLE,
+            Xh430W350::MOVING,
+        ),
+        (Role::Led, <Xh430W350 as HasLed>::ROLE, Xh430W350::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430W350 as HasHardwareErrorStatus>::ROLE,
+            Xh430W350::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430W350 as HasRealtimeTick>::ROLE,
+            Xh430W350::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh430W350 as HasPGain>::ROLE,
+            Xh430W350::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh430W350 as HasDGain>::ROLE,
+            Xh430W350::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_w350_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh430W350;
+    use crate::units::Limits;
+
+    let mode = Xh430W350::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh430W350::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd430_t350_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xd430T350;
+
+    let data = &Xd430T350::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xd430T350 as HasPresentTemperature>::ROLE,
+            Xd430T350::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd430T350 as HasPresentVoltage>::ROLE,
+            Xd430T350::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd430T350 as HasPresentVelocity>::ROLE,
+            Xd430T350::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd430T350 as HasGoalVelocity>::ROLE,
+            Xd430T350::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd430T350 as HasSpeedLimit>::ROLE,
+            Xd430T350::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd430T350 as HasPresentCurrent>::ROLE,
+            Xd430T350::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd430T350 as HasGoalCurrent>::ROLE,
+            Xd430T350::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xd430T350 as HasMoving>::ROLE,
+            Xd430T350::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xd430T350 as HasLed>::ROLE,
+            Xd430T350::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xd430T350 as HasHardwareErrorStatus>::ROLE,
+            Xd430T350::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd430T350 as HasRealtimeTick>::ROLE,
+            Xd430T350::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xd430T350 as HasPGain>::ROLE,
+            Xd430T350::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xd430T350 as HasDGain>::ROLE,
+            Xd430T350::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xd430T350 as HasPresentTemperature>::ROLE,
+            Xd430T350::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd430T350 as HasPresentVoltage>::ROLE,
+            Xd430T350::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd430T350 as HasPresentVelocity>::ROLE,
+            Xd430T350::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd430T350 as HasGoalVelocity>::ROLE,
+            Xd430T350::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd430T350 as HasSpeedLimit>::ROLE,
+            Xd430T350::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd430T350 as HasPresentCurrent>::ROLE,
+            Xd430T350::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd430T350 as HasGoalCurrent>::ROLE,
+            Xd430T350::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xd430T350 as HasMoving>::ROLE,
+            Xd430T350::MOVING,
+        ),
+        (Role::Led, <Xd430T350 as HasLed>::ROLE, Xd430T350::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xd430T350 as HasHardwareErrorStatus>::ROLE,
+            Xd430T350::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd430T350 as HasRealtimeTick>::ROLE,
+            Xd430T350::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xd430T350 as HasPGain>::ROLE,
+            Xd430T350::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xd430T350 as HasDGain>::ROLE,
+            Xd430T350::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd430_t350_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xd430T350;
+    use crate::units::Limits;
+
+    let mode = Xd430T350::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xd430T350::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_w210_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh430W210;
+
+    let data = &Xh430W210::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh430W210 as HasPresentTemperature>::ROLE,
+            Xh430W210::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430W210 as HasPresentVoltage>::ROLE,
+            Xh430W210::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430W210 as HasPresentVelocity>::ROLE,
+            Xh430W210::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430W210 as HasGoalVelocity>::ROLE,
+            Xh430W210::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430W210 as HasSpeedLimit>::ROLE,
+            Xh430W210::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430W210 as HasPresentCurrent>::ROLE,
+            Xh430W210::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430W210 as HasGoalCurrent>::ROLE,
+            Xh430W210::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh430W210 as HasMoving>::ROLE,
+            Xh430W210::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh430W210 as HasLed>::ROLE,
+            Xh430W210::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430W210 as HasHardwareErrorStatus>::ROLE,
+            Xh430W210::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430W210 as HasRealtimeTick>::ROLE,
+            Xh430W210::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh430W210 as HasPGain>::ROLE,
+            Xh430W210::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh430W210 as HasDGain>::ROLE,
+            Xh430W210::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh430W210 as HasPresentTemperature>::ROLE,
+            Xh430W210::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430W210 as HasPresentVoltage>::ROLE,
+            Xh430W210::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430W210 as HasPresentVelocity>::ROLE,
+            Xh430W210::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430W210 as HasGoalVelocity>::ROLE,
+            Xh430W210::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430W210 as HasSpeedLimit>::ROLE,
+            Xh430W210::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430W210 as HasPresentCurrent>::ROLE,
+            Xh430W210::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430W210 as HasGoalCurrent>::ROLE,
+            Xh430W210::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh430W210 as HasMoving>::ROLE,
+            Xh430W210::MOVING,
+        ),
+        (Role::Led, <Xh430W210 as HasLed>::ROLE, Xh430W210::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430W210 as HasHardwareErrorStatus>::ROLE,
+            Xh430W210::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430W210 as HasRealtimeTick>::ROLE,
+            Xh430W210::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh430W210 as HasPGain>::ROLE,
+            Xh430W210::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh430W210 as HasDGain>::ROLE,
+            Xh430W210::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_w210_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh430W210;
+    use crate::units::Limits;
+
+    let mode = Xh430W210::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh430W210::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd430_t210_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xd430T210;
+
+    let data = &Xd430T210::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xd430T210 as HasPresentTemperature>::ROLE,
+            Xd430T210::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd430T210 as HasPresentVoltage>::ROLE,
+            Xd430T210::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd430T210 as HasPresentVelocity>::ROLE,
+            Xd430T210::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd430T210 as HasGoalVelocity>::ROLE,
+            Xd430T210::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd430T210 as HasSpeedLimit>::ROLE,
+            Xd430T210::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd430T210 as HasPresentCurrent>::ROLE,
+            Xd430T210::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd430T210 as HasGoalCurrent>::ROLE,
+            Xd430T210::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xd430T210 as HasMoving>::ROLE,
+            Xd430T210::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xd430T210 as HasLed>::ROLE,
+            Xd430T210::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xd430T210 as HasHardwareErrorStatus>::ROLE,
+            Xd430T210::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd430T210 as HasRealtimeTick>::ROLE,
+            Xd430T210::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xd430T210 as HasPGain>::ROLE,
+            Xd430T210::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xd430T210 as HasDGain>::ROLE,
+            Xd430T210::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xd430T210 as HasPresentTemperature>::ROLE,
+            Xd430T210::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd430T210 as HasPresentVoltage>::ROLE,
+            Xd430T210::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd430T210 as HasPresentVelocity>::ROLE,
+            Xd430T210::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd430T210 as HasGoalVelocity>::ROLE,
+            Xd430T210::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd430T210 as HasSpeedLimit>::ROLE,
+            Xd430T210::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd430T210 as HasPresentCurrent>::ROLE,
+            Xd430T210::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd430T210 as HasGoalCurrent>::ROLE,
+            Xd430T210::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xd430T210 as HasMoving>::ROLE,
+            Xd430T210::MOVING,
+        ),
+        (Role::Led, <Xd430T210 as HasLed>::ROLE, Xd430T210::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xd430T210 as HasHardwareErrorStatus>::ROLE,
+            Xd430T210::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd430T210 as HasRealtimeTick>::ROLE,
+            Xd430T210::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xd430T210 as HasPGain>::ROLE,
+            Xd430T210::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xd430T210 as HasDGain>::ROLE,
+            Xd430T210::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd430_t210_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xd430T210;
+    use crate::units::Limits;
+
+    let mode = Xd430T210::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xd430T210::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm430_w350_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xm430W350;
+    use crate::units::{Sign, SpeedLimit};
+
+    let data = &Xm430W350::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xm430W350 as HasPresentTemperature>::ROLE,
+            Xm430W350::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xm430W350 as HasPresentVoltage>::ROLE,
+            Xm430W350::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xm430W350 as HasPresentVelocity>::ROLE,
+            Xm430W350::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xm430W350 as HasGoalVelocity>::ROLE,
+            Xm430W350::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xm430W350 as HasSpeedLimit>::ROLE,
+            Xm430W350::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xm430W350 as HasPresentCurrent>::ROLE,
+            Xm430W350::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xm430W350 as HasGoalCurrent>::ROLE,
+            Xm430W350::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xm430W350 as HasMoving>::ROLE,
+            Xm430W350::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xm430W350 as HasLed>::ROLE,
+            Xm430W350::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xm430W350 as HasHardwareErrorStatus>::ROLE,
+            Xm430W350::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xm430W350 as HasRealtimeTick>::ROLE,
+            Xm430W350::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xm430W350 as HasPGain>::ROLE,
+            Xm430W350::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xm430W350 as HasDGain>::ROLE,
+            Xm430W350::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::Moving,
+            <Xm430W350 as HasMoving>::ROLE,
+            Xm430W350::MOVING,
+        ),
+        (Role::Led, <Xm430W350 as HasLed>::ROLE, Xm430W350::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xm430W350 as HasHardwareErrorStatus>::ROLE,
+            Xm430W350::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::PGain,
+            <Xm430W350 as HasPGain>::ROLE,
+            Xm430W350::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xm430W350 as HasDGain>::ROLE,
+            Xm430W350::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+    {
+        let role = <Xm430W350 as HasPresentTemperature>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentTemperature, LimitMode::Bounded),
+                Some((Xm430W350::PRESENT_TEMPERATURE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasPresentVoltage>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVoltage, LimitMode::Bounded),
+                Some((Xm430W350::PRESENT_INPUT_VOLTAGE, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasPresentVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 4, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert!(close(scale.velocity(4294967196).rad_per_s(), -2.3980825));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentVelocity, LimitMode::Bounded),
+                Some((Xm430W350::PRESENT_VELOCITY, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasGoalVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), Some(Xm430W350::VELOCITY_LIMIT));
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 4, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert!(close(scale.velocity(4294967196).rad_per_s(), -2.3980825));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::GoalVelocity, LimitMode::Bounded),
+                Some((Xm430W350::GOAL_VELOCITY, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasSpeedLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 4, true)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert_eq!(scale.speed_limit(0), SpeedLimit::Unlimited);
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=32767));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::SpeedLimit, LimitMode::Bounded),
+                Some((Xm430W350::PROFILE_VELOCITY, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasPresentCurrent>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 2, false)
+            );
+            assert!(close(scale.current(100).amps(), 0.269));
+            assert!(close(scale.current(65436).amps(), -0.269));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::PresentCurrent, LimitMode::Bounded),
+                Some((Xm430W350::PRESENT_CURRENT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasGoalCurrent>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), Some(Xm430W350::CURRENT_LIMIT));
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 2, false)
+            );
+            assert!(close(scale.current(100).amps(), 0.269));
+            assert!(close(scale.current(65436).amps(), -0.269));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::GoalCurrent, LimitMode::Bounded),
+                Some((Xm430W350::GOAL_CURRENT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasRealtimeTick>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.si_of(100), 0.1));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=32767));
+            assert_eq!(role.tick_modulus(LimitMode::Bounded), Some(32768));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::RealtimeTick, LimitMode::Bounded),
+                Some((Xm430W350::REALTIME_TICK, Some(scale)))
+            );
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm430_w350_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xm430W350;
+    use crate::units::Limits;
+
+    let mode = Xm430W350::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xm430W350::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Current)),
+        (1, Some(LimitMode::Velocity)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::UnboundedCurrent)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm430_w210_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xm430W210;
+
+    let data = &Xm430W210::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xm430W210 as HasPresentTemperature>::ROLE,
+            Xm430W210::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xm430W210 as HasPresentVoltage>::ROLE,
+            Xm430W210::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xm430W210 as HasPresentVelocity>::ROLE,
+            Xm430W210::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xm430W210 as HasGoalVelocity>::ROLE,
+            Xm430W210::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xm430W210 as HasSpeedLimit>::ROLE,
+            Xm430W210::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xm430W210 as HasPresentCurrent>::ROLE,
+            Xm430W210::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xm430W210 as HasGoalCurrent>::ROLE,
+            Xm430W210::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xm430W210 as HasMoving>::ROLE,
+            Xm430W210::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xm430W210 as HasLed>::ROLE,
+            Xm430W210::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xm430W210 as HasHardwareErrorStatus>::ROLE,
+            Xm430W210::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xm430W210 as HasRealtimeTick>::ROLE,
+            Xm430W210::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xm430W210 as HasPGain>::ROLE,
+            Xm430W210::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xm430W210 as HasDGain>::ROLE,
+            Xm430W210::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xm430W210 as HasPresentTemperature>::ROLE,
+            Xm430W210::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xm430W210 as HasPresentVoltage>::ROLE,
+            Xm430W210::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xm430W210 as HasPresentVelocity>::ROLE,
+            Xm430W210::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xm430W210 as HasGoalVelocity>::ROLE,
+            Xm430W210::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xm430W210 as HasSpeedLimit>::ROLE,
+            Xm430W210::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xm430W210 as HasPresentCurrent>::ROLE,
+            Xm430W210::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xm430W210 as HasGoalCurrent>::ROLE,
+            Xm430W210::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xm430W210 as HasMoving>::ROLE,
+            Xm430W210::MOVING,
+        ),
+        (Role::Led, <Xm430W210 as HasLed>::ROLE, Xm430W210::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xm430W210 as HasHardwareErrorStatus>::ROLE,
+            Xm430W210::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xm430W210 as HasRealtimeTick>::ROLE,
+            Xm430W210::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xm430W210 as HasPGain>::ROLE,
+            Xm430W210::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xm430W210 as HasDGain>::ROLE,
+            Xm430W210::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm430_w210_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xm430W210;
+    use crate::units::Limits;
+
+    let mode = Xm430W210::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xm430W210::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_v350_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh430V350;
+
+    let data = &Xh430V350::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh430V350 as HasPresentTemperature>::ROLE,
+            Xh430V350::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430V350 as HasPresentVoltage>::ROLE,
+            Xh430V350::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430V350 as HasPresentVelocity>::ROLE,
+            Xh430V350::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430V350 as HasGoalVelocity>::ROLE,
+            Xh430V350::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430V350 as HasSpeedLimit>::ROLE,
+            Xh430V350::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430V350 as HasPresentCurrent>::ROLE,
+            Xh430V350::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430V350 as HasGoalCurrent>::ROLE,
+            Xh430V350::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh430V350 as HasMoving>::ROLE,
+            Xh430V350::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh430V350 as HasLed>::ROLE,
+            Xh430V350::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430V350 as HasHardwareErrorStatus>::ROLE,
+            Xh430V350::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430V350 as HasRealtimeTick>::ROLE,
+            Xh430V350::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh430V350 as HasPGain>::ROLE,
+            Xh430V350::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh430V350 as HasDGain>::ROLE,
+            Xh430V350::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh430V350 as HasPresentTemperature>::ROLE,
+            Xh430V350::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430V350 as HasPresentVoltage>::ROLE,
+            Xh430V350::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430V350 as HasPresentVelocity>::ROLE,
+            Xh430V350::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430V350 as HasGoalVelocity>::ROLE,
+            Xh430V350::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430V350 as HasSpeedLimit>::ROLE,
+            Xh430V350::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430V350 as HasPresentCurrent>::ROLE,
+            Xh430V350::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430V350 as HasGoalCurrent>::ROLE,
+            Xh430V350::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh430V350 as HasMoving>::ROLE,
+            Xh430V350::MOVING,
+        ),
+        (Role::Led, <Xh430V350 as HasLed>::ROLE, Xh430V350::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430V350 as HasHardwareErrorStatus>::ROLE,
+            Xh430V350::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430V350 as HasRealtimeTick>::ROLE,
+            Xh430V350::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh430V350 as HasPGain>::ROLE,
+            Xh430V350::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh430V350 as HasDGain>::ROLE,
+            Xh430V350::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_v350_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh430V350;
+    use crate::units::Limits;
+
+    let mode = Xh430V350::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh430V350::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_v210_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh430V210;
+
+    let data = &Xh430V210::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh430V210 as HasPresentTemperature>::ROLE,
+            Xh430V210::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430V210 as HasPresentVoltage>::ROLE,
+            Xh430V210::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430V210 as HasPresentVelocity>::ROLE,
+            Xh430V210::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430V210 as HasGoalVelocity>::ROLE,
+            Xh430V210::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430V210 as HasSpeedLimit>::ROLE,
+            Xh430V210::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430V210 as HasPresentCurrent>::ROLE,
+            Xh430V210::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430V210 as HasGoalCurrent>::ROLE,
+            Xh430V210::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh430V210 as HasMoving>::ROLE,
+            Xh430V210::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh430V210 as HasLed>::ROLE,
+            Xh430V210::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430V210 as HasHardwareErrorStatus>::ROLE,
+            Xh430V210::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430V210 as HasRealtimeTick>::ROLE,
+            Xh430V210::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh430V210 as HasPGain>::ROLE,
+            Xh430V210::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh430V210 as HasDGain>::ROLE,
+            Xh430V210::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh430V210 as HasPresentTemperature>::ROLE,
+            Xh430V210::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh430V210 as HasPresentVoltage>::ROLE,
+            Xh430V210::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh430V210 as HasPresentVelocity>::ROLE,
+            Xh430V210::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh430V210 as HasGoalVelocity>::ROLE,
+            Xh430V210::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh430V210 as HasSpeedLimit>::ROLE,
+            Xh430V210::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh430V210 as HasPresentCurrent>::ROLE,
+            Xh430V210::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh430V210 as HasGoalCurrent>::ROLE,
+            Xh430V210::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh430V210 as HasMoving>::ROLE,
+            Xh430V210::MOVING,
+        ),
+        (Role::Led, <Xh430V210 as HasLed>::ROLE, Xh430V210::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh430V210 as HasHardwareErrorStatus>::ROLE,
+            Xh430V210::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh430V210 as HasRealtimeTick>::ROLE,
+            Xh430V210::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh430V210 as HasPGain>::ROLE,
+            Xh430V210::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh430V210 as HasDGain>::ROLE,
+            Xh430V210::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh430_v210_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh430V210;
+    use crate::units::Limits;
+
+    let mode = Xh430V210::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh430V210::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl430_w250_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
+        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xl430W250;
+
+    let data = &Xl430W250::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xl430W250 as HasPresentTemperature>::ROLE,
+            Xl430W250::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl430W250 as HasPresentVoltage>::ROLE,
+            Xl430W250::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl430W250 as HasPresentVelocity>::ROLE,
+            Xl430W250::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl430W250 as HasGoalVelocity>::ROLE,
+            Xl430W250::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl430W250 as HasSpeedLimit>::ROLE,
+            Xl430W250::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentLoad,
+            <Xl430W250 as HasPresentLoad>::ROLE,
+            Xl430W250::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Xl430W250 as HasMoving>::ROLE,
+            Xl430W250::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xl430W250 as HasLed>::ROLE,
+            Xl430W250::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xl430W250 as HasHardwareErrorStatus>::ROLE,
+            Xl430W250::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl430W250 as HasRealtimeTick>::ROLE,
+            Xl430W250::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xl430W250 as HasPGain>::ROLE,
+            Xl430W250::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xl430W250 as HasDGain>::ROLE,
+            Xl430W250::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xl430W250 as HasPresentTemperature>::ROLE,
+            Xl430W250::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl430W250 as HasPresentVoltage>::ROLE,
+            Xl430W250::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl430W250 as HasPresentVelocity>::ROLE,
+            Xl430W250::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl430W250 as HasGoalVelocity>::ROLE,
+            Xl430W250::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl430W250 as HasSpeedLimit>::ROLE,
+            Xl430W250::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentLoad,
+            <Xl430W250 as HasPresentLoad>::ROLE,
+            Xl430W250::PRESENT_LOAD,
+        ),
+        (
+            Role::Moving,
+            <Xl430W250 as HasMoving>::ROLE,
+            Xl430W250::MOVING,
+        ),
+        (Role::Led, <Xl430W250 as HasLed>::ROLE, Xl430W250::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xl430W250 as HasHardwareErrorStatus>::ROLE,
+            Xl430W250::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl430W250 as HasRealtimeTick>::ROLE,
+            Xl430W250::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xl430W250 as HasPGain>::ROLE,
+            Xl430W250::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xl430W250 as HasDGain>::ROLE,
+            Xl430W250::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl430_w250_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xl430W250;
+    use crate::units::Limits;
+
+    let mode = Xl430W250::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xl430W250::OPERATING_MODE));
+    for (value, expected) in [
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (0, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc430_w150_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
+        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc430W150;
+
+    let data = &Xc430W150::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc430W150 as HasPresentTemperature>::ROLE,
+            Xc430W150::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc430W150 as HasPresentVoltage>::ROLE,
+            Xc430W150::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc430W150 as HasPresentVelocity>::ROLE,
+            Xc430W150::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc430W150 as HasGoalVelocity>::ROLE,
+            Xc430W150::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc430W150 as HasSpeedLimit>::ROLE,
+            Xc430W150::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentLoad,
+            <Xc430W150 as HasPresentLoad>::ROLE,
+            Xc430W150::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Xc430W150 as HasMoving>::ROLE,
+            Xc430W150::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc430W150 as HasLed>::ROLE,
+            Xc430W150::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc430W150 as HasHardwareErrorStatus>::ROLE,
+            Xc430W150::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc430W150 as HasRealtimeTick>::ROLE,
+            Xc430W150::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc430W150 as HasPGain>::ROLE,
+            Xc430W150::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc430W150 as HasDGain>::ROLE,
+            Xc430W150::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc430W150 as HasPresentTemperature>::ROLE,
+            Xc430W150::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc430W150 as HasPresentVoltage>::ROLE,
+            Xc430W150::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc430W150 as HasPresentVelocity>::ROLE,
+            Xc430W150::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc430W150 as HasGoalVelocity>::ROLE,
+            Xc430W150::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc430W150 as HasSpeedLimit>::ROLE,
+            Xc430W150::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentLoad,
+            <Xc430W150 as HasPresentLoad>::ROLE,
+            Xc430W150::PRESENT_LOAD,
+        ),
+        (
+            Role::Moving,
+            <Xc430W150 as HasMoving>::ROLE,
+            Xc430W150::MOVING,
+        ),
+        (Role::Led, <Xc430W150 as HasLed>::ROLE, Xc430W150::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xc430W150 as HasHardwareErrorStatus>::ROLE,
+            Xc430W150::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc430W150 as HasRealtimeTick>::ROLE,
+            Xc430W150::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc430W150 as HasPGain>::ROLE,
+            Xc430W150::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc430W150 as HasDGain>::ROLE,
+            Xc430W150::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc430_w150_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc430W150;
+    use crate::units::Limits;
+
+    let mode = Xc430W150::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc430W150::OPERATING_MODE));
+    for (value, expected) in [
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (0, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc430_w240_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
+        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc430W240;
+
+    let data = &Xc430W240::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc430W240 as HasPresentTemperature>::ROLE,
+            Xc430W240::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc430W240 as HasPresentVoltage>::ROLE,
+            Xc430W240::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc430W240 as HasPresentVelocity>::ROLE,
+            Xc430W240::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc430W240 as HasGoalVelocity>::ROLE,
+            Xc430W240::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc430W240 as HasSpeedLimit>::ROLE,
+            Xc430W240::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentLoad,
+            <Xc430W240 as HasPresentLoad>::ROLE,
+            Xc430W240::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <Xc430W240 as HasMoving>::ROLE,
+            Xc430W240::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc430W240 as HasLed>::ROLE,
+            Xc430W240::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc430W240 as HasHardwareErrorStatus>::ROLE,
+            Xc430W240::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc430W240 as HasRealtimeTick>::ROLE,
+            Xc430W240::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc430W240 as HasPGain>::ROLE,
+            Xc430W240::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc430W240 as HasDGain>::ROLE,
+            Xc430W240::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc430W240 as HasPresentTemperature>::ROLE,
+            Xc430W240::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc430W240 as HasPresentVoltage>::ROLE,
+            Xc430W240::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc430W240 as HasPresentVelocity>::ROLE,
+            Xc430W240::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc430W240 as HasGoalVelocity>::ROLE,
+            Xc430W240::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc430W240 as HasSpeedLimit>::ROLE,
+            Xc430W240::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentLoad,
+            <Xc430W240 as HasPresentLoad>::ROLE,
+            Xc430W240::PRESENT_LOAD,
+        ),
+        (
+            Role::Moving,
+            <Xc430W240 as HasMoving>::ROLE,
+            Xc430W240::MOVING,
+        ),
+        (Role::Led, <Xc430W240 as HasLed>::ROLE, Xc430W240::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xc430W240 as HasHardwareErrorStatus>::ROLE,
+            Xc430W240::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc430W240 as HasRealtimeTick>::ROLE,
+            Xc430W240::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc430W240 as HasPGain>::ROLE,
+            Xc430W240::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc430W240 as HasDGain>::ROLE,
+            Xc430W240::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc430_w240_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc430W240;
+    use crate::units::Limits;
+
+    let mode = Xc430W240::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc430W240::OPERATING_MODE));
+    for (value, expected) in [
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (0, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn two_xl430_w250_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
+        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::TwoXl430W250;
+
+    let data = &TwoXl430W250::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <TwoXl430W250 as HasPresentTemperature>::ROLE,
+            TwoXl430W250::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <TwoXl430W250 as HasPresentVoltage>::ROLE,
+            TwoXl430W250::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <TwoXl430W250 as HasPresentVelocity>::ROLE,
+            TwoXl430W250::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <TwoXl430W250 as HasGoalVelocity>::ROLE,
+            TwoXl430W250::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <TwoXl430W250 as HasSpeedLimit>::ROLE,
+            TwoXl430W250::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentLoad,
+            <TwoXl430W250 as HasPresentLoad>::ROLE,
+            TwoXl430W250::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <TwoXl430W250 as HasMoving>::ROLE,
+            TwoXl430W250::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <TwoXl430W250 as HasLed>::ROLE,
+            TwoXl430W250::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <TwoXl430W250 as HasHardwareErrorStatus>::ROLE,
+            TwoXl430W250::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <TwoXl430W250 as HasRealtimeTick>::ROLE,
+            TwoXl430W250::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <TwoXl430W250 as HasPGain>::ROLE,
+            TwoXl430W250::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <TwoXl430W250 as HasDGain>::ROLE,
+            TwoXl430W250::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <TwoXl430W250 as HasPresentTemperature>::ROLE,
+            TwoXl430W250::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <TwoXl430W250 as HasPresentVoltage>::ROLE,
+            TwoXl430W250::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <TwoXl430W250 as HasPresentVelocity>::ROLE,
+            TwoXl430W250::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <TwoXl430W250 as HasGoalVelocity>::ROLE,
+            TwoXl430W250::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <TwoXl430W250 as HasSpeedLimit>::ROLE,
+            TwoXl430W250::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentLoad,
+            <TwoXl430W250 as HasPresentLoad>::ROLE,
+            TwoXl430W250::PRESENT_LOAD,
+        ),
+        (
+            Role::Moving,
+            <TwoXl430W250 as HasMoving>::ROLE,
+            TwoXl430W250::MOVING,
+        ),
+        (Role::Led, <TwoXl430W250 as HasLed>::ROLE, TwoXl430W250::LED),
+        (
+            Role::HardwareErrorStatus,
+            <TwoXl430W250 as HasHardwareErrorStatus>::ROLE,
+            TwoXl430W250::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <TwoXl430W250 as HasRealtimeTick>::ROLE,
+            TwoXl430W250::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <TwoXl430W250 as HasPGain>::ROLE,
+            TwoXl430W250::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <TwoXl430W250 as HasDGain>::ROLE,
+            TwoXl430W250::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn two_xl430_w250_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::TwoXl430W250;
+    use crate::units::Limits;
+
+    let mode = TwoXl430W250::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(TwoXl430W250::OPERATING_MODE));
+    for (value, expected) in [
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (0, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_w270_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh540W270;
+
+    let data = &Xh540W270::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh540W270 as HasPresentTemperature>::ROLE,
+            Xh540W270::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540W270 as HasPresentVoltage>::ROLE,
+            Xh540W270::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540W270 as HasPresentVelocity>::ROLE,
+            Xh540W270::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540W270 as HasGoalVelocity>::ROLE,
+            Xh540W270::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540W270 as HasSpeedLimit>::ROLE,
+            Xh540W270::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540W270 as HasPresentCurrent>::ROLE,
+            Xh540W270::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540W270 as HasGoalCurrent>::ROLE,
+            Xh540W270::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh540W270 as HasMoving>::ROLE,
+            Xh540W270::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh540W270 as HasLed>::ROLE,
+            Xh540W270::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540W270 as HasHardwareErrorStatus>::ROLE,
+            Xh540W270::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540W270 as HasRealtimeTick>::ROLE,
+            Xh540W270::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh540W270 as HasPGain>::ROLE,
+            Xh540W270::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh540W270 as HasDGain>::ROLE,
+            Xh540W270::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh540W270 as HasPresentTemperature>::ROLE,
+            Xh540W270::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540W270 as HasPresentVoltage>::ROLE,
+            Xh540W270::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540W270 as HasPresentVelocity>::ROLE,
+            Xh540W270::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540W270 as HasGoalVelocity>::ROLE,
+            Xh540W270::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540W270 as HasSpeedLimit>::ROLE,
+            Xh540W270::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540W270 as HasPresentCurrent>::ROLE,
+            Xh540W270::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540W270 as HasGoalCurrent>::ROLE,
+            Xh540W270::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh540W270 as HasMoving>::ROLE,
+            Xh540W270::MOVING,
+        ),
+        (Role::Led, <Xh540W270 as HasLed>::ROLE, Xh540W270::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540W270 as HasHardwareErrorStatus>::ROLE,
+            Xh540W270::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540W270 as HasRealtimeTick>::ROLE,
+            Xh540W270::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh540W270 as HasPGain>::ROLE,
+            Xh540W270::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh540W270 as HasDGain>::ROLE,
+            Xh540W270::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_w270_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh540W270;
+    use crate::units::Limits;
+
+    let mode = Xh540W270::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh540W270::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd540_t270_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xd540T270;
+
+    let data = &Xd540T270::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xd540T270 as HasPresentTemperature>::ROLE,
+            Xd540T270::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd540T270 as HasPresentVoltage>::ROLE,
+            Xd540T270::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd540T270 as HasPresentVelocity>::ROLE,
+            Xd540T270::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd540T270 as HasGoalVelocity>::ROLE,
+            Xd540T270::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd540T270 as HasSpeedLimit>::ROLE,
+            Xd540T270::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd540T270 as HasPresentCurrent>::ROLE,
+            Xd540T270::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd540T270 as HasGoalCurrent>::ROLE,
+            Xd540T270::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xd540T270 as HasMoving>::ROLE,
+            Xd540T270::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xd540T270 as HasLed>::ROLE,
+            Xd540T270::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xd540T270 as HasHardwareErrorStatus>::ROLE,
+            Xd540T270::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd540T270 as HasRealtimeTick>::ROLE,
+            Xd540T270::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xd540T270 as HasPGain>::ROLE,
+            Xd540T270::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xd540T270 as HasDGain>::ROLE,
+            Xd540T270::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xd540T270 as HasPresentTemperature>::ROLE,
+            Xd540T270::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd540T270 as HasPresentVoltage>::ROLE,
+            Xd540T270::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd540T270 as HasPresentVelocity>::ROLE,
+            Xd540T270::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd540T270 as HasGoalVelocity>::ROLE,
+            Xd540T270::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd540T270 as HasSpeedLimit>::ROLE,
+            Xd540T270::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd540T270 as HasPresentCurrent>::ROLE,
+            Xd540T270::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd540T270 as HasGoalCurrent>::ROLE,
+            Xd540T270::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xd540T270 as HasMoving>::ROLE,
+            Xd540T270::MOVING,
+        ),
+        (Role::Led, <Xd540T270 as HasLed>::ROLE, Xd540T270::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xd540T270 as HasHardwareErrorStatus>::ROLE,
+            Xd540T270::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd540T270 as HasRealtimeTick>::ROLE,
+            Xd540T270::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xd540T270 as HasPGain>::ROLE,
+            Xd540T270::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xd540T270 as HasDGain>::ROLE,
+            Xd540T270::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd540_t270_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xd540T270;
+    use crate::units::Limits;
+
+    let mode = Xd540T270::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xd540T270::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_w150_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh540W150;
+
+    let data = &Xh540W150::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh540W150 as HasPresentTemperature>::ROLE,
+            Xh540W150::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540W150 as HasPresentVoltage>::ROLE,
+            Xh540W150::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540W150 as HasPresentVelocity>::ROLE,
+            Xh540W150::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540W150 as HasGoalVelocity>::ROLE,
+            Xh540W150::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540W150 as HasSpeedLimit>::ROLE,
+            Xh540W150::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540W150 as HasPresentCurrent>::ROLE,
+            Xh540W150::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540W150 as HasGoalCurrent>::ROLE,
+            Xh540W150::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh540W150 as HasMoving>::ROLE,
+            Xh540W150::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh540W150 as HasLed>::ROLE,
+            Xh540W150::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540W150 as HasHardwareErrorStatus>::ROLE,
+            Xh540W150::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540W150 as HasRealtimeTick>::ROLE,
+            Xh540W150::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh540W150 as HasPGain>::ROLE,
+            Xh540W150::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh540W150 as HasDGain>::ROLE,
+            Xh540W150::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh540W150 as HasPresentTemperature>::ROLE,
+            Xh540W150::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540W150 as HasPresentVoltage>::ROLE,
+            Xh540W150::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540W150 as HasPresentVelocity>::ROLE,
+            Xh540W150::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540W150 as HasGoalVelocity>::ROLE,
+            Xh540W150::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540W150 as HasSpeedLimit>::ROLE,
+            Xh540W150::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540W150 as HasPresentCurrent>::ROLE,
+            Xh540W150::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540W150 as HasGoalCurrent>::ROLE,
+            Xh540W150::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh540W150 as HasMoving>::ROLE,
+            Xh540W150::MOVING,
+        ),
+        (Role::Led, <Xh540W150 as HasLed>::ROLE, Xh540W150::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540W150 as HasHardwareErrorStatus>::ROLE,
+            Xh540W150::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540W150 as HasRealtimeTick>::ROLE,
+            Xh540W150::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh540W150 as HasPGain>::ROLE,
+            Xh540W150::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh540W150 as HasDGain>::ROLE,
+            Xh540W150::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_w150_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh540W150;
+    use crate::units::Limits;
+
+    let mode = Xh540W150::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh540W150::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd540_t150_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xd540T150;
+
+    let data = &Xd540T150::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xd540T150 as HasPresentTemperature>::ROLE,
+            Xd540T150::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd540T150 as HasPresentVoltage>::ROLE,
+            Xd540T150::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd540T150 as HasPresentVelocity>::ROLE,
+            Xd540T150::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd540T150 as HasGoalVelocity>::ROLE,
+            Xd540T150::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd540T150 as HasSpeedLimit>::ROLE,
+            Xd540T150::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd540T150 as HasPresentCurrent>::ROLE,
+            Xd540T150::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd540T150 as HasGoalCurrent>::ROLE,
+            Xd540T150::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xd540T150 as HasMoving>::ROLE,
+            Xd540T150::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xd540T150 as HasLed>::ROLE,
+            Xd540T150::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xd540T150 as HasHardwareErrorStatus>::ROLE,
+            Xd540T150::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd540T150 as HasRealtimeTick>::ROLE,
+            Xd540T150::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xd540T150 as HasPGain>::ROLE,
+            Xd540T150::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xd540T150 as HasDGain>::ROLE,
+            Xd540T150::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xd540T150 as HasPresentTemperature>::ROLE,
+            Xd540T150::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xd540T150 as HasPresentVoltage>::ROLE,
+            Xd540T150::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xd540T150 as HasPresentVelocity>::ROLE,
+            Xd540T150::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xd540T150 as HasGoalVelocity>::ROLE,
+            Xd540T150::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xd540T150 as HasSpeedLimit>::ROLE,
+            Xd540T150::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xd540T150 as HasPresentCurrent>::ROLE,
+            Xd540T150::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xd540T150 as HasGoalCurrent>::ROLE,
+            Xd540T150::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xd540T150 as HasMoving>::ROLE,
+            Xd540T150::MOVING,
+        ),
+        (Role::Led, <Xd540T150 as HasLed>::ROLE, Xd540T150::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xd540T150 as HasHardwareErrorStatus>::ROLE,
+            Xd540T150::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xd540T150 as HasRealtimeTick>::ROLE,
+            Xd540T150::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xd540T150 as HasPGain>::ROLE,
+            Xd540T150::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xd540T150 as HasDGain>::ROLE,
+            Xd540T150::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xd540_t150_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xd540T150;
+    use crate::units::Limits;
+
+    let mode = Xd540T150::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xd540T150::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm540_w270_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xm540W270;
+
+    let data = &Xm540W270::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xm540W270 as HasPresentTemperature>::ROLE,
+            Xm540W270::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xm540W270 as HasPresentVoltage>::ROLE,
+            Xm540W270::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xm540W270 as HasPresentVelocity>::ROLE,
+            Xm540W270::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xm540W270 as HasGoalVelocity>::ROLE,
+            Xm540W270::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xm540W270 as HasSpeedLimit>::ROLE,
+            Xm540W270::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xm540W270 as HasPresentCurrent>::ROLE,
+            Xm540W270::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xm540W270 as HasGoalCurrent>::ROLE,
+            Xm540W270::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xm540W270 as HasMoving>::ROLE,
+            Xm540W270::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xm540W270 as HasLed>::ROLE,
+            Xm540W270::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xm540W270 as HasHardwareErrorStatus>::ROLE,
+            Xm540W270::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xm540W270 as HasRealtimeTick>::ROLE,
+            Xm540W270::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xm540W270 as HasPGain>::ROLE,
+            Xm540W270::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xm540W270 as HasDGain>::ROLE,
+            Xm540W270::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xm540W270 as HasPresentTemperature>::ROLE,
+            Xm540W270::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xm540W270 as HasPresentVoltage>::ROLE,
+            Xm540W270::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xm540W270 as HasPresentVelocity>::ROLE,
+            Xm540W270::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xm540W270 as HasGoalVelocity>::ROLE,
+            Xm540W270::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xm540W270 as HasSpeedLimit>::ROLE,
+            Xm540W270::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xm540W270 as HasPresentCurrent>::ROLE,
+            Xm540W270::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xm540W270 as HasGoalCurrent>::ROLE,
+            Xm540W270::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xm540W270 as HasMoving>::ROLE,
+            Xm540W270::MOVING,
+        ),
+        (Role::Led, <Xm540W270 as HasLed>::ROLE, Xm540W270::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xm540W270 as HasHardwareErrorStatus>::ROLE,
+            Xm540W270::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xm540W270 as HasRealtimeTick>::ROLE,
+            Xm540W270::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xm540W270 as HasPGain>::ROLE,
+            Xm540W270::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xm540W270 as HasDGain>::ROLE,
+            Xm540W270::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm540_w270_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xm540W270;
+    use crate::units::Limits;
+
+    let mode = Xm540W270::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xm540W270::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm540_w150_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xm540W150;
+
+    let data = &Xm540W150::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xm540W150 as HasPresentTemperature>::ROLE,
+            Xm540W150::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xm540W150 as HasPresentVoltage>::ROLE,
+            Xm540W150::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xm540W150 as HasPresentVelocity>::ROLE,
+            Xm540W150::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xm540W150 as HasGoalVelocity>::ROLE,
+            Xm540W150::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xm540W150 as HasSpeedLimit>::ROLE,
+            Xm540W150::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xm540W150 as HasPresentCurrent>::ROLE,
+            Xm540W150::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xm540W150 as HasGoalCurrent>::ROLE,
+            Xm540W150::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xm540W150 as HasMoving>::ROLE,
+            Xm540W150::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xm540W150 as HasLed>::ROLE,
+            Xm540W150::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xm540W150 as HasHardwareErrorStatus>::ROLE,
+            Xm540W150::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xm540W150 as HasRealtimeTick>::ROLE,
+            Xm540W150::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xm540W150 as HasPGain>::ROLE,
+            Xm540W150::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xm540W150 as HasDGain>::ROLE,
+            Xm540W150::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xm540W150 as HasPresentTemperature>::ROLE,
+            Xm540W150::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xm540W150 as HasPresentVoltage>::ROLE,
+            Xm540W150::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xm540W150 as HasPresentVelocity>::ROLE,
+            Xm540W150::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xm540W150 as HasGoalVelocity>::ROLE,
+            Xm540W150::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xm540W150 as HasSpeedLimit>::ROLE,
+            Xm540W150::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xm540W150 as HasPresentCurrent>::ROLE,
+            Xm540W150::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xm540W150 as HasGoalCurrent>::ROLE,
+            Xm540W150::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xm540W150 as HasMoving>::ROLE,
+            Xm540W150::MOVING,
+        ),
+        (Role::Led, <Xm540W150 as HasLed>::ROLE, Xm540W150::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xm540W150 as HasHardwareErrorStatus>::ROLE,
+            Xm540W150::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xm540W150 as HasRealtimeTick>::ROLE,
+            Xm540W150::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xm540W150 as HasPGain>::ROLE,
+            Xm540W150::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xm540W150 as HasDGain>::ROLE,
+            Xm540W150::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xm540_w150_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xm540W150;
+    use crate::units::Limits;
+
+    let mode = Xm540W150::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xm540W150::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_v270_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh540V270;
+
+    let data = &Xh540V270::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh540V270 as HasPresentTemperature>::ROLE,
+            Xh540V270::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540V270 as HasPresentVoltage>::ROLE,
+            Xh540V270::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540V270 as HasPresentVelocity>::ROLE,
+            Xh540V270::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540V270 as HasGoalVelocity>::ROLE,
+            Xh540V270::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540V270 as HasSpeedLimit>::ROLE,
+            Xh540V270::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540V270 as HasPresentCurrent>::ROLE,
+            Xh540V270::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540V270 as HasGoalCurrent>::ROLE,
+            Xh540V270::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh540V270 as HasMoving>::ROLE,
+            Xh540V270::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh540V270 as HasLed>::ROLE,
+            Xh540V270::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540V270 as HasHardwareErrorStatus>::ROLE,
+            Xh540V270::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540V270 as HasRealtimeTick>::ROLE,
+            Xh540V270::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh540V270 as HasPGain>::ROLE,
+            Xh540V270::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh540V270 as HasDGain>::ROLE,
+            Xh540V270::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh540V270 as HasPresentTemperature>::ROLE,
+            Xh540V270::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540V270 as HasPresentVoltage>::ROLE,
+            Xh540V270::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540V270 as HasPresentVelocity>::ROLE,
+            Xh540V270::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540V270 as HasGoalVelocity>::ROLE,
+            Xh540V270::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540V270 as HasSpeedLimit>::ROLE,
+            Xh540V270::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540V270 as HasPresentCurrent>::ROLE,
+            Xh540V270::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540V270 as HasGoalCurrent>::ROLE,
+            Xh540V270::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh540V270 as HasMoving>::ROLE,
+            Xh540V270::MOVING,
+        ),
+        (Role::Led, <Xh540V270 as HasLed>::ROLE, Xh540V270::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540V270 as HasHardwareErrorStatus>::ROLE,
+            Xh540V270::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540V270 as HasRealtimeTick>::ROLE,
+            Xh540V270::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh540V270 as HasPGain>::ROLE,
+            Xh540V270::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh540V270 as HasDGain>::ROLE,
+            Xh540V270::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_v270_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh540V270;
+    use crate::units::Limits;
+
+    let mode = Xh540V270::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh540V270::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_v150_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xh540V150;
+
+    let data = &Xh540V150::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xh540V150 as HasPresentTemperature>::ROLE,
+            Xh540V150::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540V150 as HasPresentVoltage>::ROLE,
+            Xh540V150::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540V150 as HasPresentVelocity>::ROLE,
+            Xh540V150::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540V150 as HasGoalVelocity>::ROLE,
+            Xh540V150::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540V150 as HasSpeedLimit>::ROLE,
+            Xh540V150::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540V150 as HasPresentCurrent>::ROLE,
+            Xh540V150::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540V150 as HasGoalCurrent>::ROLE,
+            Xh540V150::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xh540V150 as HasMoving>::ROLE,
+            Xh540V150::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xh540V150 as HasLed>::ROLE,
+            Xh540V150::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540V150 as HasHardwareErrorStatus>::ROLE,
+            Xh540V150::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540V150 as HasRealtimeTick>::ROLE,
+            Xh540V150::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xh540V150 as HasPGain>::ROLE,
+            Xh540V150::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xh540V150 as HasDGain>::ROLE,
+            Xh540V150::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xh540V150 as HasPresentTemperature>::ROLE,
+            Xh540V150::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xh540V150 as HasPresentVoltage>::ROLE,
+            Xh540V150::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xh540V150 as HasPresentVelocity>::ROLE,
+            Xh540V150::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xh540V150 as HasGoalVelocity>::ROLE,
+            Xh540V150::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xh540V150 as HasSpeedLimit>::ROLE,
+            Xh540V150::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xh540V150 as HasPresentCurrent>::ROLE,
+            Xh540V150::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xh540V150 as HasGoalCurrent>::ROLE,
+            Xh540V150::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xh540V150 as HasMoving>::ROLE,
+            Xh540V150::MOVING,
+        ),
+        (Role::Led, <Xh540V150 as HasLed>::ROLE, Xh540V150::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xh540V150 as HasHardwareErrorStatus>::ROLE,
+            Xh540V150::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xh540V150 as HasRealtimeTick>::ROLE,
+            Xh540V150::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xh540V150 as HasPGain>::ROLE,
+            Xh540V150::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xh540V150 as HasDGain>::ROLE,
+            Xh540V150::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xh540_v150_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xh540V150;
+    use crate::units::Limits;
+
+    let mode = Xh540V150::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xh540V150::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn two_xc430_w250_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
+        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::TwoXc430W250;
+
+    let data = &TwoXc430W250::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <TwoXc430W250 as HasPresentTemperature>::ROLE,
+            TwoXc430W250::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <TwoXc430W250 as HasPresentVoltage>::ROLE,
+            TwoXc430W250::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <TwoXc430W250 as HasPresentVelocity>::ROLE,
+            TwoXc430W250::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <TwoXc430W250 as HasGoalVelocity>::ROLE,
+            TwoXc430W250::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <TwoXc430W250 as HasSpeedLimit>::ROLE,
+            TwoXc430W250::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentLoad,
+            <TwoXc430W250 as HasPresentLoad>::ROLE,
+            TwoXc430W250::PRESENT_LOAD,
+            "Present Load",
+        ),
+        (
+            Role::Moving,
+            <TwoXc430W250 as HasMoving>::ROLE,
+            TwoXc430W250::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <TwoXc430W250 as HasLed>::ROLE,
+            TwoXc430W250::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <TwoXc430W250 as HasHardwareErrorStatus>::ROLE,
+            TwoXc430W250::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <TwoXc430W250 as HasRealtimeTick>::ROLE,
+            TwoXc430W250::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <TwoXc430W250 as HasPGain>::ROLE,
+            TwoXc430W250::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <TwoXc430W250 as HasDGain>::ROLE,
+            TwoXc430W250::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentCurrent,
+        Role::GoalCurrent,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <TwoXc430W250 as HasPresentTemperature>::ROLE,
+            TwoXc430W250::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <TwoXc430W250 as HasPresentVoltage>::ROLE,
+            TwoXc430W250::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <TwoXc430W250 as HasPresentVelocity>::ROLE,
+            TwoXc430W250::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <TwoXc430W250 as HasGoalVelocity>::ROLE,
+            TwoXc430W250::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <TwoXc430W250 as HasSpeedLimit>::ROLE,
+            TwoXc430W250::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentLoad,
+            <TwoXc430W250 as HasPresentLoad>::ROLE,
+            TwoXc430W250::PRESENT_LOAD,
+        ),
+        (
+            Role::Moving,
+            <TwoXc430W250 as HasMoving>::ROLE,
+            TwoXc430W250::MOVING,
+        ),
+        (Role::Led, <TwoXc430W250 as HasLed>::ROLE, TwoXc430W250::LED),
+        (
+            Role::HardwareErrorStatus,
+            <TwoXc430W250 as HasHardwareErrorStatus>::ROLE,
+            TwoXc430W250::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <TwoXc430W250 as HasRealtimeTick>::ROLE,
+            TwoXc430W250::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <TwoXc430W250 as HasPGain>::ROLE,
+            TwoXc430W250::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <TwoXc430W250 as HasDGain>::ROLE,
+            TwoXc430W250::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn two_xc430_w250_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::TwoXc430W250;
+    use crate::units::Limits;
+
+    let mode = TwoXc430W250::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(TwoXc430W250::OPERATING_MODE));
+    for (value, expected) in [
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (0, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_t260_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
+        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xw540T260;
+
+    let data = &Xw540T260::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xw540T260 as HasPresentTemperature>::ROLE,
+            Xw540T260::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw540T260 as HasPresentVoltage>::ROLE,
+            Xw540T260::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw540T260 as HasPresentVelocity>::ROLE,
+            Xw540T260::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw540T260 as HasGoalVelocity>::ROLE,
+            Xw540T260::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw540T260 as HasSpeedLimit>::ROLE,
+            Xw540T260::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw540T260 as HasPresentCurrent>::ROLE,
+            Xw540T260::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw540T260 as HasGoalCurrent>::ROLE,
+            Xw540T260::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xw540T260 as HasMoving>::ROLE,
+            Xw540T260::MOVING,
+            "Moving",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw540T260 as HasHardwareErrorStatus>::ROLE,
+            Xw540T260::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw540T260 as HasRealtimeTick>::ROLE,
+            Xw540T260::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xw540T260 as HasPGain>::ROLE,
+            Xw540T260::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xw540T260 as HasDGain>::ROLE,
+            Xw540T260::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xw540T260 as HasPresentTemperature>::ROLE,
+            Xw540T260::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw540T260 as HasPresentVoltage>::ROLE,
+            Xw540T260::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw540T260 as HasPresentVelocity>::ROLE,
+            Xw540T260::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw540T260 as HasGoalVelocity>::ROLE,
+            Xw540T260::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw540T260 as HasSpeedLimit>::ROLE,
+            Xw540T260::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw540T260 as HasPresentCurrent>::ROLE,
+            Xw540T260::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw540T260 as HasGoalCurrent>::ROLE,
+            Xw540T260::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xw540T260 as HasMoving>::ROLE,
+            Xw540T260::MOVING,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw540T260 as HasHardwareErrorStatus>::ROLE,
+            Xw540T260::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw540T260 as HasRealtimeTick>::ROLE,
+            Xw540T260::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xw540T260 as HasPGain>::ROLE,
+            Xw540T260::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xw540T260 as HasDGain>::ROLE,
+            Xw540T260::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_t260_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xw540T260;
+    use crate::units::Limits;
+
+    let mode = Xw540T260::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xw540T260::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_t140_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
+        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xw540T140;
+
+    let data = &Xw540T140::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xw540T140 as HasPresentTemperature>::ROLE,
+            Xw540T140::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw540T140 as HasPresentVoltage>::ROLE,
+            Xw540T140::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw540T140 as HasPresentVelocity>::ROLE,
+            Xw540T140::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw540T140 as HasGoalVelocity>::ROLE,
+            Xw540T140::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw540T140 as HasSpeedLimit>::ROLE,
+            Xw540T140::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw540T140 as HasPresentCurrent>::ROLE,
+            Xw540T140::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw540T140 as HasGoalCurrent>::ROLE,
+            Xw540T140::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xw540T140 as HasMoving>::ROLE,
+            Xw540T140::MOVING,
+            "Moving",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw540T140 as HasHardwareErrorStatus>::ROLE,
+            Xw540T140::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw540T140 as HasRealtimeTick>::ROLE,
+            Xw540T140::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xw540T140 as HasPGain>::ROLE,
+            Xw540T140::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xw540T140 as HasDGain>::ROLE,
+            Xw540T140::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xw540T140 as HasPresentTemperature>::ROLE,
+            Xw540T140::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw540T140 as HasPresentVoltage>::ROLE,
+            Xw540T140::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw540T140 as HasPresentVelocity>::ROLE,
+            Xw540T140::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw540T140 as HasGoalVelocity>::ROLE,
+            Xw540T140::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw540T140 as HasSpeedLimit>::ROLE,
+            Xw540T140::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw540T140 as HasPresentCurrent>::ROLE,
+            Xw540T140::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw540T140 as HasGoalCurrent>::ROLE,
+            Xw540T140::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xw540T140 as HasMoving>::ROLE,
+            Xw540T140::MOVING,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw540T140 as HasHardwareErrorStatus>::ROLE,
+            Xw540T140::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw540T140 as HasRealtimeTick>::ROLE,
+            Xw540T140::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xw540T140 as HasPGain>::ROLE,
+            Xw540T140::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xw540T140 as HasDGain>::ROLE,
+            Xw540T140::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_t140_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xw540T140;
+    use crate::units::Limits;
+
+    let mode = Xw540T140::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xw540T140::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m077_fw52_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xl330M077Fw52;
+
+    let data = &Xl330M077Fw52::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M077Fw52 as HasPresentTemperature>::ROLE,
+            Xl330M077Fw52::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M077Fw52 as HasPresentVoltage>::ROLE,
+            Xl330M077Fw52::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M077Fw52 as HasPresentVelocity>::ROLE,
+            Xl330M077Fw52::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M077Fw52 as HasGoalVelocity>::ROLE,
+            Xl330M077Fw52::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M077Fw52 as HasSpeedLimit>::ROLE,
+            Xl330M077Fw52::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M077Fw52 as HasPresentCurrent>::ROLE,
+            Xl330M077Fw52::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M077Fw52 as HasGoalCurrent>::ROLE,
+            Xl330M077Fw52::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xl330M077Fw52 as HasMoving>::ROLE,
+            Xl330M077Fw52::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xl330M077Fw52 as HasLed>::ROLE,
+            Xl330M077Fw52::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M077Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xl330M077Fw52::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M077Fw52 as HasRealtimeTick>::ROLE,
+            Xl330M077Fw52::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xl330M077Fw52 as HasPGain>::ROLE,
+            Xl330M077Fw52::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xl330M077Fw52 as HasDGain>::ROLE,
+            Xl330M077Fw52::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M077Fw52 as HasPresentTemperature>::ROLE,
+            Xl330M077Fw52::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M077Fw52 as HasPresentVoltage>::ROLE,
+            Xl330M077Fw52::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M077Fw52 as HasPresentVelocity>::ROLE,
+            Xl330M077Fw52::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M077Fw52 as HasGoalVelocity>::ROLE,
+            Xl330M077Fw52::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M077Fw52 as HasSpeedLimit>::ROLE,
+            Xl330M077Fw52::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M077Fw52 as HasPresentCurrent>::ROLE,
+            Xl330M077Fw52::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M077Fw52 as HasGoalCurrent>::ROLE,
+            Xl330M077Fw52::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xl330M077Fw52 as HasMoving>::ROLE,
+            Xl330M077Fw52::MOVING,
+        ),
+        (
+            Role::Led,
+            <Xl330M077Fw52 as HasLed>::ROLE,
+            Xl330M077Fw52::LED,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M077Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xl330M077Fw52::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M077Fw52 as HasRealtimeTick>::ROLE,
+            Xl330M077Fw52::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xl330M077Fw52 as HasPGain>::ROLE,
+            Xl330M077Fw52::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xl330M077Fw52 as HasDGain>::ROLE,
+            Xl330M077Fw52::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m077_fw52_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xl330M077Fw52;
+    use crate::units::Limits;
+
+    let mode = Xl330M077Fw52::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xl330M077Fw52::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m077_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xl330M077;
+
+    let data = &Xl330M077::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M077 as HasPresentTemperature>::ROLE,
+            Xl330M077::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M077 as HasPresentVoltage>::ROLE,
+            Xl330M077::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M077 as HasPresentVelocity>::ROLE,
+            Xl330M077::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M077 as HasGoalVelocity>::ROLE,
+            Xl330M077::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M077 as HasSpeedLimit>::ROLE,
+            Xl330M077::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M077 as HasPresentCurrent>::ROLE,
+            Xl330M077::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M077 as HasGoalCurrent>::ROLE,
+            Xl330M077::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xl330M077 as HasMoving>::ROLE,
+            Xl330M077::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xl330M077 as HasLed>::ROLE,
+            Xl330M077::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M077 as HasHardwareErrorStatus>::ROLE,
+            Xl330M077::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M077 as HasRealtimeTick>::ROLE,
+            Xl330M077::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xl330M077 as HasPGain>::ROLE,
+            Xl330M077::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xl330M077 as HasDGain>::ROLE,
+            Xl330M077::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M077 as HasPresentTemperature>::ROLE,
+            Xl330M077::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M077 as HasPresentVoltage>::ROLE,
+            Xl330M077::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M077 as HasPresentVelocity>::ROLE,
+            Xl330M077::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M077 as HasGoalVelocity>::ROLE,
+            Xl330M077::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M077 as HasSpeedLimit>::ROLE,
+            Xl330M077::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M077 as HasPresentCurrent>::ROLE,
+            Xl330M077::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M077 as HasGoalCurrent>::ROLE,
+            Xl330M077::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xl330M077 as HasMoving>::ROLE,
+            Xl330M077::MOVING,
+        ),
+        (Role::Led, <Xl330M077 as HasLed>::ROLE, Xl330M077::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M077 as HasHardwareErrorStatus>::ROLE,
+            Xl330M077::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M077 as HasRealtimeTick>::ROLE,
+            Xl330M077::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xl330M077 as HasPGain>::ROLE,
+            Xl330M077::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xl330M077 as HasDGain>::ROLE,
+            Xl330M077::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m077_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xl330M077;
+    use crate::units::Limits;
+
+    let mode = Xl330M077::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xl330M077::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m288_fw52_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xl330M288Fw52;
+
+    let data = &Xl330M288Fw52::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M288Fw52 as HasPresentTemperature>::ROLE,
+            Xl330M288Fw52::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M288Fw52 as HasPresentVoltage>::ROLE,
+            Xl330M288Fw52::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M288Fw52 as HasPresentVelocity>::ROLE,
+            Xl330M288Fw52::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M288Fw52 as HasGoalVelocity>::ROLE,
+            Xl330M288Fw52::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M288Fw52 as HasSpeedLimit>::ROLE,
+            Xl330M288Fw52::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M288Fw52 as HasPresentCurrent>::ROLE,
+            Xl330M288Fw52::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M288Fw52 as HasGoalCurrent>::ROLE,
+            Xl330M288Fw52::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xl330M288Fw52 as HasMoving>::ROLE,
+            Xl330M288Fw52::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xl330M288Fw52 as HasLed>::ROLE,
+            Xl330M288Fw52::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M288Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xl330M288Fw52::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M288Fw52 as HasRealtimeTick>::ROLE,
+            Xl330M288Fw52::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xl330M288Fw52 as HasPGain>::ROLE,
+            Xl330M288Fw52::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xl330M288Fw52 as HasDGain>::ROLE,
+            Xl330M288Fw52::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M288Fw52 as HasPresentTemperature>::ROLE,
+            Xl330M288Fw52::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M288Fw52 as HasPresentVoltage>::ROLE,
+            Xl330M288Fw52::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M288Fw52 as HasPresentVelocity>::ROLE,
+            Xl330M288Fw52::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M288Fw52 as HasGoalVelocity>::ROLE,
+            Xl330M288Fw52::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M288Fw52 as HasSpeedLimit>::ROLE,
+            Xl330M288Fw52::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M288Fw52 as HasPresentCurrent>::ROLE,
+            Xl330M288Fw52::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M288Fw52 as HasGoalCurrent>::ROLE,
+            Xl330M288Fw52::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xl330M288Fw52 as HasMoving>::ROLE,
+            Xl330M288Fw52::MOVING,
+        ),
+        (
+            Role::Led,
+            <Xl330M288Fw52 as HasLed>::ROLE,
+            Xl330M288Fw52::LED,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M288Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xl330M288Fw52::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M288Fw52 as HasRealtimeTick>::ROLE,
+            Xl330M288Fw52::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xl330M288Fw52 as HasPGain>::ROLE,
+            Xl330M288Fw52::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xl330M288Fw52 as HasDGain>::ROLE,
+            Xl330M288Fw52::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m288_fw52_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xl330M288Fw52;
+    use crate::units::Limits;
+
+    let mode = Xl330M288Fw52::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xl330M288Fw52::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m288_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xl330M288;
+
+    let data = &Xl330M288::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M288 as HasPresentTemperature>::ROLE,
+            Xl330M288::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M288 as HasPresentVoltage>::ROLE,
+            Xl330M288::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M288 as HasPresentVelocity>::ROLE,
+            Xl330M288::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M288 as HasGoalVelocity>::ROLE,
+            Xl330M288::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M288 as HasSpeedLimit>::ROLE,
+            Xl330M288::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M288 as HasPresentCurrent>::ROLE,
+            Xl330M288::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M288 as HasGoalCurrent>::ROLE,
+            Xl330M288::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xl330M288 as HasMoving>::ROLE,
+            Xl330M288::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xl330M288 as HasLed>::ROLE,
+            Xl330M288::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M288 as HasHardwareErrorStatus>::ROLE,
+            Xl330M288::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M288 as HasRealtimeTick>::ROLE,
+            Xl330M288::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xl330M288 as HasPGain>::ROLE,
+            Xl330M288::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xl330M288 as HasDGain>::ROLE,
+            Xl330M288::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xl330M288 as HasPresentTemperature>::ROLE,
+            Xl330M288::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xl330M288 as HasPresentVoltage>::ROLE,
+            Xl330M288::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xl330M288 as HasPresentVelocity>::ROLE,
+            Xl330M288::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xl330M288 as HasGoalVelocity>::ROLE,
+            Xl330M288::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xl330M288 as HasSpeedLimit>::ROLE,
+            Xl330M288::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xl330M288 as HasPresentCurrent>::ROLE,
+            Xl330M288::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xl330M288 as HasGoalCurrent>::ROLE,
+            Xl330M288::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xl330M288 as HasMoving>::ROLE,
+            Xl330M288::MOVING,
+        ),
+        (Role::Led, <Xl330M288 as HasLed>::ROLE, Xl330M288::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xl330M288 as HasHardwareErrorStatus>::ROLE,
+            Xl330M288::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xl330M288 as HasRealtimeTick>::ROLE,
+            Xl330M288::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xl330M288 as HasPGain>::ROLE,
+            Xl330M288::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xl330M288 as HasDGain>::ROLE,
+            Xl330M288::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xl330_m288_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xl330M288;
+    use crate::units::Limits;
+
+    let mode = Xl330M288::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xl330M288::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t181_fw52_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330T181Fw52;
+
+    let data = &Xc330T181Fw52::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T181Fw52 as HasPresentTemperature>::ROLE,
+            Xc330T181Fw52::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T181Fw52 as HasPresentVoltage>::ROLE,
+            Xc330T181Fw52::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T181Fw52 as HasPresentVelocity>::ROLE,
+            Xc330T181Fw52::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T181Fw52 as HasGoalVelocity>::ROLE,
+            Xc330T181Fw52::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T181Fw52 as HasSpeedLimit>::ROLE,
+            Xc330T181Fw52::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T181Fw52 as HasPresentCurrent>::ROLE,
+            Xc330T181Fw52::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T181Fw52 as HasGoalCurrent>::ROLE,
+            Xc330T181Fw52::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330T181Fw52 as HasMoving>::ROLE,
+            Xc330T181Fw52::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330T181Fw52 as HasLed>::ROLE,
+            Xc330T181Fw52::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T181Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330T181Fw52::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T181Fw52 as HasRealtimeTick>::ROLE,
+            Xc330T181Fw52::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330T181Fw52 as HasPGain>::ROLE,
+            Xc330T181Fw52::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330T181Fw52 as HasDGain>::ROLE,
+            Xc330T181Fw52::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T181Fw52 as HasPresentTemperature>::ROLE,
+            Xc330T181Fw52::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T181Fw52 as HasPresentVoltage>::ROLE,
+            Xc330T181Fw52::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T181Fw52 as HasPresentVelocity>::ROLE,
+            Xc330T181Fw52::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T181Fw52 as HasGoalVelocity>::ROLE,
+            Xc330T181Fw52::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T181Fw52 as HasSpeedLimit>::ROLE,
+            Xc330T181Fw52::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T181Fw52 as HasPresentCurrent>::ROLE,
+            Xc330T181Fw52::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T181Fw52 as HasGoalCurrent>::ROLE,
+            Xc330T181Fw52::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330T181Fw52 as HasMoving>::ROLE,
+            Xc330T181Fw52::MOVING,
+        ),
+        (
+            Role::Led,
+            <Xc330T181Fw52 as HasLed>::ROLE,
+            Xc330T181Fw52::LED,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T181Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330T181Fw52::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T181Fw52 as HasRealtimeTick>::ROLE,
+            Xc330T181Fw52::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330T181Fw52 as HasPGain>::ROLE,
+            Xc330T181Fw52::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330T181Fw52 as HasDGain>::ROLE,
+            Xc330T181Fw52::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t181_fw52_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330T181Fw52;
+    use crate::units::Limits;
+
+    let mode = Xc330T181Fw52::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330T181Fw52::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t181_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330T181;
+
+    let data = &Xc330T181::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T181 as HasPresentTemperature>::ROLE,
+            Xc330T181::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T181 as HasPresentVoltage>::ROLE,
+            Xc330T181::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T181 as HasPresentVelocity>::ROLE,
+            Xc330T181::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T181 as HasGoalVelocity>::ROLE,
+            Xc330T181::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T181 as HasSpeedLimit>::ROLE,
+            Xc330T181::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T181 as HasPresentCurrent>::ROLE,
+            Xc330T181::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T181 as HasGoalCurrent>::ROLE,
+            Xc330T181::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330T181 as HasMoving>::ROLE,
+            Xc330T181::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330T181 as HasLed>::ROLE,
+            Xc330T181::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T181 as HasHardwareErrorStatus>::ROLE,
+            Xc330T181::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T181 as HasRealtimeTick>::ROLE,
+            Xc330T181::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330T181 as HasPGain>::ROLE,
+            Xc330T181::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330T181 as HasDGain>::ROLE,
+            Xc330T181::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T181 as HasPresentTemperature>::ROLE,
+            Xc330T181::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T181 as HasPresentVoltage>::ROLE,
+            Xc330T181::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T181 as HasPresentVelocity>::ROLE,
+            Xc330T181::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T181 as HasGoalVelocity>::ROLE,
+            Xc330T181::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T181 as HasSpeedLimit>::ROLE,
+            Xc330T181::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T181 as HasPresentCurrent>::ROLE,
+            Xc330T181::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T181 as HasGoalCurrent>::ROLE,
+            Xc330T181::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330T181 as HasMoving>::ROLE,
+            Xc330T181::MOVING,
+        ),
+        (Role::Led, <Xc330T181 as HasLed>::ROLE, Xc330T181::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T181 as HasHardwareErrorStatus>::ROLE,
+            Xc330T181::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T181 as HasRealtimeTick>::ROLE,
+            Xc330T181::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330T181 as HasPGain>::ROLE,
+            Xc330T181::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330T181 as HasDGain>::ROLE,
+            Xc330T181::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t181_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330T181;
+    use crate::units::Limits;
+
+    let mode = Xc330T181::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330T181::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t288_fw52_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330T288Fw52;
+
+    let data = &Xc330T288Fw52::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T288Fw52 as HasPresentTemperature>::ROLE,
+            Xc330T288Fw52::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T288Fw52 as HasPresentVoltage>::ROLE,
+            Xc330T288Fw52::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T288Fw52 as HasPresentVelocity>::ROLE,
+            Xc330T288Fw52::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T288Fw52 as HasGoalVelocity>::ROLE,
+            Xc330T288Fw52::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T288Fw52 as HasSpeedLimit>::ROLE,
+            Xc330T288Fw52::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T288Fw52 as HasPresentCurrent>::ROLE,
+            Xc330T288Fw52::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T288Fw52 as HasGoalCurrent>::ROLE,
+            Xc330T288Fw52::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330T288Fw52 as HasMoving>::ROLE,
+            Xc330T288Fw52::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330T288Fw52 as HasLed>::ROLE,
+            Xc330T288Fw52::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T288Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330T288Fw52::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T288Fw52 as HasRealtimeTick>::ROLE,
+            Xc330T288Fw52::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330T288Fw52 as HasPGain>::ROLE,
+            Xc330T288Fw52::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330T288Fw52 as HasDGain>::ROLE,
+            Xc330T288Fw52::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T288Fw52 as HasPresentTemperature>::ROLE,
+            Xc330T288Fw52::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T288Fw52 as HasPresentVoltage>::ROLE,
+            Xc330T288Fw52::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T288Fw52 as HasPresentVelocity>::ROLE,
+            Xc330T288Fw52::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T288Fw52 as HasGoalVelocity>::ROLE,
+            Xc330T288Fw52::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T288Fw52 as HasSpeedLimit>::ROLE,
+            Xc330T288Fw52::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T288Fw52 as HasPresentCurrent>::ROLE,
+            Xc330T288Fw52::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T288Fw52 as HasGoalCurrent>::ROLE,
+            Xc330T288Fw52::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330T288Fw52 as HasMoving>::ROLE,
+            Xc330T288Fw52::MOVING,
+        ),
+        (
+            Role::Led,
+            <Xc330T288Fw52 as HasLed>::ROLE,
+            Xc330T288Fw52::LED,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T288Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330T288Fw52::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T288Fw52 as HasRealtimeTick>::ROLE,
+            Xc330T288Fw52::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330T288Fw52 as HasPGain>::ROLE,
+            Xc330T288Fw52::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330T288Fw52 as HasDGain>::ROLE,
+            Xc330T288Fw52::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t288_fw52_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330T288Fw52;
+    use crate::units::Limits;
+
+    let mode = Xc330T288Fw52::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330T288Fw52::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t288_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330T288;
+
+    let data = &Xc330T288::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T288 as HasPresentTemperature>::ROLE,
+            Xc330T288::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T288 as HasPresentVoltage>::ROLE,
+            Xc330T288::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T288 as HasPresentVelocity>::ROLE,
+            Xc330T288::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T288 as HasGoalVelocity>::ROLE,
+            Xc330T288::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T288 as HasSpeedLimit>::ROLE,
+            Xc330T288::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T288 as HasPresentCurrent>::ROLE,
+            Xc330T288::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T288 as HasGoalCurrent>::ROLE,
+            Xc330T288::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330T288 as HasMoving>::ROLE,
+            Xc330T288::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330T288 as HasLed>::ROLE,
+            Xc330T288::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T288 as HasHardwareErrorStatus>::ROLE,
+            Xc330T288::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T288 as HasRealtimeTick>::ROLE,
+            Xc330T288::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330T288 as HasPGain>::ROLE,
+            Xc330T288::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330T288 as HasDGain>::ROLE,
+            Xc330T288::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330T288 as HasPresentTemperature>::ROLE,
+            Xc330T288::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330T288 as HasPresentVoltage>::ROLE,
+            Xc330T288::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330T288 as HasPresentVelocity>::ROLE,
+            Xc330T288::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330T288 as HasGoalVelocity>::ROLE,
+            Xc330T288::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330T288 as HasSpeedLimit>::ROLE,
+            Xc330T288::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330T288 as HasPresentCurrent>::ROLE,
+            Xc330T288::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330T288 as HasGoalCurrent>::ROLE,
+            Xc330T288::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330T288 as HasMoving>::ROLE,
+            Xc330T288::MOVING,
+        ),
+        (Role::Led, <Xc330T288 as HasLed>::ROLE, Xc330T288::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330T288 as HasHardwareErrorStatus>::ROLE,
+            Xc330T288::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330T288 as HasRealtimeTick>::ROLE,
+            Xc330T288::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330T288 as HasPGain>::ROLE,
+            Xc330T288::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330T288 as HasDGain>::ROLE,
+            Xc330T288::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_t288_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330T288;
+    use crate::units::Limits;
+
+    let mode = Xc330T288::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330T288::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m181_fw52_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330M181Fw52;
+
+    let data = &Xc330M181Fw52::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M181Fw52 as HasPresentTemperature>::ROLE,
+            Xc330M181Fw52::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M181Fw52 as HasPresentVoltage>::ROLE,
+            Xc330M181Fw52::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M181Fw52 as HasPresentVelocity>::ROLE,
+            Xc330M181Fw52::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M181Fw52 as HasGoalVelocity>::ROLE,
+            Xc330M181Fw52::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M181Fw52 as HasSpeedLimit>::ROLE,
+            Xc330M181Fw52::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M181Fw52 as HasPresentCurrent>::ROLE,
+            Xc330M181Fw52::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M181Fw52 as HasGoalCurrent>::ROLE,
+            Xc330M181Fw52::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330M181Fw52 as HasMoving>::ROLE,
+            Xc330M181Fw52::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330M181Fw52 as HasLed>::ROLE,
+            Xc330M181Fw52::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M181Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330M181Fw52::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M181Fw52 as HasRealtimeTick>::ROLE,
+            Xc330M181Fw52::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330M181Fw52 as HasPGain>::ROLE,
+            Xc330M181Fw52::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330M181Fw52 as HasDGain>::ROLE,
+            Xc330M181Fw52::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M181Fw52 as HasPresentTemperature>::ROLE,
+            Xc330M181Fw52::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M181Fw52 as HasPresentVoltage>::ROLE,
+            Xc330M181Fw52::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M181Fw52 as HasPresentVelocity>::ROLE,
+            Xc330M181Fw52::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M181Fw52 as HasGoalVelocity>::ROLE,
+            Xc330M181Fw52::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M181Fw52 as HasSpeedLimit>::ROLE,
+            Xc330M181Fw52::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M181Fw52 as HasPresentCurrent>::ROLE,
+            Xc330M181Fw52::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M181Fw52 as HasGoalCurrent>::ROLE,
+            Xc330M181Fw52::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330M181Fw52 as HasMoving>::ROLE,
+            Xc330M181Fw52::MOVING,
+        ),
+        (
+            Role::Led,
+            <Xc330M181Fw52 as HasLed>::ROLE,
+            Xc330M181Fw52::LED,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M181Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330M181Fw52::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M181Fw52 as HasRealtimeTick>::ROLE,
+            Xc330M181Fw52::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330M181Fw52 as HasPGain>::ROLE,
+            Xc330M181Fw52::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330M181Fw52 as HasDGain>::ROLE,
+            Xc330M181Fw52::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m181_fw52_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330M181Fw52;
+    use crate::units::Limits;
+
+    let mode = Xc330M181Fw52::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330M181Fw52::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m181_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330M181;
+
+    let data = &Xc330M181::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M181 as HasPresentTemperature>::ROLE,
+            Xc330M181::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M181 as HasPresentVoltage>::ROLE,
+            Xc330M181::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M181 as HasPresentVelocity>::ROLE,
+            Xc330M181::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M181 as HasGoalVelocity>::ROLE,
+            Xc330M181::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M181 as HasSpeedLimit>::ROLE,
+            Xc330M181::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M181 as HasPresentCurrent>::ROLE,
+            Xc330M181::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M181 as HasGoalCurrent>::ROLE,
+            Xc330M181::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330M181 as HasMoving>::ROLE,
+            Xc330M181::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330M181 as HasLed>::ROLE,
+            Xc330M181::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M181 as HasHardwareErrorStatus>::ROLE,
+            Xc330M181::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M181 as HasRealtimeTick>::ROLE,
+            Xc330M181::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330M181 as HasPGain>::ROLE,
+            Xc330M181::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330M181 as HasDGain>::ROLE,
+            Xc330M181::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M181 as HasPresentTemperature>::ROLE,
+            Xc330M181::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M181 as HasPresentVoltage>::ROLE,
+            Xc330M181::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M181 as HasPresentVelocity>::ROLE,
+            Xc330M181::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M181 as HasGoalVelocity>::ROLE,
+            Xc330M181::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M181 as HasSpeedLimit>::ROLE,
+            Xc330M181::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M181 as HasPresentCurrent>::ROLE,
+            Xc330M181::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M181 as HasGoalCurrent>::ROLE,
+            Xc330M181::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330M181 as HasMoving>::ROLE,
+            Xc330M181::MOVING,
+        ),
+        (Role::Led, <Xc330M181 as HasLed>::ROLE, Xc330M181::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M181 as HasHardwareErrorStatus>::ROLE,
+            Xc330M181::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M181 as HasRealtimeTick>::ROLE,
+            Xc330M181::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330M181 as HasPGain>::ROLE,
+            Xc330M181::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330M181 as HasDGain>::ROLE,
+            Xc330M181::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m181_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330M181;
+    use crate::units::Limits;
+
+    let mode = Xc330M181::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330M181::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m288_fw52_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330M288Fw52;
+
+    let data = &Xc330M288Fw52::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M288Fw52 as HasPresentTemperature>::ROLE,
+            Xc330M288Fw52::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M288Fw52 as HasPresentVoltage>::ROLE,
+            Xc330M288Fw52::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M288Fw52 as HasPresentVelocity>::ROLE,
+            Xc330M288Fw52::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M288Fw52 as HasGoalVelocity>::ROLE,
+            Xc330M288Fw52::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M288Fw52 as HasSpeedLimit>::ROLE,
+            Xc330M288Fw52::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M288Fw52 as HasPresentCurrent>::ROLE,
+            Xc330M288Fw52::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M288Fw52 as HasGoalCurrent>::ROLE,
+            Xc330M288Fw52::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330M288Fw52 as HasMoving>::ROLE,
+            Xc330M288Fw52::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330M288Fw52 as HasLed>::ROLE,
+            Xc330M288Fw52::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M288Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330M288Fw52::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M288Fw52 as HasRealtimeTick>::ROLE,
+            Xc330M288Fw52::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330M288Fw52 as HasPGain>::ROLE,
+            Xc330M288Fw52::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330M288Fw52 as HasDGain>::ROLE,
+            Xc330M288Fw52::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M288Fw52 as HasPresentTemperature>::ROLE,
+            Xc330M288Fw52::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M288Fw52 as HasPresentVoltage>::ROLE,
+            Xc330M288Fw52::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M288Fw52 as HasPresentVelocity>::ROLE,
+            Xc330M288Fw52::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M288Fw52 as HasGoalVelocity>::ROLE,
+            Xc330M288Fw52::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M288Fw52 as HasSpeedLimit>::ROLE,
+            Xc330M288Fw52::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M288Fw52 as HasPresentCurrent>::ROLE,
+            Xc330M288Fw52::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M288Fw52 as HasGoalCurrent>::ROLE,
+            Xc330M288Fw52::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330M288Fw52 as HasMoving>::ROLE,
+            Xc330M288Fw52::MOVING,
+        ),
+        (
+            Role::Led,
+            <Xc330M288Fw52 as HasLed>::ROLE,
+            Xc330M288Fw52::LED,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M288Fw52 as HasHardwareErrorStatus>::ROLE,
+            Xc330M288Fw52::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M288Fw52 as HasRealtimeTick>::ROLE,
+            Xc330M288Fw52::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330M288Fw52 as HasPGain>::ROLE,
+            Xc330M288Fw52::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330M288Fw52 as HasDGain>::ROLE,
+            Xc330M288Fw52::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m288_fw52_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330M288Fw52;
+    use crate::units::Limits;
+
+    let mode = Xc330M288Fw52::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330M288Fw52::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m288_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
+        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xc330M288;
+
+    let data = &Xc330M288::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M288 as HasPresentTemperature>::ROLE,
+            Xc330M288::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M288 as HasPresentVoltage>::ROLE,
+            Xc330M288::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M288 as HasPresentVelocity>::ROLE,
+            Xc330M288::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M288 as HasGoalVelocity>::ROLE,
+            Xc330M288::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M288 as HasSpeedLimit>::ROLE,
+            Xc330M288::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M288 as HasPresentCurrent>::ROLE,
+            Xc330M288::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M288 as HasGoalCurrent>::ROLE,
+            Xc330M288::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xc330M288 as HasMoving>::ROLE,
+            Xc330M288::MOVING,
+            "Moving",
+        ),
+        (
+            Role::Led,
+            <Xc330M288 as HasLed>::ROLE,
+            Xc330M288::LED,
+            "LED",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M288 as HasHardwareErrorStatus>::ROLE,
+            Xc330M288::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M288 as HasRealtimeTick>::ROLE,
+            Xc330M288::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xc330M288 as HasPGain>::ROLE,
+            Xc330M288::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xc330M288 as HasDGain>::ROLE,
+            Xc330M288::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xc330M288 as HasPresentTemperature>::ROLE,
+            Xc330M288::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xc330M288 as HasPresentVoltage>::ROLE,
+            Xc330M288::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xc330M288 as HasPresentVelocity>::ROLE,
+            Xc330M288::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xc330M288 as HasGoalVelocity>::ROLE,
+            Xc330M288::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xc330M288 as HasSpeedLimit>::ROLE,
+            Xc330M288::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xc330M288 as HasPresentCurrent>::ROLE,
+            Xc330M288::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xc330M288 as HasGoalCurrent>::ROLE,
+            Xc330M288::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xc330M288 as HasMoving>::ROLE,
+            Xc330M288::MOVING,
+        ),
+        (Role::Led, <Xc330M288 as HasLed>::ROLE, Xc330M288::LED),
+        (
+            Role::HardwareErrorStatus,
+            <Xc330M288 as HasHardwareErrorStatus>::ROLE,
+            Xc330M288::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xc330M288 as HasRealtimeTick>::ROLE,
+            Xc330M288::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xc330M288 as HasPGain>::ROLE,
+            Xc330M288::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xc330M288 as HasDGain>::ROLE,
+            Xc330M288::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xc330_m288_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xc330M288;
+    use crate::units::Limits;
+
+    let mode = Xc330M288::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xc330M288::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw430_t333_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
+        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xw430T333;
+
+    let data = &Xw430T333::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xw430T333 as HasPresentTemperature>::ROLE,
+            Xw430T333::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw430T333 as HasPresentVoltage>::ROLE,
+            Xw430T333::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw430T333 as HasPresentVelocity>::ROLE,
+            Xw430T333::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw430T333 as HasGoalVelocity>::ROLE,
+            Xw430T333::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw430T333 as HasSpeedLimit>::ROLE,
+            Xw430T333::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw430T333 as HasPresentCurrent>::ROLE,
+            Xw430T333::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw430T333 as HasGoalCurrent>::ROLE,
+            Xw430T333::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xw430T333 as HasMoving>::ROLE,
+            Xw430T333::MOVING,
+            "Moving",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw430T333 as HasHardwareErrorStatus>::ROLE,
+            Xw430T333::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw430T333 as HasRealtimeTick>::ROLE,
+            Xw430T333::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xw430T333 as HasPGain>::ROLE,
+            Xw430T333::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xw430T333 as HasDGain>::ROLE,
+            Xw430T333::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xw430T333 as HasPresentTemperature>::ROLE,
+            Xw430T333::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw430T333 as HasPresentVoltage>::ROLE,
+            Xw430T333::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw430T333 as HasPresentVelocity>::ROLE,
+            Xw430T333::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw430T333 as HasGoalVelocity>::ROLE,
+            Xw430T333::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw430T333 as HasSpeedLimit>::ROLE,
+            Xw430T333::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw430T333 as HasPresentCurrent>::ROLE,
+            Xw430T333::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw430T333 as HasGoalCurrent>::ROLE,
+            Xw430T333::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xw430T333 as HasMoving>::ROLE,
+            Xw430T333::MOVING,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw430T333 as HasHardwareErrorStatus>::ROLE,
+            Xw430T333::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw430T333 as HasRealtimeTick>::ROLE,
+            Xw430T333::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xw430T333 as HasPGain>::ROLE,
+            Xw430T333::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xw430T333 as HasDGain>::ROLE,
+            Xw430T333::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw430_t333_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xw430T333;
+    use crate::units::Limits;
+
+    let mode = Xw430T333::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xw430T333::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_h260_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
+        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Xw540H260;
+
+    let data = &Xw540H260::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Xw540H260 as HasPresentTemperature>::ROLE,
+            Xw540H260::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw540H260 as HasPresentVoltage>::ROLE,
+            Xw540H260::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw540H260 as HasPresentVelocity>::ROLE,
+            Xw540H260::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw540H260 as HasGoalVelocity>::ROLE,
+            Xw540H260::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw540H260 as HasSpeedLimit>::ROLE,
+            Xw540H260::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw540H260 as HasPresentCurrent>::ROLE,
+            Xw540H260::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw540H260 as HasGoalCurrent>::ROLE,
+            Xw540H260::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Xw540H260 as HasMoving>::ROLE,
+            Xw540H260::MOVING,
+            "Moving",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw540H260 as HasHardwareErrorStatus>::ROLE,
+            Xw540H260::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw540H260 as HasRealtimeTick>::ROLE,
+            Xw540H260::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Xw540H260 as HasPGain>::ROLE,
+            Xw540H260::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Xw540H260 as HasDGain>::ROLE,
+            Xw540H260::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Xw540H260 as HasPresentTemperature>::ROLE,
+            Xw540H260::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Xw540H260 as HasPresentVoltage>::ROLE,
+            Xw540H260::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Xw540H260 as HasPresentVelocity>::ROLE,
+            Xw540H260::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Xw540H260 as HasGoalVelocity>::ROLE,
+            Xw540H260::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Xw540H260 as HasSpeedLimit>::ROLE,
+            Xw540H260::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Xw540H260 as HasPresentCurrent>::ROLE,
+            Xw540H260::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Xw540H260 as HasGoalCurrent>::ROLE,
+            Xw540H260::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Xw540H260 as HasMoving>::ROLE,
+            Xw540H260::MOVING,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Xw540H260 as HasHardwareErrorStatus>::ROLE,
+            Xw540H260::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Xw540H260 as HasRealtimeTick>::ROLE,
+            Xw540H260::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Xw540H260 as HasPGain>::ROLE,
+            Xw540H260::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Xw540H260 as HasDGain>::ROLE,
+            Xw540H260::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "x-series")]
+#[test]
+fn xw540_h260_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Xw540H260;
+    use crate::units::Limits;
+
+    let mode = Xw540H260::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Xw540H260::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (5, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph42_020_s300_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ph42020S300;
+
+    let data = &Ph42020S300::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Ph42020S300 as HasPresentTemperature>::ROLE,
+            Ph42020S300::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Ph42020S300 as HasPresentVoltage>::ROLE,
+            Ph42020S300::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ph42020S300 as HasPresentVelocity>::ROLE,
+            Ph42020S300::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ph42020S300 as HasGoalVelocity>::ROLE,
+            Ph42020S300::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ph42020S300 as HasSpeedLimit>::ROLE,
+            Ph42020S300::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ph42020S300 as HasPresentCurrent>::ROLE,
+            Ph42020S300::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ph42020S300 as HasGoalCurrent>::ROLE,
+            Ph42020S300::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Ph42020S300 as HasMoving>::ROLE,
+            Ph42020S300::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <Ph42020S300 as HasLedRed>::ROLE,
+            Ph42020S300::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <Ph42020S300 as HasLedGreen>::ROLE,
+            Ph42020S300::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <Ph42020S300 as HasLedBlue>::ROLE,
+            Ph42020S300::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Ph42020S300 as HasHardwareErrorStatus>::ROLE,
+            Ph42020S300::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ph42020S300 as HasRealtimeTick>::ROLE,
+            Ph42020S300::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ph42020S300 as HasPGain>::ROLE,
+            Ph42020S300::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ph42020S300 as HasDGain>::ROLE,
+            Ph42020S300::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Ph42020S300 as HasPresentTemperature>::ROLE,
+            Ph42020S300::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Ph42020S300 as HasPresentVoltage>::ROLE,
+            Ph42020S300::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ph42020S300 as HasPresentVelocity>::ROLE,
+            Ph42020S300::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ph42020S300 as HasGoalVelocity>::ROLE,
+            Ph42020S300::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ph42020S300 as HasSpeedLimit>::ROLE,
+            Ph42020S300::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ph42020S300 as HasPresentCurrent>::ROLE,
+            Ph42020S300::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ph42020S300 as HasGoalCurrent>::ROLE,
+            Ph42020S300::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Ph42020S300 as HasMoving>::ROLE,
+            Ph42020S300::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <Ph42020S300 as HasLedRed>::ROLE,
+            Ph42020S300::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <Ph42020S300 as HasLedGreen>::ROLE,
+            Ph42020S300::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <Ph42020S300 as HasLedBlue>::ROLE,
+            Ph42020S300::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Ph42020S300 as HasHardwareErrorStatus>::ROLE,
+            Ph42020S300::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Ph42020S300 as HasRealtimeTick>::ROLE,
+            Ph42020S300::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ph42020S300 as HasPGain>::ROLE,
+            Ph42020S300::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ph42020S300 as HasDGain>::ROLE,
+            Ph42020S300::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph42_020_s300_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ph42020S300;
+    use crate::units::Limits;
+
+    let mode = Ph42020S300::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ph42020S300::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph54_100_s500_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ph54100S500;
+
+    let data = &Ph54100S500::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Ph54100S500 as HasPresentTemperature>::ROLE,
+            Ph54100S500::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Ph54100S500 as HasPresentVoltage>::ROLE,
+            Ph54100S500::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ph54100S500 as HasPresentVelocity>::ROLE,
+            Ph54100S500::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ph54100S500 as HasGoalVelocity>::ROLE,
+            Ph54100S500::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ph54100S500 as HasSpeedLimit>::ROLE,
+            Ph54100S500::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ph54100S500 as HasPresentCurrent>::ROLE,
+            Ph54100S500::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ph54100S500 as HasGoalCurrent>::ROLE,
+            Ph54100S500::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Ph54100S500 as HasMoving>::ROLE,
+            Ph54100S500::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <Ph54100S500 as HasLedRed>::ROLE,
+            Ph54100S500::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <Ph54100S500 as HasLedGreen>::ROLE,
+            Ph54100S500::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <Ph54100S500 as HasLedBlue>::ROLE,
+            Ph54100S500::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Ph54100S500 as HasHardwareErrorStatus>::ROLE,
+            Ph54100S500::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ph54100S500 as HasRealtimeTick>::ROLE,
+            Ph54100S500::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ph54100S500 as HasPGain>::ROLE,
+            Ph54100S500::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ph54100S500 as HasDGain>::ROLE,
+            Ph54100S500::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Ph54100S500 as HasPresentTemperature>::ROLE,
+            Ph54100S500::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Ph54100S500 as HasPresentVoltage>::ROLE,
+            Ph54100S500::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ph54100S500 as HasPresentVelocity>::ROLE,
+            Ph54100S500::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ph54100S500 as HasGoalVelocity>::ROLE,
+            Ph54100S500::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ph54100S500 as HasSpeedLimit>::ROLE,
+            Ph54100S500::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ph54100S500 as HasPresentCurrent>::ROLE,
+            Ph54100S500::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ph54100S500 as HasGoalCurrent>::ROLE,
+            Ph54100S500::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Ph54100S500 as HasMoving>::ROLE,
+            Ph54100S500::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <Ph54100S500 as HasLedRed>::ROLE,
+            Ph54100S500::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <Ph54100S500 as HasLedGreen>::ROLE,
+            Ph54100S500::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <Ph54100S500 as HasLedBlue>::ROLE,
+            Ph54100S500::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Ph54100S500 as HasHardwareErrorStatus>::ROLE,
+            Ph54100S500::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Ph54100S500 as HasRealtimeTick>::ROLE,
+            Ph54100S500::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ph54100S500 as HasPGain>::ROLE,
+            Ph54100S500::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ph54100S500 as HasDGain>::ROLE,
+            Ph54100S500::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph54_100_s500_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ph54100S500;
+    use crate::units::Limits;
+
+    let mode = Ph54100S500::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ph54100S500::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph54_200_s500_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ph54200S500;
+
+    let data = &Ph54200S500::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Ph54200S500 as HasPresentTemperature>::ROLE,
+            Ph54200S500::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Ph54200S500 as HasPresentVoltage>::ROLE,
+            Ph54200S500::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ph54200S500 as HasPresentVelocity>::ROLE,
+            Ph54200S500::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ph54200S500 as HasGoalVelocity>::ROLE,
+            Ph54200S500::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ph54200S500 as HasSpeedLimit>::ROLE,
+            Ph54200S500::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ph54200S500 as HasPresentCurrent>::ROLE,
+            Ph54200S500::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ph54200S500 as HasGoalCurrent>::ROLE,
+            Ph54200S500::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Ph54200S500 as HasMoving>::ROLE,
+            Ph54200S500::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <Ph54200S500 as HasLedRed>::ROLE,
+            Ph54200S500::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <Ph54200S500 as HasLedGreen>::ROLE,
+            Ph54200S500::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <Ph54200S500 as HasLedBlue>::ROLE,
+            Ph54200S500::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Ph54200S500 as HasHardwareErrorStatus>::ROLE,
+            Ph54200S500::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ph54200S500 as HasRealtimeTick>::ROLE,
+            Ph54200S500::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ph54200S500 as HasPGain>::ROLE,
+            Ph54200S500::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ph54200S500 as HasDGain>::ROLE,
+            Ph54200S500::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Ph54200S500 as HasPresentTemperature>::ROLE,
+            Ph54200S500::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Ph54200S500 as HasPresentVoltage>::ROLE,
+            Ph54200S500::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ph54200S500 as HasPresentVelocity>::ROLE,
+            Ph54200S500::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ph54200S500 as HasGoalVelocity>::ROLE,
+            Ph54200S500::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ph54200S500 as HasSpeedLimit>::ROLE,
+            Ph54200S500::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ph54200S500 as HasPresentCurrent>::ROLE,
+            Ph54200S500::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ph54200S500 as HasGoalCurrent>::ROLE,
+            Ph54200S500::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Ph54200S500 as HasMoving>::ROLE,
+            Ph54200S500::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <Ph54200S500 as HasLedRed>::ROLE,
+            Ph54200S500::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <Ph54200S500 as HasLedGreen>::ROLE,
+            Ph54200S500::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <Ph54200S500 as HasLedBlue>::ROLE,
+            Ph54200S500::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Ph54200S500 as HasHardwareErrorStatus>::ROLE,
+            Ph54200S500::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Ph54200S500 as HasRealtimeTick>::ROLE,
+            Ph54200S500::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ph54200S500 as HasPGain>::ROLE,
+            Ph54200S500::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ph54200S500 as HasDGain>::ROLE,
+            Ph54200S500::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn ph54_200_s500_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ph54200S500;
+    use crate::units::Limits;
+
+    let mode = Ph54200S500::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ph54200S500::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm42_010_s260_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Pm42010S260;
+
+    let data = &Pm42010S260::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Pm42010S260 as HasPresentTemperature>::ROLE,
+            Pm42010S260::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Pm42010S260 as HasPresentVoltage>::ROLE,
+            Pm42010S260::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Pm42010S260 as HasPresentVelocity>::ROLE,
+            Pm42010S260::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Pm42010S260 as HasGoalVelocity>::ROLE,
+            Pm42010S260::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Pm42010S260 as HasSpeedLimit>::ROLE,
+            Pm42010S260::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Pm42010S260 as HasPresentCurrent>::ROLE,
+            Pm42010S260::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Pm42010S260 as HasGoalCurrent>::ROLE,
+            Pm42010S260::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Pm42010S260 as HasMoving>::ROLE,
+            Pm42010S260::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <Pm42010S260 as HasLedRed>::ROLE,
+            Pm42010S260::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <Pm42010S260 as HasLedGreen>::ROLE,
+            Pm42010S260::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <Pm42010S260 as HasLedBlue>::ROLE,
+            Pm42010S260::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Pm42010S260 as HasHardwareErrorStatus>::ROLE,
+            Pm42010S260::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Pm42010S260 as HasRealtimeTick>::ROLE,
+            Pm42010S260::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Pm42010S260 as HasPGain>::ROLE,
+            Pm42010S260::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Pm42010S260 as HasDGain>::ROLE,
+            Pm42010S260::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Pm42010S260 as HasPresentTemperature>::ROLE,
+            Pm42010S260::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Pm42010S260 as HasPresentVoltage>::ROLE,
+            Pm42010S260::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Pm42010S260 as HasPresentVelocity>::ROLE,
+            Pm42010S260::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Pm42010S260 as HasGoalVelocity>::ROLE,
+            Pm42010S260::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Pm42010S260 as HasSpeedLimit>::ROLE,
+            Pm42010S260::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Pm42010S260 as HasPresentCurrent>::ROLE,
+            Pm42010S260::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Pm42010S260 as HasGoalCurrent>::ROLE,
+            Pm42010S260::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Pm42010S260 as HasMoving>::ROLE,
+            Pm42010S260::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <Pm42010S260 as HasLedRed>::ROLE,
+            Pm42010S260::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <Pm42010S260 as HasLedGreen>::ROLE,
+            Pm42010S260::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <Pm42010S260 as HasLedBlue>::ROLE,
+            Pm42010S260::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Pm42010S260 as HasHardwareErrorStatus>::ROLE,
+            Pm42010S260::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Pm42010S260 as HasRealtimeTick>::ROLE,
+            Pm42010S260::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Pm42010S260 as HasPGain>::ROLE,
+            Pm42010S260::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Pm42010S260 as HasDGain>::ROLE,
+            Pm42010S260::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm42_010_s260_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Pm42010S260;
+    use crate::units::Limits;
+
+    let mode = Pm42010S260::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Pm42010S260::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm54_040_s250_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Pm54040S250;
+
+    let data = &Pm54040S250::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Pm54040S250 as HasPresentTemperature>::ROLE,
+            Pm54040S250::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Pm54040S250 as HasPresentVoltage>::ROLE,
+            Pm54040S250::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Pm54040S250 as HasPresentVelocity>::ROLE,
+            Pm54040S250::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Pm54040S250 as HasGoalVelocity>::ROLE,
+            Pm54040S250::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Pm54040S250 as HasSpeedLimit>::ROLE,
+            Pm54040S250::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Pm54040S250 as HasPresentCurrent>::ROLE,
+            Pm54040S250::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Pm54040S250 as HasGoalCurrent>::ROLE,
+            Pm54040S250::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Pm54040S250 as HasMoving>::ROLE,
+            Pm54040S250::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <Pm54040S250 as HasLedRed>::ROLE,
+            Pm54040S250::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <Pm54040S250 as HasLedGreen>::ROLE,
+            Pm54040S250::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <Pm54040S250 as HasLedBlue>::ROLE,
+            Pm54040S250::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Pm54040S250 as HasHardwareErrorStatus>::ROLE,
+            Pm54040S250::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Pm54040S250 as HasRealtimeTick>::ROLE,
+            Pm54040S250::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Pm54040S250 as HasPGain>::ROLE,
+            Pm54040S250::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Pm54040S250 as HasDGain>::ROLE,
+            Pm54040S250::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Pm54040S250 as HasPresentTemperature>::ROLE,
+            Pm54040S250::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Pm54040S250 as HasPresentVoltage>::ROLE,
+            Pm54040S250::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Pm54040S250 as HasPresentVelocity>::ROLE,
+            Pm54040S250::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Pm54040S250 as HasGoalVelocity>::ROLE,
+            Pm54040S250::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Pm54040S250 as HasSpeedLimit>::ROLE,
+            Pm54040S250::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Pm54040S250 as HasPresentCurrent>::ROLE,
+            Pm54040S250::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Pm54040S250 as HasGoalCurrent>::ROLE,
+            Pm54040S250::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Pm54040S250 as HasMoving>::ROLE,
+            Pm54040S250::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <Pm54040S250 as HasLedRed>::ROLE,
+            Pm54040S250::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <Pm54040S250 as HasLedGreen>::ROLE,
+            Pm54040S250::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <Pm54040S250 as HasLedBlue>::ROLE,
+            Pm54040S250::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Pm54040S250 as HasHardwareErrorStatus>::ROLE,
+            Pm54040S250::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Pm54040S250 as HasRealtimeTick>::ROLE,
+            Pm54040S250::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Pm54040S250 as HasPGain>::ROLE,
+            Pm54040S250::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Pm54040S250 as HasDGain>::ROLE,
+            Pm54040S250::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm54_040_s250_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Pm54040S250;
+    use crate::units::Limits;
+
+    let mode = Pm54040S250::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Pm54040S250::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm54_060_s250_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Pm54060S250;
+
+    let data = &Pm54060S250::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <Pm54060S250 as HasPresentTemperature>::ROLE,
+            Pm54060S250::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <Pm54060S250 as HasPresentVoltage>::ROLE,
+            Pm54060S250::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Pm54060S250 as HasPresentVelocity>::ROLE,
+            Pm54060S250::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Pm54060S250 as HasGoalVelocity>::ROLE,
+            Pm54060S250::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Pm54060S250 as HasSpeedLimit>::ROLE,
+            Pm54060S250::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Pm54060S250 as HasPresentCurrent>::ROLE,
+            Pm54060S250::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Pm54060S250 as HasGoalCurrent>::ROLE,
+            Pm54060S250::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <Pm54060S250 as HasMoving>::ROLE,
+            Pm54060S250::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <Pm54060S250 as HasLedRed>::ROLE,
+            Pm54060S250::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <Pm54060S250 as HasLedGreen>::ROLE,
+            Pm54060S250::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <Pm54060S250 as HasLedBlue>::ROLE,
+            Pm54060S250::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Pm54060S250 as HasHardwareErrorStatus>::ROLE,
+            Pm54060S250::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <Pm54060S250 as HasRealtimeTick>::ROLE,
+            Pm54060S250::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Pm54060S250 as HasPGain>::ROLE,
+            Pm54060S250::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Pm54060S250 as HasDGain>::ROLE,
+            Pm54060S250::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <Pm54060S250 as HasPresentTemperature>::ROLE,
+            Pm54060S250::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <Pm54060S250 as HasPresentVoltage>::ROLE,
+            Pm54060S250::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Pm54060S250 as HasPresentVelocity>::ROLE,
+            Pm54060S250::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Pm54060S250 as HasGoalVelocity>::ROLE,
+            Pm54060S250::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Pm54060S250 as HasSpeedLimit>::ROLE,
+            Pm54060S250::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Pm54060S250 as HasPresentCurrent>::ROLE,
+            Pm54060S250::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Pm54060S250 as HasGoalCurrent>::ROLE,
+            Pm54060S250::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <Pm54060S250 as HasMoving>::ROLE,
+            Pm54060S250::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <Pm54060S250 as HasLedRed>::ROLE,
+            Pm54060S250::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <Pm54060S250 as HasLedGreen>::ROLE,
+            Pm54060S250::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <Pm54060S250 as HasLedBlue>::ROLE,
+            Pm54060S250::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <Pm54060S250 as HasHardwareErrorStatus>::ROLE,
+            Pm54060S250::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <Pm54060S250 as HasRealtimeTick>::ROLE,
+            Pm54060S250::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Pm54060S250 as HasPGain>::ROLE,
+            Pm54060S250::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Pm54060S250 as HasDGain>::ROLE,
+            Pm54060S250::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn pm54_060_s250_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Pm54060S250;
+    use crate::units::Limits;
+
+    let mode = Pm54060S250::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Pm54060S250::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_m001_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym070210M001;
+
+    let data = &Ym070210M001::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210M001 as HasPresentVoltage>::ROLE,
+            Ym070210M001::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210M001 as HasPresentVelocity>::ROLE,
+            Ym070210M001::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210M001 as HasGoalVelocity>::ROLE,
+            Ym070210M001::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210M001 as HasSpeedLimit>::ROLE,
+            Ym070210M001::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210M001 as HasPresentCurrent>::ROLE,
+            Ym070210M001::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210M001 as HasGoalCurrent>::ROLE,
+            Ym070210M001::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym070210M001 as HasLed>::ROLE,
+            Ym070210M001::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym070210M001 as HasRealtimeTick>::ROLE,
+            Ym070210M001::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym070210M001 as HasPGain>::ROLE,
+            Ym070210M001::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym070210M001 as HasDGain>::ROLE,
+            Ym070210M001::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210M001 as HasPresentVoltage>::ROLE,
+            Ym070210M001::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210M001 as HasPresentVelocity>::ROLE,
+            Ym070210M001::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210M001 as HasGoalVelocity>::ROLE,
+            Ym070210M001::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210M001 as HasSpeedLimit>::ROLE,
+            Ym070210M001::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210M001 as HasPresentCurrent>::ROLE,
+            Ym070210M001::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210M001 as HasGoalCurrent>::ROLE,
+            Ym070210M001::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym070210M001 as HasLed>::ROLE, Ym070210M001::LED),
+        (
+            Role::RealtimeTick,
+            <Ym070210M001 as HasRealtimeTick>::ROLE,
+            Ym070210M001::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym070210M001 as HasPGain>::ROLE,
+            Ym070210M001::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym070210M001 as HasDGain>::ROLE,
+            Ym070210M001::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_m001_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym070210M001;
+    use crate::units::Limits;
+
+    let mode = Ym070210M001::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym070210M001::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_b001_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym070210B001;
+
+    let data = &Ym070210B001::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210B001 as HasPresentVoltage>::ROLE,
+            Ym070210B001::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210B001 as HasPresentVelocity>::ROLE,
+            Ym070210B001::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210B001 as HasGoalVelocity>::ROLE,
+            Ym070210B001::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210B001 as HasSpeedLimit>::ROLE,
+            Ym070210B001::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210B001 as HasPresentCurrent>::ROLE,
+            Ym070210B001::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210B001 as HasGoalCurrent>::ROLE,
+            Ym070210B001::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym070210B001 as HasLed>::ROLE,
+            Ym070210B001::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym070210B001 as HasRealtimeTick>::ROLE,
+            Ym070210B001::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym070210B001 as HasPGain>::ROLE,
+            Ym070210B001::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym070210B001 as HasDGain>::ROLE,
+            Ym070210B001::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210B001 as HasPresentVoltage>::ROLE,
+            Ym070210B001::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210B001 as HasPresentVelocity>::ROLE,
+            Ym070210B001::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210B001 as HasGoalVelocity>::ROLE,
+            Ym070210B001::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210B001 as HasSpeedLimit>::ROLE,
+            Ym070210B001::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210B001 as HasPresentCurrent>::ROLE,
+            Ym070210B001::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210B001 as HasGoalCurrent>::ROLE,
+            Ym070210B001::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym070210B001 as HasLed>::ROLE, Ym070210B001::LED),
+        (
+            Role::RealtimeTick,
+            <Ym070210B001 as HasRealtimeTick>::ROLE,
+            Ym070210B001::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym070210B001 as HasPGain>::ROLE,
+            Ym070210B001::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym070210B001 as HasDGain>::ROLE,
+            Ym070210B001::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_b001_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym070210B001;
+    use crate::units::Limits;
+
+    let mode = Ym070210B001::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym070210B001::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_r051_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym070210R051;
+
+    let data = &Ym070210R051::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210R051 as HasPresentVoltage>::ROLE,
+            Ym070210R051::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210R051 as HasPresentVelocity>::ROLE,
+            Ym070210R051::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210R051 as HasGoalVelocity>::ROLE,
+            Ym070210R051::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210R051 as HasSpeedLimit>::ROLE,
+            Ym070210R051::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210R051 as HasPresentCurrent>::ROLE,
+            Ym070210R051::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210R051 as HasGoalCurrent>::ROLE,
+            Ym070210R051::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym070210R051 as HasLed>::ROLE,
+            Ym070210R051::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym070210R051 as HasRealtimeTick>::ROLE,
+            Ym070210R051::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym070210R051 as HasPGain>::ROLE,
+            Ym070210R051::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym070210R051 as HasDGain>::ROLE,
+            Ym070210R051::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210R051 as HasPresentVoltage>::ROLE,
+            Ym070210R051::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210R051 as HasPresentVelocity>::ROLE,
+            Ym070210R051::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210R051 as HasGoalVelocity>::ROLE,
+            Ym070210R051::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210R051 as HasSpeedLimit>::ROLE,
+            Ym070210R051::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210R051 as HasPresentCurrent>::ROLE,
+            Ym070210R051::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210R051 as HasGoalCurrent>::ROLE,
+            Ym070210R051::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym070210R051 as HasLed>::ROLE, Ym070210R051::LED),
+        (
+            Role::RealtimeTick,
+            <Ym070210R051 as HasRealtimeTick>::ROLE,
+            Ym070210R051::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym070210R051 as HasPGain>::ROLE,
+            Ym070210R051::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym070210R051 as HasDGain>::ROLE,
+            Ym070210R051::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_r051_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym070210R051;
+    use crate::units::Limits;
+
+    let mode = Ym070210R051::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym070210R051::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_r099_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym070210R099;
+
+    let data = &Ym070210R099::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210R099 as HasPresentVoltage>::ROLE,
+            Ym070210R099::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210R099 as HasPresentVelocity>::ROLE,
+            Ym070210R099::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210R099 as HasGoalVelocity>::ROLE,
+            Ym070210R099::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210R099 as HasSpeedLimit>::ROLE,
+            Ym070210R099::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210R099 as HasPresentCurrent>::ROLE,
+            Ym070210R099::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210R099 as HasGoalCurrent>::ROLE,
+            Ym070210R099::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym070210R099 as HasLed>::ROLE,
+            Ym070210R099::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym070210R099 as HasRealtimeTick>::ROLE,
+            Ym070210R099::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym070210R099 as HasPGain>::ROLE,
+            Ym070210R099::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym070210R099 as HasDGain>::ROLE,
+            Ym070210R099::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210R099 as HasPresentVoltage>::ROLE,
+            Ym070210R099::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210R099 as HasPresentVelocity>::ROLE,
+            Ym070210R099::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210R099 as HasGoalVelocity>::ROLE,
+            Ym070210R099::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210R099 as HasSpeedLimit>::ROLE,
+            Ym070210R099::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210R099 as HasPresentCurrent>::ROLE,
+            Ym070210R099::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210R099 as HasGoalCurrent>::ROLE,
+            Ym070210R099::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym070210R099 as HasLed>::ROLE, Ym070210R099::LED),
+        (
+            Role::RealtimeTick,
+            <Ym070210R099 as HasRealtimeTick>::ROLE,
+            Ym070210R099::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym070210R099 as HasPGain>::ROLE,
+            Ym070210R099::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym070210R099 as HasDGain>::ROLE,
+            Ym070210R099::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_r099_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym070210R099;
+    use crate::units::Limits;
+
+    let mode = Ym070210R099::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym070210R099::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_a051_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym070210A051;
+
+    let data = &Ym070210A051::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210A051 as HasPresentVoltage>::ROLE,
+            Ym070210A051::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210A051 as HasPresentVelocity>::ROLE,
+            Ym070210A051::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210A051 as HasGoalVelocity>::ROLE,
+            Ym070210A051::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210A051 as HasSpeedLimit>::ROLE,
+            Ym070210A051::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210A051 as HasPresentCurrent>::ROLE,
+            Ym070210A051::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210A051 as HasGoalCurrent>::ROLE,
+            Ym070210A051::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym070210A051 as HasLed>::ROLE,
+            Ym070210A051::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym070210A051 as HasRealtimeTick>::ROLE,
+            Ym070210A051::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym070210A051 as HasPGain>::ROLE,
+            Ym070210A051::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym070210A051 as HasDGain>::ROLE,
+            Ym070210A051::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210A051 as HasPresentVoltage>::ROLE,
+            Ym070210A051::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210A051 as HasPresentVelocity>::ROLE,
+            Ym070210A051::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210A051 as HasGoalVelocity>::ROLE,
+            Ym070210A051::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210A051 as HasSpeedLimit>::ROLE,
+            Ym070210A051::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210A051 as HasPresentCurrent>::ROLE,
+            Ym070210A051::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210A051 as HasGoalCurrent>::ROLE,
+            Ym070210A051::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym070210A051 as HasLed>::ROLE, Ym070210A051::LED),
+        (
+            Role::RealtimeTick,
+            <Ym070210A051 as HasRealtimeTick>::ROLE,
+            Ym070210A051::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym070210A051 as HasPGain>::ROLE,
+            Ym070210A051::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym070210A051 as HasDGain>::ROLE,
+            Ym070210A051::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_a051_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym070210A051;
+    use crate::units::Limits;
+
+    let mode = Ym070210A051::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym070210A051::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_a099_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym070210A099;
+
+    let data = &Ym070210A099::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210A099 as HasPresentVoltage>::ROLE,
+            Ym070210A099::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210A099 as HasPresentVelocity>::ROLE,
+            Ym070210A099::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210A099 as HasGoalVelocity>::ROLE,
+            Ym070210A099::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210A099 as HasSpeedLimit>::ROLE,
+            Ym070210A099::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210A099 as HasPresentCurrent>::ROLE,
+            Ym070210A099::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210A099 as HasGoalCurrent>::ROLE,
+            Ym070210A099::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym070210A099 as HasLed>::ROLE,
+            Ym070210A099::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym070210A099 as HasRealtimeTick>::ROLE,
+            Ym070210A099::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym070210A099 as HasPGain>::ROLE,
+            Ym070210A099::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym070210A099 as HasDGain>::ROLE,
+            Ym070210A099::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym070210A099 as HasPresentVoltage>::ROLE,
+            Ym070210A099::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym070210A099 as HasPresentVelocity>::ROLE,
+            Ym070210A099::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym070210A099 as HasGoalVelocity>::ROLE,
+            Ym070210A099::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym070210A099 as HasSpeedLimit>::ROLE,
+            Ym070210A099::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym070210A099 as HasPresentCurrent>::ROLE,
+            Ym070210A099::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym070210A099 as HasGoalCurrent>::ROLE,
+            Ym070210A099::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym070210A099 as HasLed>::ROLE, Ym070210A099::LED),
+        (
+            Role::RealtimeTick,
+            <Ym070210A099 as HasRealtimeTick>::ROLE,
+            Ym070210A099::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym070210A099 as HasPGain>::ROLE,
+            Ym070210A099::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym070210A099 as HasDGain>::ROLE,
+            Ym070210A099::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym070_210_a099_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym070210A099;
+    use crate::units::Limits;
+
+    let mode = Ym070210A099::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym070210A099::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_m001_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym080230M001;
+
+    let data = &Ym080230M001::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230M001 as HasPresentVoltage>::ROLE,
+            Ym080230M001::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230M001 as HasPresentVelocity>::ROLE,
+            Ym080230M001::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230M001 as HasGoalVelocity>::ROLE,
+            Ym080230M001::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230M001 as HasSpeedLimit>::ROLE,
+            Ym080230M001::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230M001 as HasPresentCurrent>::ROLE,
+            Ym080230M001::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230M001 as HasGoalCurrent>::ROLE,
+            Ym080230M001::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym080230M001 as HasLed>::ROLE,
+            Ym080230M001::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym080230M001 as HasRealtimeTick>::ROLE,
+            Ym080230M001::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym080230M001 as HasPGain>::ROLE,
+            Ym080230M001::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym080230M001 as HasDGain>::ROLE,
+            Ym080230M001::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230M001 as HasPresentVoltage>::ROLE,
+            Ym080230M001::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230M001 as HasPresentVelocity>::ROLE,
+            Ym080230M001::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230M001 as HasGoalVelocity>::ROLE,
+            Ym080230M001::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230M001 as HasSpeedLimit>::ROLE,
+            Ym080230M001::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230M001 as HasPresentCurrent>::ROLE,
+            Ym080230M001::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230M001 as HasGoalCurrent>::ROLE,
+            Ym080230M001::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym080230M001 as HasLed>::ROLE, Ym080230M001::LED),
+        (
+            Role::RealtimeTick,
+            <Ym080230M001 as HasRealtimeTick>::ROLE,
+            Ym080230M001::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym080230M001 as HasPGain>::ROLE,
+            Ym080230M001::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym080230M001 as HasDGain>::ROLE,
+            Ym080230M001::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_m001_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym080230M001;
+    use crate::units::Limits;
+
+    let mode = Ym080230M001::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym080230M001::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_b001_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym080230B001;
+
+    let data = &Ym080230B001::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230B001 as HasPresentVoltage>::ROLE,
+            Ym080230B001::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230B001 as HasPresentVelocity>::ROLE,
+            Ym080230B001::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230B001 as HasGoalVelocity>::ROLE,
+            Ym080230B001::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230B001 as HasSpeedLimit>::ROLE,
+            Ym080230B001::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230B001 as HasPresentCurrent>::ROLE,
+            Ym080230B001::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230B001 as HasGoalCurrent>::ROLE,
+            Ym080230B001::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym080230B001 as HasLed>::ROLE,
+            Ym080230B001::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym080230B001 as HasRealtimeTick>::ROLE,
+            Ym080230B001::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym080230B001 as HasPGain>::ROLE,
+            Ym080230B001::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym080230B001 as HasDGain>::ROLE,
+            Ym080230B001::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230B001 as HasPresentVoltage>::ROLE,
+            Ym080230B001::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230B001 as HasPresentVelocity>::ROLE,
+            Ym080230B001::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230B001 as HasGoalVelocity>::ROLE,
+            Ym080230B001::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230B001 as HasSpeedLimit>::ROLE,
+            Ym080230B001::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230B001 as HasPresentCurrent>::ROLE,
+            Ym080230B001::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230B001 as HasGoalCurrent>::ROLE,
+            Ym080230B001::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym080230B001 as HasLed>::ROLE, Ym080230B001::LED),
+        (
+            Role::RealtimeTick,
+            <Ym080230B001 as HasRealtimeTick>::ROLE,
+            Ym080230B001::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym080230B001 as HasPGain>::ROLE,
+            Ym080230B001::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym080230B001 as HasDGain>::ROLE,
+            Ym080230B001::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_b001_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym080230B001;
+    use crate::units::Limits;
+
+    let mode = Ym080230B001::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym080230B001::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_r051_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym080230R051;
+
+    let data = &Ym080230R051::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230R051 as HasPresentVoltage>::ROLE,
+            Ym080230R051::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230R051 as HasPresentVelocity>::ROLE,
+            Ym080230R051::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230R051 as HasGoalVelocity>::ROLE,
+            Ym080230R051::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230R051 as HasSpeedLimit>::ROLE,
+            Ym080230R051::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230R051 as HasPresentCurrent>::ROLE,
+            Ym080230R051::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230R051 as HasGoalCurrent>::ROLE,
+            Ym080230R051::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym080230R051 as HasLed>::ROLE,
+            Ym080230R051::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym080230R051 as HasRealtimeTick>::ROLE,
+            Ym080230R051::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym080230R051 as HasPGain>::ROLE,
+            Ym080230R051::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym080230R051 as HasDGain>::ROLE,
+            Ym080230R051::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230R051 as HasPresentVoltage>::ROLE,
+            Ym080230R051::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230R051 as HasPresentVelocity>::ROLE,
+            Ym080230R051::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230R051 as HasGoalVelocity>::ROLE,
+            Ym080230R051::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230R051 as HasSpeedLimit>::ROLE,
+            Ym080230R051::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230R051 as HasPresentCurrent>::ROLE,
+            Ym080230R051::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230R051 as HasGoalCurrent>::ROLE,
+            Ym080230R051::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym080230R051 as HasLed>::ROLE, Ym080230R051::LED),
+        (
+            Role::RealtimeTick,
+            <Ym080230R051 as HasRealtimeTick>::ROLE,
+            Ym080230R051::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym080230R051 as HasPGain>::ROLE,
+            Ym080230R051::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym080230R051 as HasDGain>::ROLE,
+            Ym080230R051::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_r051_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym080230R051;
+    use crate::units::Limits;
+
+    let mode = Ym080230R051::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym080230R051::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_r099_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym080230R099;
+
+    let data = &Ym080230R099::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230R099 as HasPresentVoltage>::ROLE,
+            Ym080230R099::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230R099 as HasPresentVelocity>::ROLE,
+            Ym080230R099::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230R099 as HasGoalVelocity>::ROLE,
+            Ym080230R099::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230R099 as HasSpeedLimit>::ROLE,
+            Ym080230R099::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230R099 as HasPresentCurrent>::ROLE,
+            Ym080230R099::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230R099 as HasGoalCurrent>::ROLE,
+            Ym080230R099::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym080230R099 as HasLed>::ROLE,
+            Ym080230R099::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym080230R099 as HasRealtimeTick>::ROLE,
+            Ym080230R099::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym080230R099 as HasPGain>::ROLE,
+            Ym080230R099::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym080230R099 as HasDGain>::ROLE,
+            Ym080230R099::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230R099 as HasPresentVoltage>::ROLE,
+            Ym080230R099::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230R099 as HasPresentVelocity>::ROLE,
+            Ym080230R099::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230R099 as HasGoalVelocity>::ROLE,
+            Ym080230R099::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230R099 as HasSpeedLimit>::ROLE,
+            Ym080230R099::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230R099 as HasPresentCurrent>::ROLE,
+            Ym080230R099::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230R099 as HasGoalCurrent>::ROLE,
+            Ym080230R099::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym080230R099 as HasLed>::ROLE, Ym080230R099::LED),
+        (
+            Role::RealtimeTick,
+            <Ym080230R099 as HasRealtimeTick>::ROLE,
+            Ym080230R099::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym080230R099 as HasPGain>::ROLE,
+            Ym080230R099::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym080230R099 as HasDGain>::ROLE,
+            Ym080230R099::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_r099_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym080230R099;
+    use crate::units::Limits;
+
+    let mode = Ym080230R099::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym080230R099::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_a051_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym080230A051;
+
+    let data = &Ym080230A051::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230A051 as HasPresentVoltage>::ROLE,
+            Ym080230A051::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230A051 as HasPresentVelocity>::ROLE,
+            Ym080230A051::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230A051 as HasGoalVelocity>::ROLE,
+            Ym080230A051::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230A051 as HasSpeedLimit>::ROLE,
+            Ym080230A051::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230A051 as HasPresentCurrent>::ROLE,
+            Ym080230A051::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230A051 as HasGoalCurrent>::ROLE,
+            Ym080230A051::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym080230A051 as HasLed>::ROLE,
+            Ym080230A051::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym080230A051 as HasRealtimeTick>::ROLE,
+            Ym080230A051::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym080230A051 as HasPGain>::ROLE,
+            Ym080230A051::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym080230A051 as HasDGain>::ROLE,
+            Ym080230A051::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230A051 as HasPresentVoltage>::ROLE,
+            Ym080230A051::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230A051 as HasPresentVelocity>::ROLE,
+            Ym080230A051::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230A051 as HasGoalVelocity>::ROLE,
+            Ym080230A051::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230A051 as HasSpeedLimit>::ROLE,
+            Ym080230A051::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230A051 as HasPresentCurrent>::ROLE,
+            Ym080230A051::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230A051 as HasGoalCurrent>::ROLE,
+            Ym080230A051::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym080230A051 as HasLed>::ROLE, Ym080230A051::LED),
+        (
+            Role::RealtimeTick,
+            <Ym080230A051 as HasRealtimeTick>::ROLE,
+            Ym080230A051::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym080230A051 as HasPGain>::ROLE,
+            Ym080230A051::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym080230A051 as HasDGain>::ROLE,
+            Ym080230A051::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_a051_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym080230A051;
+    use crate::units::Limits;
+
+    let mode = Ym080230A051::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym080230A051::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_a099_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::Ym080230A099;
+
+    let data = &Ym080230A099::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230A099 as HasPresentVoltage>::ROLE,
+            Ym080230A099::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230A099 as HasPresentVelocity>::ROLE,
+            Ym080230A099::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230A099 as HasGoalVelocity>::ROLE,
+            Ym080230A099::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230A099 as HasSpeedLimit>::ROLE,
+            Ym080230A099::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230A099 as HasPresentCurrent>::ROLE,
+            Ym080230A099::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230A099 as HasGoalCurrent>::ROLE,
+            Ym080230A099::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Led,
+            <Ym080230A099 as HasLed>::ROLE,
+            Ym080230A099::LED,
+            "LED",
+        ),
+        (
+            Role::RealtimeTick,
+            <Ym080230A099 as HasRealtimeTick>::ROLE,
+            Ym080230A099::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <Ym080230A099 as HasPGain>::ROLE,
+            Ym080230A099::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <Ym080230A099 as HasDGain>::ROLE,
+            Ym080230A099::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentTemperature,
+        Role::PresentLoad,
+        Role::Moving,
+        Role::LedRed,
+        Role::LedGreen,
+        Role::LedBlue,
+        Role::HardwareErrorStatus,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentVoltage,
+            <Ym080230A099 as HasPresentVoltage>::ROLE,
+            Ym080230A099::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <Ym080230A099 as HasPresentVelocity>::ROLE,
+            Ym080230A099::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <Ym080230A099 as HasGoalVelocity>::ROLE,
+            Ym080230A099::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <Ym080230A099 as HasSpeedLimit>::ROLE,
+            Ym080230A099::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <Ym080230A099 as HasPresentCurrent>::ROLE,
+            Ym080230A099::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <Ym080230A099 as HasGoalCurrent>::ROLE,
+            Ym080230A099::GOAL_CURRENT,
+        ),
+        (Role::Led, <Ym080230A099 as HasLed>::ROLE, Ym080230A099::LED),
+        (
+            Role::RealtimeTick,
+            <Ym080230A099 as HasRealtimeTick>::ROLE,
+            Ym080230A099::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <Ym080230A099 as HasPGain>::ROLE,
+            Ym080230A099::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <Ym080230A099 as HasDGain>::ROLE,
+            Ym080230A099::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "y-series")]
+#[test]
+fn ym080_230_a099_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::Ym080230A099;
+    use crate::units::Limits;
+
+    let mode = Ym080230A099::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(Ym080230A099::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn rh_p12_rn_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::RhP12Rn;
+
+    let data = &RhP12Rn::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <RhP12Rn as HasPresentTemperature>::ROLE,
+            RhP12Rn::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <RhP12Rn as HasPresentVoltage>::ROLE,
+            RhP12Rn::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <RhP12Rn as HasPresentVelocity>::ROLE,
+            RhP12Rn::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <RhP12Rn as HasGoalVelocity>::ROLE,
+            RhP12Rn::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <RhP12Rn as HasSpeedLimit>::ROLE,
+            RhP12Rn::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <RhP12Rn as HasPresentCurrent>::ROLE,
+            RhP12Rn::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <RhP12Rn as HasGoalCurrent>::ROLE,
+            RhP12Rn::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <RhP12Rn as HasMoving>::ROLE,
+            RhP12Rn::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <RhP12Rn as HasLedRed>::ROLE,
+            RhP12Rn::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <RhP12Rn as HasLedGreen>::ROLE,
+            RhP12Rn::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <RhP12Rn as HasLedBlue>::ROLE,
+            RhP12Rn::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <RhP12Rn as HasHardwareErrorStatus>::ROLE,
+            RhP12Rn::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <RhP12Rn as HasRealtimeTick>::ROLE,
+            RhP12Rn::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <RhP12Rn as HasPGain>::ROLE,
+            RhP12Rn::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <RhP12Rn as HasDGain>::ROLE,
+            RhP12Rn::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <RhP12Rn as HasPresentTemperature>::ROLE,
+            RhP12Rn::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <RhP12Rn as HasPresentVoltage>::ROLE,
+            RhP12Rn::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <RhP12Rn as HasPresentVelocity>::ROLE,
+            RhP12Rn::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <RhP12Rn as HasGoalVelocity>::ROLE,
+            RhP12Rn::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <RhP12Rn as HasSpeedLimit>::ROLE,
+            RhP12Rn::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <RhP12Rn as HasPresentCurrent>::ROLE,
+            RhP12Rn::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <RhP12Rn as HasGoalCurrent>::ROLE,
+            RhP12Rn::GOAL_CURRENT,
+        ),
+        (Role::Moving, <RhP12Rn as HasMoving>::ROLE, RhP12Rn::MOVING),
+        (Role::LedRed, <RhP12Rn as HasLedRed>::ROLE, RhP12Rn::LED_RED),
+        (
+            Role::LedGreen,
+            <RhP12Rn as HasLedGreen>::ROLE,
+            RhP12Rn::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <RhP12Rn as HasLedBlue>::ROLE,
+            RhP12Rn::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <RhP12Rn as HasHardwareErrorStatus>::ROLE,
+            RhP12Rn::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <RhP12Rn as HasRealtimeTick>::ROLE,
+            RhP12Rn::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <RhP12Rn as HasPGain>::ROLE,
+            RhP12Rn::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <RhP12Rn as HasDGain>::ROLE,
+            RhP12Rn::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn rh_p12_rn_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::RhP12Rn;
+    use crate::units::Limits;
+
+    let mode = RhP12Rn::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(RhP12Rn::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (5, Some(LimitMode::Bounded)),
+        (1, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m42_10_s260_ra_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::M4210S260Ra;
+
+    let data = &M4210S260Ra::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <M4210S260Ra as HasPresentTemperature>::ROLE,
+            M4210S260Ra::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <M4210S260Ra as HasPresentVoltage>::ROLE,
+            M4210S260Ra::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <M4210S260Ra as HasPresentVelocity>::ROLE,
+            M4210S260Ra::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <M4210S260Ra as HasGoalVelocity>::ROLE,
+            M4210S260Ra::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <M4210S260Ra as HasSpeedLimit>::ROLE,
+            M4210S260Ra::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <M4210S260Ra as HasPresentCurrent>::ROLE,
+            M4210S260Ra::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <M4210S260Ra as HasGoalCurrent>::ROLE,
+            M4210S260Ra::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <M4210S260Ra as HasMoving>::ROLE,
+            M4210S260Ra::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <M4210S260Ra as HasLedRed>::ROLE,
+            M4210S260Ra::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <M4210S260Ra as HasLedGreen>::ROLE,
+            M4210S260Ra::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <M4210S260Ra as HasLedBlue>::ROLE,
+            M4210S260Ra::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <M4210S260Ra as HasHardwareErrorStatus>::ROLE,
+            M4210S260Ra::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <M4210S260Ra as HasRealtimeTick>::ROLE,
+            M4210S260Ra::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <M4210S260Ra as HasPGain>::ROLE,
+            M4210S260Ra::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <M4210S260Ra as HasDGain>::ROLE,
+            M4210S260Ra::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <M4210S260Ra as HasPresentTemperature>::ROLE,
+            M4210S260Ra::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <M4210S260Ra as HasPresentVoltage>::ROLE,
+            M4210S260Ra::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <M4210S260Ra as HasPresentVelocity>::ROLE,
+            M4210S260Ra::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <M4210S260Ra as HasGoalVelocity>::ROLE,
+            M4210S260Ra::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <M4210S260Ra as HasSpeedLimit>::ROLE,
+            M4210S260Ra::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <M4210S260Ra as HasPresentCurrent>::ROLE,
+            M4210S260Ra::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <M4210S260Ra as HasGoalCurrent>::ROLE,
+            M4210S260Ra::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <M4210S260Ra as HasMoving>::ROLE,
+            M4210S260Ra::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <M4210S260Ra as HasLedRed>::ROLE,
+            M4210S260Ra::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <M4210S260Ra as HasLedGreen>::ROLE,
+            M4210S260Ra::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <M4210S260Ra as HasLedBlue>::ROLE,
+            M4210S260Ra::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <M4210S260Ra as HasHardwareErrorStatus>::ROLE,
+            M4210S260Ra::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <M4210S260Ra as HasRealtimeTick>::ROLE,
+            M4210S260Ra::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <M4210S260Ra as HasPGain>::ROLE,
+            M4210S260Ra::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <M4210S260Ra as HasDGain>::ROLE,
+            M4210S260Ra::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m42_10_s260_ra_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::M4210S260Ra;
+    use crate::units::Limits;
+
+    let mode = M4210S260Ra::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(M4210S260Ra::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m54_40_s250_ra_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::M5440S250Ra;
+
+    let data = &M5440S250Ra::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <M5440S250Ra as HasPresentTemperature>::ROLE,
+            M5440S250Ra::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <M5440S250Ra as HasPresentVoltage>::ROLE,
+            M5440S250Ra::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <M5440S250Ra as HasPresentVelocity>::ROLE,
+            M5440S250Ra::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <M5440S250Ra as HasGoalVelocity>::ROLE,
+            M5440S250Ra::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <M5440S250Ra as HasSpeedLimit>::ROLE,
+            M5440S250Ra::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <M5440S250Ra as HasPresentCurrent>::ROLE,
+            M5440S250Ra::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <M5440S250Ra as HasGoalCurrent>::ROLE,
+            M5440S250Ra::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <M5440S250Ra as HasMoving>::ROLE,
+            M5440S250Ra::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <M5440S250Ra as HasLedRed>::ROLE,
+            M5440S250Ra::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <M5440S250Ra as HasLedGreen>::ROLE,
+            M5440S250Ra::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <M5440S250Ra as HasLedBlue>::ROLE,
+            M5440S250Ra::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <M5440S250Ra as HasHardwareErrorStatus>::ROLE,
+            M5440S250Ra::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <M5440S250Ra as HasRealtimeTick>::ROLE,
+            M5440S250Ra::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <M5440S250Ra as HasPGain>::ROLE,
+            M5440S250Ra::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <M5440S250Ra as HasDGain>::ROLE,
+            M5440S250Ra::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <M5440S250Ra as HasPresentTemperature>::ROLE,
+            M5440S250Ra::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <M5440S250Ra as HasPresentVoltage>::ROLE,
+            M5440S250Ra::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <M5440S250Ra as HasPresentVelocity>::ROLE,
+            M5440S250Ra::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <M5440S250Ra as HasGoalVelocity>::ROLE,
+            M5440S250Ra::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <M5440S250Ra as HasSpeedLimit>::ROLE,
+            M5440S250Ra::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <M5440S250Ra as HasPresentCurrent>::ROLE,
+            M5440S250Ra::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <M5440S250Ra as HasGoalCurrent>::ROLE,
+            M5440S250Ra::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <M5440S250Ra as HasMoving>::ROLE,
+            M5440S250Ra::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <M5440S250Ra as HasLedRed>::ROLE,
+            M5440S250Ra::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <M5440S250Ra as HasLedGreen>::ROLE,
+            M5440S250Ra::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <M5440S250Ra as HasLedBlue>::ROLE,
+            M5440S250Ra::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <M5440S250Ra as HasHardwareErrorStatus>::ROLE,
+            M5440S250Ra::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <M5440S250Ra as HasRealtimeTick>::ROLE,
+            M5440S250Ra::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <M5440S250Ra as HasPGain>::ROLE,
+            M5440S250Ra::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <M5440S250Ra as HasDGain>::ROLE,
+            M5440S250Ra::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m54_40_s250_ra_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::M5440S250Ra;
+    use crate::units::Limits;
+
+    let mode = M5440S250Ra::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(M5440S250Ra::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m54_60_s250_ra_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::M5460S250Ra;
+
+    let data = &M5460S250Ra::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <M5460S250Ra as HasPresentTemperature>::ROLE,
+            M5460S250Ra::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <M5460S250Ra as HasPresentVoltage>::ROLE,
+            M5460S250Ra::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <M5460S250Ra as HasPresentVelocity>::ROLE,
+            M5460S250Ra::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <M5460S250Ra as HasGoalVelocity>::ROLE,
+            M5460S250Ra::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <M5460S250Ra as HasSpeedLimit>::ROLE,
+            M5460S250Ra::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <M5460S250Ra as HasPresentCurrent>::ROLE,
+            M5460S250Ra::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <M5460S250Ra as HasGoalCurrent>::ROLE,
+            M5460S250Ra::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <M5460S250Ra as HasMoving>::ROLE,
+            M5460S250Ra::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <M5460S250Ra as HasLedRed>::ROLE,
+            M5460S250Ra::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <M5460S250Ra as HasLedGreen>::ROLE,
+            M5460S250Ra::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <M5460S250Ra as HasLedBlue>::ROLE,
+            M5460S250Ra::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <M5460S250Ra as HasHardwareErrorStatus>::ROLE,
+            M5460S250Ra::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <M5460S250Ra as HasRealtimeTick>::ROLE,
+            M5460S250Ra::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <M5460S250Ra as HasPGain>::ROLE,
+            M5460S250Ra::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <M5460S250Ra as HasDGain>::ROLE,
+            M5460S250Ra::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <M5460S250Ra as HasPresentTemperature>::ROLE,
+            M5460S250Ra::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <M5460S250Ra as HasPresentVoltage>::ROLE,
+            M5460S250Ra::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <M5460S250Ra as HasPresentVelocity>::ROLE,
+            M5460S250Ra::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <M5460S250Ra as HasGoalVelocity>::ROLE,
+            M5460S250Ra::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <M5460S250Ra as HasSpeedLimit>::ROLE,
+            M5460S250Ra::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <M5460S250Ra as HasPresentCurrent>::ROLE,
+            M5460S250Ra::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <M5460S250Ra as HasGoalCurrent>::ROLE,
+            M5460S250Ra::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <M5460S250Ra as HasMoving>::ROLE,
+            M5460S250Ra::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <M5460S250Ra as HasLedRed>::ROLE,
+            M5460S250Ra::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <M5460S250Ra as HasLedGreen>::ROLE,
+            M5460S250Ra::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <M5460S250Ra as HasLedBlue>::ROLE,
+            M5460S250Ra::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <M5460S250Ra as HasHardwareErrorStatus>::ROLE,
+            M5460S250Ra::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <M5460S250Ra as HasRealtimeTick>::ROLE,
+            M5460S250Ra::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <M5460S250Ra as HasPGain>::ROLE,
+            M5460S250Ra::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <M5460S250Ra as HasDGain>::ROLE,
+            M5460S250Ra::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn m54_60_s250_ra_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::M5460S250Ra;
+    use crate::units::Limits;
+
+    let mode = M5460S250Ra::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(M5460S250Ra::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h42_20_s300_ra_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::H4220S300Ra;
+
+    let data = &H4220S300Ra::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <H4220S300Ra as HasPresentTemperature>::ROLE,
+            H4220S300Ra::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <H4220S300Ra as HasPresentVoltage>::ROLE,
+            H4220S300Ra::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <H4220S300Ra as HasPresentVelocity>::ROLE,
+            H4220S300Ra::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <H4220S300Ra as HasGoalVelocity>::ROLE,
+            H4220S300Ra::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <H4220S300Ra as HasSpeedLimit>::ROLE,
+            H4220S300Ra::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <H4220S300Ra as HasPresentCurrent>::ROLE,
+            H4220S300Ra::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <H4220S300Ra as HasGoalCurrent>::ROLE,
+            H4220S300Ra::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <H4220S300Ra as HasMoving>::ROLE,
+            H4220S300Ra::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <H4220S300Ra as HasLedRed>::ROLE,
+            H4220S300Ra::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <H4220S300Ra as HasLedGreen>::ROLE,
+            H4220S300Ra::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <H4220S300Ra as HasLedBlue>::ROLE,
+            H4220S300Ra::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <H4220S300Ra as HasHardwareErrorStatus>::ROLE,
+            H4220S300Ra::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <H4220S300Ra as HasRealtimeTick>::ROLE,
+            H4220S300Ra::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <H4220S300Ra as HasPGain>::ROLE,
+            H4220S300Ra::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <H4220S300Ra as HasDGain>::ROLE,
+            H4220S300Ra::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <H4220S300Ra as HasPresentTemperature>::ROLE,
+            H4220S300Ra::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <H4220S300Ra as HasPresentVoltage>::ROLE,
+            H4220S300Ra::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <H4220S300Ra as HasPresentVelocity>::ROLE,
+            H4220S300Ra::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <H4220S300Ra as HasGoalVelocity>::ROLE,
+            H4220S300Ra::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <H4220S300Ra as HasSpeedLimit>::ROLE,
+            H4220S300Ra::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <H4220S300Ra as HasPresentCurrent>::ROLE,
+            H4220S300Ra::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <H4220S300Ra as HasGoalCurrent>::ROLE,
+            H4220S300Ra::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <H4220S300Ra as HasMoving>::ROLE,
+            H4220S300Ra::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <H4220S300Ra as HasLedRed>::ROLE,
+            H4220S300Ra::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <H4220S300Ra as HasLedGreen>::ROLE,
+            H4220S300Ra::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <H4220S300Ra as HasLedBlue>::ROLE,
+            H4220S300Ra::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <H4220S300Ra as HasHardwareErrorStatus>::ROLE,
+            H4220S300Ra::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <H4220S300Ra as HasRealtimeTick>::ROLE,
+            H4220S300Ra::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <H4220S300Ra as HasPGain>::ROLE,
+            H4220S300Ra::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <H4220S300Ra as HasDGain>::ROLE,
+            H4220S300Ra::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h42_20_s300_ra_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::H4220S300Ra;
+    use crate::units::Limits;
+
+    let mode = H4220S300Ra::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(H4220S300Ra::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h54_100_s500_ra_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::H54100S500Ra;
+
+    let data = &H54100S500Ra::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <H54100S500Ra as HasPresentTemperature>::ROLE,
+            H54100S500Ra::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <H54100S500Ra as HasPresentVoltage>::ROLE,
+            H54100S500Ra::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <H54100S500Ra as HasPresentVelocity>::ROLE,
+            H54100S500Ra::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <H54100S500Ra as HasGoalVelocity>::ROLE,
+            H54100S500Ra::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <H54100S500Ra as HasSpeedLimit>::ROLE,
+            H54100S500Ra::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <H54100S500Ra as HasPresentCurrent>::ROLE,
+            H54100S500Ra::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <H54100S500Ra as HasGoalCurrent>::ROLE,
+            H54100S500Ra::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <H54100S500Ra as HasMoving>::ROLE,
+            H54100S500Ra::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <H54100S500Ra as HasLedRed>::ROLE,
+            H54100S500Ra::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <H54100S500Ra as HasLedGreen>::ROLE,
+            H54100S500Ra::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <H54100S500Ra as HasLedBlue>::ROLE,
+            H54100S500Ra::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <H54100S500Ra as HasHardwareErrorStatus>::ROLE,
+            H54100S500Ra::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <H54100S500Ra as HasRealtimeTick>::ROLE,
+            H54100S500Ra::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <H54100S500Ra as HasPGain>::ROLE,
+            H54100S500Ra::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <H54100S500Ra as HasDGain>::ROLE,
+            H54100S500Ra::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <H54100S500Ra as HasPresentTemperature>::ROLE,
+            H54100S500Ra::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <H54100S500Ra as HasPresentVoltage>::ROLE,
+            H54100S500Ra::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <H54100S500Ra as HasPresentVelocity>::ROLE,
+            H54100S500Ra::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <H54100S500Ra as HasGoalVelocity>::ROLE,
+            H54100S500Ra::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <H54100S500Ra as HasSpeedLimit>::ROLE,
+            H54100S500Ra::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <H54100S500Ra as HasPresentCurrent>::ROLE,
+            H54100S500Ra::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <H54100S500Ra as HasGoalCurrent>::ROLE,
+            H54100S500Ra::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <H54100S500Ra as HasMoving>::ROLE,
+            H54100S500Ra::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <H54100S500Ra as HasLedRed>::ROLE,
+            H54100S500Ra::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <H54100S500Ra as HasLedGreen>::ROLE,
+            H54100S500Ra::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <H54100S500Ra as HasLedBlue>::ROLE,
+            H54100S500Ra::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <H54100S500Ra as HasHardwareErrorStatus>::ROLE,
+            H54100S500Ra::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <H54100S500Ra as HasRealtimeTick>::ROLE,
+            H54100S500Ra::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <H54100S500Ra as HasPGain>::ROLE,
+            H54100S500Ra::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <H54100S500Ra as HasDGain>::ROLE,
+            H54100S500Ra::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h54_100_s500_ra_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::H54100S500Ra;
+    use crate::units::Limits;
+
+    let mode = H54100S500Ra::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(H54100S500Ra::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h54_200_s500_ra_roles() {
+    use crate::actuator::{
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
+        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+    };
+    use crate::models::H54200S500Ra;
+
+    let data = &H54200S500Ra::DATA;
+    for (role, tier2, register, name) in [
+        (
+            Role::PresentTemperature,
+            <H54200S500Ra as HasPresentTemperature>::ROLE,
+            H54200S500Ra::PRESENT_TEMPERATURE,
+            "Present Temperature",
+        ),
+        (
+            Role::PresentVoltage,
+            <H54200S500Ra as HasPresentVoltage>::ROLE,
+            H54200S500Ra::PRESENT_INPUT_VOLTAGE,
+            "Present Input Voltage",
+        ),
+        (
+            Role::PresentVelocity,
+            <H54200S500Ra as HasPresentVelocity>::ROLE,
+            H54200S500Ra::PRESENT_VELOCITY,
+            "Present Velocity",
+        ),
+        (
+            Role::GoalVelocity,
+            <H54200S500Ra as HasGoalVelocity>::ROLE,
+            H54200S500Ra::GOAL_VELOCITY,
+            "Goal Velocity",
+        ),
+        (
+            Role::SpeedLimit,
+            <H54200S500Ra as HasSpeedLimit>::ROLE,
+            H54200S500Ra::PROFILE_VELOCITY,
+            "Profile Velocity",
+        ),
+        (
+            Role::PresentCurrent,
+            <H54200S500Ra as HasPresentCurrent>::ROLE,
+            H54200S500Ra::PRESENT_CURRENT,
+            "Present Current",
+        ),
+        (
+            Role::GoalCurrent,
+            <H54200S500Ra as HasGoalCurrent>::ROLE,
+            H54200S500Ra::GOAL_CURRENT,
+            "Goal Current",
+        ),
+        (
+            Role::Moving,
+            <H54200S500Ra as HasMoving>::ROLE,
+            H54200S500Ra::MOVING,
+            "Moving",
+        ),
+        (
+            Role::LedRed,
+            <H54200S500Ra as HasLedRed>::ROLE,
+            H54200S500Ra::LED_RED,
+            "LED Red",
+        ),
+        (
+            Role::LedGreen,
+            <H54200S500Ra as HasLedGreen>::ROLE,
+            H54200S500Ra::LED_GREEN,
+            "LED Green",
+        ),
+        (
+            Role::LedBlue,
+            <H54200S500Ra as HasLedBlue>::ROLE,
+            H54200S500Ra::LED_BLUE,
+            "LED Blue",
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <H54200S500Ra as HasHardwareErrorStatus>::ROLE,
+            H54200S500Ra::HARDWARE_ERROR_STATUS,
+            "Hardware Error Status",
+        ),
+        (
+            Role::RealtimeTick,
+            <H54200S500Ra as HasRealtimeTick>::ROLE,
+            H54200S500Ra::REALTIME_TICK,
+            "Realtime Tick",
+        ),
+        (
+            Role::PGain,
+            <H54200S500Ra as HasPGain>::ROLE,
+            H54200S500Ra::POSITION_P_GAIN,
+            "Position P Gain",
+        ),
+        (
+            Role::DGain,
+            <H54200S500Ra as HasDGain>::ROLE,
+            H54200S500Ra::POSITION_D_GAIN,
+            "Position D Gain",
+        ),
+    ] {
+        same_role(data.role(role), tier2, register, name);
+    }
+    for role in [
+        Role::PresentLoad,
+        Role::Led,
+        Role::CwComplianceMargin,
+        Role::CcwComplianceMargin,
+        Role::CwComplianceSlope,
+        Role::CcwComplianceSlope,
+        Role::TorqueCtrlModeEnable,
+    ] {
+        assert_eq!(data.role(role), None);
+        assert_eq!(data.typed(role, LimitMode::Bounded), None);
+    }
+    for (role, tier2, register) in [
+        (
+            Role::PresentTemperature,
+            <H54200S500Ra as HasPresentTemperature>::ROLE,
+            H54200S500Ra::PRESENT_TEMPERATURE,
+        ),
+        (
+            Role::PresentVoltage,
+            <H54200S500Ra as HasPresentVoltage>::ROLE,
+            H54200S500Ra::PRESENT_INPUT_VOLTAGE,
+        ),
+        (
+            Role::PresentVelocity,
+            <H54200S500Ra as HasPresentVelocity>::ROLE,
+            H54200S500Ra::PRESENT_VELOCITY,
+        ),
+        (
+            Role::GoalVelocity,
+            <H54200S500Ra as HasGoalVelocity>::ROLE,
+            H54200S500Ra::GOAL_VELOCITY,
+        ),
+        (
+            Role::SpeedLimit,
+            <H54200S500Ra as HasSpeedLimit>::ROLE,
+            H54200S500Ra::PROFILE_VELOCITY,
+        ),
+        (
+            Role::PresentCurrent,
+            <H54200S500Ra as HasPresentCurrent>::ROLE,
+            H54200S500Ra::PRESENT_CURRENT,
+        ),
+        (
+            Role::GoalCurrent,
+            <H54200S500Ra as HasGoalCurrent>::ROLE,
+            H54200S500Ra::GOAL_CURRENT,
+        ),
+        (
+            Role::Moving,
+            <H54200S500Ra as HasMoving>::ROLE,
+            H54200S500Ra::MOVING,
+        ),
+        (
+            Role::LedRed,
+            <H54200S500Ra as HasLedRed>::ROLE,
+            H54200S500Ra::LED_RED,
+        ),
+        (
+            Role::LedGreen,
+            <H54200S500Ra as HasLedGreen>::ROLE,
+            H54200S500Ra::LED_GREEN,
+        ),
+        (
+            Role::LedBlue,
+            <H54200S500Ra as HasLedBlue>::ROLE,
+            H54200S500Ra::LED_BLUE,
+        ),
+        (
+            Role::HardwareErrorStatus,
+            <H54200S500Ra as HasHardwareErrorStatus>::ROLE,
+            H54200S500Ra::HARDWARE_ERROR_STATUS,
+        ),
+        (
+            Role::RealtimeTick,
+            <H54200S500Ra as HasRealtimeTick>::ROLE,
+            H54200S500Ra::REALTIME_TICK,
+        ),
+        (
+            Role::PGain,
+            <H54200S500Ra as HasPGain>::ROLE,
+            H54200S500Ra::POSITION_P_GAIN,
+        ),
+        (
+            Role::DGain,
+            <H54200S500Ra as HasDGain>::ROLE,
+            H54200S500Ra::POSITION_D_GAIN,
+        ),
+    ] {
+        assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
+        for mode in ALL_MODES {
+            assert_eq!(tier2.scale(mode), None);
+            assert_eq!(data.typed(role, mode), Some((register, None)));
+        }
+    }
+}
+
+#[cfg(feature = "pro")]
+#[test]
+fn h54_200_s500_ra_mode_source() {
+    use crate::actuator::LimitMode;
+    use crate::models::H54200S500Ra;
+    use crate::units::Limits;
+
+    let mode = H54200S500Ra::DATA.mode;
+    let limits = Limits::new(id(), 0, 1).unwrap();
+    assert_eq!(mode.register(), Some(H54200S500Ra::OPERATING_MODE));
+    for (value, expected) in [
+        (0, Some(LimitMode::Pwm)),
+        (1, Some(LimitMode::Pwm)),
+        (3, Some(LimitMode::Bounded)),
+        (4, Some(LimitMode::Unbounded)),
+        (16, Some(LimitMode::Pwm)),
+        (2, None),
+    ] {
+        assert_eq!(mode.limit_mode(value, limits), expected);
+    }
 }

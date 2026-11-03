@@ -2,7 +2,10 @@
 //! tables, as serde types, and how to read them.
 //!
 //! Unknown fields are ignored, so metadata the tables module adds (legacy
-//! `tables`, `unit_info`, `instructions`, ...) needs no codegen change.
+//! `tables`, `instructions`, ...) needs no codegen change. The FR-9 fields
+//! (`unit_source`, `unit_info`, `torque_control_mode`, per-mode
+//! `operating_modes` lists, row `range`) are read; `unit_info` counts only
+//! in a table with `unit_source` (specs/009-tables-fr9).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -92,14 +95,78 @@ pub(crate) struct ControlTable {
     pub(crate) source: Source,
     /// The protocols the e-Manual serves this layout on.
     pub(crate) protocols: Vec<ProtocolTag>,
+    /// Whether the FR-9 data (`unit_info`, `torque_control_mode`, per-mode
+    /// lists, row ranges) was checked against the e-Manual; absent in a
+    /// table that has none of it.
+    #[serde(default)]
+    pub(crate) unit_source: Option<Source>,
     /// Present exactly when the table has an `Operating Mode` or `Control
     /// Mode` row (check 17).
     #[serde(default)]
     pub(crate) operating_modes: Option<OperatingModes>,
+    /// MX Protocol 1 torque control switch (check 21).
+    #[serde(default)]
+    pub(crate) torque_control_mode: Option<TorqueControlMode>,
     /// Position scale.
     pub(crate) type_info: TypeInfo,
+    /// Register units. Read only under `unit_source`; legacy entries of
+    /// the other tables are parsed and ignored.
+    #[serde(default)]
+    pub(crate) unit_info: Vec<UnitEntry>,
     /// Register rows, in table order.
     pub(crate) control_table: Vec<Row>,
+}
+
+/// One `unit_info` entry (specs/009-tables-fr9/contracts/fr9-schema.md).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct UnitEntry {
+    /// A row's exact name.
+    pub(crate) data_name: String,
+    /// The raw step, in `unit`.
+    pub(crate) value: f64,
+    /// `deg`, `rpm`, `mA`, `V`, `°C`, `%`, `ms` or `deg/s^2`.
+    pub(crate) unit: String,
+    /// `unsigned`, `twos_complement` or `direction_bit_N`.
+    pub(crate) sign_type: String,
+    /// The Protocol 1 angle-limit modes it applies in; absent = all.
+    #[serde(default)]
+    pub(crate) modes: Option<Vec<String>>,
+    /// The Drive Mode profile it applies in; absent = both.
+    #[serde(default)]
+    pub(crate) profile: Option<String>,
+    /// Raw 0 means no limit.
+    #[serde(default)]
+    pub(crate) zero_is_unlimited: bool,
+    /// The raw range in these modes.
+    #[serde(default)]
+    pub(crate) range: Option<RawRange>,
+    /// The row bounding the magnitude.
+    #[serde(default)]
+    pub(crate) bounded_by: Option<String>,
+    /// The first firmware with the register.
+    #[serde(default)]
+    pub(crate) from_fw: Option<u8>,
+}
+
+/// A raw range, both ends included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub(crate) struct RawRange {
+    /// The lowest raw value.
+    pub(crate) min: i64,
+    /// The highest raw value.
+    pub(crate) max: i64,
+}
+
+/// `torque_control_mode`: a 1-byte switch that puts an angle-limit model in
+/// torque (current) control, and the goal register it then follows.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct TorqueControlMode {
+    /// The switch row's name.
+    pub(crate) register: String,
+    /// The value that turns torque control on.
+    pub(crate) on: u8,
+    /// The goal row's name.
+    pub(crate) goal: String,
 }
 
 /// What each value of the mode register means (module-interfaces §3.1).
@@ -111,6 +178,20 @@ pub(crate) struct OperatingModes {
     pub(crate) unbounded: Vec<u8>,
     /// Values in which Goal Position is ignored. Required, may be empty.
     pub(crate) no_position: Vec<u8>,
+    /// Current control values; with `velocity` and `pwm` a split of
+    /// `no_position`. The four per-mode lists come all together or not at
+    /// all (check 20).
+    #[serde(default)]
+    pub(crate) current: Option<Vec<u8>>,
+    /// Velocity control values.
+    #[serde(default)]
+    pub(crate) velocity: Option<Vec<u8>>,
+    /// PWM control values.
+    #[serde(default)]
+    pub(crate) pwm: Option<Vec<u8>>,
+    /// Current-based position values, a subset of `unbounded`.
+    #[serde(default)]
+    pub(crate) current_position: Option<Vec<u8>>,
 }
 
 /// A table's verification state.
@@ -155,6 +236,9 @@ pub(crate) struct Row {
     pub(crate) access: Access,
     /// Memory area.
     pub(crate) area: Area,
+    /// The raw range the e-Manual gives, under `unit_source`.
+    #[serde(default)]
+    pub(crate) range: Option<RawRange>,
 }
 
 /// Register access.
@@ -209,7 +293,7 @@ fn read(path: &Path, stem: &str) -> Result<String, Diagnostic> {
 }
 
 /// `IMPLICIT_SOME`, so optional fields (`p1`, `p2`, `default`,
-/// `operating_modes`) are written without `Some(...)`.
+/// `operating_modes`, `unit_source`, ...) are written without `Some(...)`.
 fn options() -> ron::Options {
     ron::Options::default().with_default_extension(Extensions::IMPLICIT_SOME)
 }
@@ -301,6 +385,7 @@ mod tests {
                 data_name: "Goal Position".into(),
                 access: Access::RW,
                 area: Area::Ram,
+                range: None,
             }
         );
     }
@@ -358,6 +443,10 @@ mod tests {
                 bounded: vec![3],
                 unbounded: vec![4, 5],
                 no_position: vec![0, 1, 16],
+                current: None,
+                velocity: None,
+                pwm: None,
+                current_position: None,
             })
         );
         let t = table(
@@ -393,11 +482,68 @@ mod tests {
     }
 
     #[test]
-    fn ignores_unit_info_and_instructions() {
+    fn ignores_instructions_and_reads_legacy_unit_info() {
         let head = r#"source: Unverified, protocols: [P1],
             instructions: [(protocol: P1, source: "x", list: [Ping, Read])],
             unit_info: [{ data_name: "Position", value: 0.29, unit: "deg", sign_type: "unsigned" }],"#;
-        assert!(table(head, ROWS).is_ok());
+        let t = table(head, ROWS).unwrap();
+        assert_eq!(t.unit_source, None);
+        assert_eq!(t.unit_info[0].sign_type, "unsigned");
+        assert_eq!(t.unit_info[0].modes, None);
+        assert!(!t.unit_info[0].zero_is_unlimited);
+    }
+
+    #[test]
+    fn parses_fr9_fields() {
+        let head = r#"source: Unverified,
+            unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/mx/mx-64/", verified: "2026-11-03"),
+            protocols: [P1],
+            operating_modes: (bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16],
+                current: [0], velocity: [1], pwm: [16], current_position: [5]),
+            torque_control_mode: (register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque"),
+            unit_info: [{ data_name: "Moving Speed", value: 0.114, unit: "rpm",
+                sign_type: "direction_bit_10", modes: ["wheel"], profile: "velocity_based",
+                zero_is_unlimited: true, range: (min: 0, max: 2047),
+                bounded_by: "Velocity Limit", from_fw: 40 }],"#;
+        let rows = r#"control_table: [
+            { address: 70, size: 1, data_name: "Torque Ctrl Mode Enable", access: RW, area: RAM, range: (min: 0, max: 1) },
+        ],"#;
+        let t = table(head, rows).unwrap();
+        assert!(matches!(t.unit_source, Some(Source::Verified { .. })));
+        let modes = t.operating_modes.unwrap();
+        assert_eq!(
+            (
+                modes.current,
+                modes.velocity,
+                modes.pwm,
+                modes.current_position
+            ),
+            (Some(vec![0]), Some(vec![1]), Some(vec![16]), Some(vec![5]))
+        );
+        assert_eq!(
+            t.torque_control_mode,
+            Some(TorqueControlMode {
+                register: "Torque Ctrl Mode Enable".into(),
+                on: 1,
+                goal: "Goal Torque".into(),
+            })
+        );
+        assert_eq!(
+            t.unit_info[0],
+            UnitEntry {
+                data_name: "Moving Speed".into(),
+                value: 0.114,
+                unit: "rpm".into(),
+                sign_type: "direction_bit_10".into(),
+                modes: Some(vec!["wheel".into()]),
+                profile: Some("velocity_based".into()),
+                zero_is_unlimited: true,
+                range: Some(RawRange { min: 0, max: 2047 }),
+                bounded_by: Some("Velocity Limit".into()),
+                from_fw: Some(40),
+            }
+        );
+        assert_eq!(t.control_table[0].range, Some(RawRange { min: 0, max: 1 }));
     }
 
     #[test]

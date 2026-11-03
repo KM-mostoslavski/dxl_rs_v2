@@ -174,7 +174,8 @@ fn read_model_number<P: Protocol, T: Transport, C: Clock>(
 /// 2. The model variant for this protocol and firmware.
 /// 3. The EEPROM limits (CW is the minimum, CCW the maximum).
 /// 4. The limit mode: the mode register's value through the model's own
-///    lists, or the angle limits where the model has no mode register.
+///    lists, or the angle limits where the model has no mode register (on
+///    MX-64 Protocol 1, unless its torque control switch is on).
 /// 5. The slot, `Off`. No torque write.
 fn init_one<P, T, C, S>(
     wire: &mut Wire<'_, P, T, C>,
@@ -205,7 +206,7 @@ where
             wire.read(id, reg, &mut value)?;
             let [value] = value;
             data.mode
-                .limit_mode(value)
+                .limit_mode(value, limits)
                 .ok_or(SetupError::UnknownOperatingMode { id, value })?
         }
         None => LimitMode::from_angle_limits(limits),
@@ -594,6 +595,77 @@ mod tests {
             );
             assert_eq!(bus.actuators()[7].cache().check_goal(1023), Ok(1023));
             assert_done(&bus);
+        }
+    }
+
+    #[cfg(feature = "mx")]
+    mod mx_p1 {
+        use super::*;
+
+        /// MX-64 on Protocol 1.0, model number 310.
+        const MX64: u16 = 310;
+
+        /// Scripts Setup of an MX-64 (Protocol 1.0) at ID 1 with these
+        /// angle limits and Torque Ctrl Mode Enable value.
+        fn mx64_p1(time: &MockTime, cw: u16, ccw: u16, switch: u8) -> TestBus<'_, P1> {
+            let mut bus = test_bus::<P1, 32>(time);
+            let next = angle_p1(line(&mut bus), 1, 1, MX64, cw, ccw);
+            line(&mut bus).reply_to(next, &p1_status(1, 0, &[switch]));
+            bus
+        }
+
+        #[test]
+        fn torque_switch_is_read_after_the_angle_limits() {
+            let time = MockTime::new();
+            let mut bus = mx64_p1(&time, 0, 4095, 1);
+            bus.declare([(id(1), model(MX64))]).unwrap();
+            assert_eq!(
+                sent(&bus),
+                concat(&[
+                    p1_instruction(1, PING, &[]),
+                    p1_read(1, 0, 2),
+                    p1_read(1, 6, 2),
+                    p1_read(1, 8, 2),
+                    p1_read(1, 70, 1),
+                ])
+            );
+            assert_done(&bus);
+            let cache = bus.actuators()[0].cache();
+            assert_eq!(cache.mode(), LimitMode::Current);
+            assert_eq!(
+                cache.check_goal(2048),
+                Err(ValidationError::NotPositionMode { id: id(1) })
+            );
+            assert_eq!(cache.check_goal_current(), Ok(()));
+        }
+
+        #[test]
+        fn switch_off_keeps_the_angle_limit_rule() {
+            for ((cw, ccw), mode) in [
+                ((0, 4095), LimitMode::Bounded),
+                ((0, 0), LimitMode::Wheel),
+                ((4095, 4095), LimitMode::Unbounded),
+            ] {
+                let time = MockTime::new();
+                let mut bus = mx64_p1(&time, cw, ccw, 0);
+                bus.declare([(id(1), model(MX64))]).unwrap();
+                assert_eq!(bus.actuators()[0].cache().mode(), mode, "{cw}/{ccw}");
+            }
+        }
+
+        #[test]
+        fn switch_value_outside_its_range_fails_setup() {
+            let time = MockTime::new();
+            let mut bus = mx64_p1(&time, 0, 4095, 2);
+            assert_eq!(
+                bus.declare([(id(1), model(MX64))]),
+                Err(SetupError::UnknownOperatingMode {
+                    id: id(1),
+                    value: 2
+                }
+                .into())
+            );
+            assert!(bus.actuators().is_empty());
         }
     }
 
