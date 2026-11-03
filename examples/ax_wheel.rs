@@ -18,8 +18,8 @@
 //! In wheel mode the e-Manual gives AX and RX Moving Speed as a share of output ("only the
 //! output control is possible, not speed"), not as a velocity: bit 10 is the direction (set =
 //! CW) and bits 0..=9 the magnitude. So the goal is written raw, `Raw(GoalVelocity)`; the bus
-//! still checks torque, wheel mode and the register size before sending. Torque goes off on
-//! every actuator at the end, also after an error.
+//! still checks torque, wheel mode and the e-Manual range 0 to 2047 before sending. Torque goes
+//! off on every actuator at the end, also after an error.
 
 use std::time::Duration;
 

@@ -686,8 +686,9 @@ impl LimitMode {
     }
 }
 
-/// What core keeps per actuator: its ID, its limit mode and the position
-/// limits read from its EEPROM at Setup.
+/// What core keeps per actuator: its ID, its limit mode, the position
+/// limits read from its EEPROM at Setup and, where its table depends on it,
+/// its firmware version.
 ///
 /// It holds no torque state, no fault state and no fault report: the bus
 /// keeps a [`TorqueState`] per actuator beside it.
@@ -703,6 +704,9 @@ pub struct Cache {
     /// How goals are checked; `Bounded` until Setup records the mode.
     #[allow(dead_code, reason = "used by bus-1")]
     mode: LimitMode,
+    /// The firmware version Setup learned (a Protocol 2 ping, or a read
+    /// where the model's table depends on it); 0 when it was not needed.
+    firmware: u8,
     /// The EEPROM limits, or `None` until Setup records them.
     limits: Option<Limits>,
 }
@@ -725,6 +729,7 @@ impl Cache {
         Self {
             id,
             mode: LimitMode::Bounded,
+            firmware: 0,
             limits: None,
         }
     }
@@ -750,6 +755,16 @@ impl Cache {
         let limits = Limits::new(self.id, min, max)?;
         self.limits = Some(limits);
         Ok(limits)
+    }
+
+    /// The firmware version Setup recorded; 0 when Setup did not need it.
+    pub(crate) const fn firmware(&self) -> u8 {
+        self.firmware
+    }
+
+    /// Records the firmware version Setup learned.
+    pub(crate) fn record_firmware(&mut self, firmware: u8) {
+        self.firmware = firmware;
     }
 
     /// Records the limit mode Setup found. The limits do not change.
@@ -1051,15 +1066,19 @@ mod tests {
     }
 
     #[test]
-    fn cache_holds_only_id_mode_and_limits() {
+    fn cache_holds_only_id_mode_firmware_and_limits() {
         let Cache {
             id: _,
             mode: _,
+            firmware: _,
             limits: _,
         } = Cache::new(id(3));
-        let cache = Cache::new(id(3));
+        let mut cache = Cache::new(id(3));
         assert_eq!(cache.limits(), None);
         assert_eq!(cache.mode, LimitMode::Bounded);
+        assert_eq!(cache.firmware(), 0);
+        cache.record_firmware(40);
+        assert_eq!(cache.firmware(), 40);
         assert_eq!(size_of::<Cache>(), 16);
     }
 

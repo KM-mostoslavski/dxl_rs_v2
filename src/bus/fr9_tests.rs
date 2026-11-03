@@ -241,6 +241,39 @@ mod ax12a {
     }
 
     #[test]
+    fn raw_wheel_speed_stays_in_the_e_manual_range() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 0, true);
+        let mark = mark(&bus);
+        let out_of_range = |raw| {
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw,
+                min: 0,
+                max: 2047,
+            }
+            .into())
+        };
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.write(Raw(field::GoalVelocity), 2048), out_of_range(2048));
+        assert_eq!(ax.write(Raw(field::GoalVelocity), -1), out_of_range(-1));
+        assert_eq!(
+            bus.sync_write(Raw(field::GoalVelocity), [id(1)], &[3000]),
+            out_of_range(3000)
+        );
+        assert_quiet(&bus, mark);
+        script(&mut bus, &[p1_status(1, 0, &[])]);
+        bus.actuator(id(1))
+            .unwrap()
+            .write(Raw(field::GoalVelocity), 2047)
+            .unwrap();
+        assert_eq!(
+            sent_since(&bus, mark),
+            p1_write(1, 32, &2047u16.to_le_bytes())
+        );
+    }
+
+    #[test]
     fn goal_velocity_needs_torque_and_wheel_mode() {
         let time = MockTime::new();
         let mut bus = ax12(&time, 0, 0, false);
@@ -719,6 +752,36 @@ mod mx64_p1 {
         );
     }
 
+    #[test]
+    fn realtime_tick_needs_firmware_40() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P1, 32>(&time);
+        let at = mx64_p1_fw(line(&mut bus), 1, 1, 39, 0, 4095, 0);
+        mx64_p1_fw(line(&mut bus), at, 2, 40, 0, 4095, 0);
+        bus.declare([(id(1), ModelNumber(MX64_P1)), (id(2), ModelNumber(MX64_P1))])
+            .unwrap();
+        assert_eq!(sent(&bus), concat(&[mx64_p1_sent(1), mx64_p1_sent(2)]));
+        let mark = mark(&bus);
+        let old = Err(ValidationError::Unsupported {
+            id: id(1),
+            register: "Realtime Tick",
+        }
+        .into());
+        assert_eq!(bus.actuator(id(1)).unwrap().realtime_tick(), old);
+        let mut ticks = [crate::Tick::from_raw(0); 2];
+        assert_eq!(
+            bus.read_field(field::RealtimeTick, [id(2), id(1)], &mut ticks),
+            old.map(drop)
+        );
+        assert_quiet(&bus, mark);
+        script(&mut bus, &[p1_status(2, 0, &500u16.to_le_bytes())]);
+        assert_eq!(
+            bus.actuator(id(2)).unwrap().realtime_tick().unwrap().raw(),
+            500
+        );
+        assert_eq!(sent_since(&bus, mark), p1_read(2, 50, 2));
+    }
+
     #[cfg(feature = "ax")]
     #[test]
     fn mixed_bulk_read_refuses_the_ax() {
@@ -1072,12 +1135,67 @@ mod mx64_p2 {
             ],
         );
         let mut mx = bus.actuator(id(1)).unwrap();
-        assert!(mx.hardware_errors().is_err());
+        assert_eq!(mx.hardware_errors(), Ok(HardwareErrors::from_raw(0x04)));
         assert_eq!(mx.torque_state(), TorqueState::Faulted);
         mx.reboot().unwrap();
         assert_eq!(mx.torque_state(), TorqueState::Faulted);
         mx.clear_fault().unwrap();
         assert_eq!(mx.torque_state(), TorqueState::Off);
+    }
+
+    #[test]
+    fn hardware_errors_names_the_fault_the_alert_reports() {
+        use crate::error::{P2Code, StatusError, StatusReport};
+        let time = MockTime::new();
+        let mut bus = mx64s(&time, &[1, 2], 3, false);
+        let mark = mark(&bus);
+        script(
+            &mut bus,
+            &[
+                p2_status(1, 0x80, &[0x24]),
+                p2_status(1, 0x80, &[0x24]),
+                p2_status(1, 0x80, &[0]),
+                p2_status(1, 0x84, &[0x24]),
+                p2_status(2, 0, &[0]),
+            ],
+        );
+        let alert = |code| -> Result<HardwareErrors, Error> {
+            Err(StatusError {
+                id: id(1),
+                report: StatusReport::P2 { alert: true, code },
+            }
+            .into())
+        };
+        let mut mx = bus.actuator(id(1)).unwrap();
+        assert_eq!(mx.hardware_errors(), Ok(HardwareErrors::from_raw(0x24)));
+        assert_eq!(mx.torque_state(), TorqueState::Faulted);
+        assert_eq!(mx.read(Raw(field::HardwareErrorStatus)), Ok(0x24));
+        assert_eq!(mx.hardware_errors(), alert(None));
+        assert_eq!(mx.hardware_errors(), alert(Some(P2Code::DataRange)));
+        let mut clean = bus.actuator(id(2)).unwrap();
+        assert_eq!(clean.hardware_errors(), Ok(HardwareErrors::from_raw(0)));
+        assert_eq!(clean.torque_state(), TorqueState::Off);
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p2_read(1, 70, 1),
+                p2_read(1, 70, 1),
+                p2_read(1, 70, 1),
+                p2_read(1, 70, 1),
+                p2_read(2, 70, 1),
+            ])
+        );
+
+        script(
+            &mut bus,
+            &[p2_status(1, 0x80, &[0x24]), p2_status(2, 0, &[0])],
+        );
+        let mut out = [HardwareErrors::from_raw(0); 2];
+        assert_eq!(
+            bus.sync_read(field::HardwareErrorStatus, [id(1), id(2)], &mut out)
+                .map_err(|e| matches!(e, Error::Status(_))),
+            Err(true)
+        );
     }
 
     #[test]

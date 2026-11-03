@@ -41,14 +41,16 @@ impl ModeSet {
     }
 }
 
-/// The scale a register has in some limit modes, from one `unit_info` entry
-/// of the model's table.
+/// What one `unit_info` entry of the model's table gives a register in some
+/// limit modes: its scale, and the raw range the e-Manual gives there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ModeScale {
     /// The modes the entry applies in.
     pub(crate) modes: ModeSet,
-    /// Raw to SI.
-    pub(crate) scale: RegisterScale,
+    /// Raw to SI; `None` where the entry's unit is not the role's quantity
+    /// (AX-12A wheel-mode Moving Speed, in %), so the register is raw only
+    /// there but keeps the entry's range.
+    pub(crate) scale: Option<RegisterScale>,
     /// The raw range the e-Manual gives in these modes, if it gives one.
     pub(crate) range: Option<(i64, i64)>,
 }
@@ -96,7 +98,8 @@ pub struct RoleRegister {
     pub(crate) name: &'static str,
     /// Where it is.
     pub(crate) register: Register,
-    /// Its scales; at most one applies in each mode. Empty: raw only.
+    /// Its `unit_info` entries; at most one applies in each mode. Empty, or
+    /// no scale in the entry of a mode: raw only there.
     pub(crate) scales: &'static [ModeScale],
     /// The EEPROM register that bounds its magnitude (Velocity Limit for
     /// Goal Velocity, Current Limit for Goal Current), if any.
@@ -137,14 +140,15 @@ impl RoleRegister {
     /// table gives it no typed form in that mode.
     pub const fn scale(&self, mode: LimitMode) -> Option<RegisterScale> {
         match self.entry(mode) {
-            Some(entry) => Some(entry.scale),
+            Some(entry) => entry.scale,
             None => None,
         }
     }
 
     /// The raw range the e-Manual gives for the register in `mode`, or
-    /// `None` when the table records none: the range of the scale that
-    /// applies in `mode`, else the register's own range (MX-64 Protocol 1
+    /// `None` when the table records none: the range of the `unit_info`
+    /// entry that applies in `mode`, typed or not (AX-12A wheel-mode Moving
+    /// Speed 0 to 2047), else the register's own range (MX-64 Protocol 1
     /// P Gain 0 to 254, AX-12A Compliance Slope 0 to 254).
     pub const fn raw_range(&self, mode: LimitMode) -> Option<RangeInclusive<i64>> {
         match self.range_in(mode) {
@@ -333,14 +337,34 @@ mod tests {
 
     const JOINT: ModeScale = ModeScale {
         modes: ModeSet::of(&[LimitMode::Bounded, LimitMode::Unbounded]),
-        scale: RegisterScale::new(0.011_938_052, Sign::Unsigned, 2, true),
+        scale: Some(RegisterScale::new(0.011_938_052, Sign::Unsigned, 2, true)),
         range: Some((0, 1023)),
     };
 
     const WHEEL: ModeScale = ModeScale {
         modes: ModeSet::of(&[LimitMode::Wheel]),
-        scale: RegisterScale::new(0.011_938_052, Sign::DirectionBit(10), 2, false),
+        scale: Some(RegisterScale::new(
+            0.011_938_052,
+            Sign::DirectionBit(10),
+            2,
+            false,
+        )),
         range: None,
+    };
+
+    const SHARE: ModeScale = ModeScale {
+        modes: ModeSet::of(&[LimitMode::Wheel]),
+        scale: None,
+        range: Some((0, 2047)),
+    };
+
+    const AX_GOAL_VELOCITY: RoleRegister = RoleRegister {
+        name: "Moving Speed",
+        register: reg(32, 2),
+        scales: &[SHARE],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
     };
 
     const MOVING_SPEED: RoleRegister = RoleRegister {
@@ -371,7 +395,7 @@ mod tests {
         register: reg(50, 2),
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.001, Sign::Unsigned, 2, false),
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
             range: Some((0, 32_767)),
         }],
         bounded_by: Some(reg(44, 4)),
@@ -402,13 +426,20 @@ mod tests {
 
     #[test]
     fn scale_follows_the_mode() {
-        assert_eq!(MOVING_SPEED.scale(LimitMode::Bounded), Some(JOINT.scale));
-        assert_eq!(MOVING_SPEED.scale(LimitMode::Wheel), Some(WHEEL.scale));
+        assert_eq!(MOVING_SPEED.scale(LimitMode::Bounded), JOINT.scale);
+        assert_eq!(MOVING_SPEED.scale(LimitMode::Wheel), WHEEL.scale);
         assert_eq!(MOVING_SPEED.scale(LimitMode::Current), None);
         assert_eq!(MOVING_SPEED.raw_range(LimitMode::Unbounded), Some(0..=1023));
         assert_eq!(MOVING_SPEED.raw_range(LimitMode::Wheel), None);
         assert_eq!(MOVING_SPEED.raw_range(LimitMode::Pwm), None);
         assert_eq!(MOVING_SPEED.tick_modulus(LimitMode::Wheel), None);
+    }
+
+    #[test]
+    fn an_untyped_entry_keeps_its_range() {
+        assert_eq!(AX_GOAL_VELOCITY.scale(LimitMode::Wheel), None);
+        assert_eq!(AX_GOAL_VELOCITY.raw_range(LimitMode::Wheel), Some(0..=2047));
+        assert_eq!(AX_GOAL_VELOCITY.raw_range(LimitMode::Bounded), None);
     }
 
     #[test]

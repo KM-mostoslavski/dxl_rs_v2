@@ -33,7 +33,7 @@ pub(crate) fn render_tests(resolved: &Resolved) -> Option<String> {
     render_helpers(&mut out, resolved);
     render_unknown(&mut out, resolved);
     for list in &resolved.lookups {
-        render_lookup(&mut out, list);
+        render_lookup(&mut out, list, resolved.reads_firmware(list));
     }
     render_family_off(&mut out, resolved);
     for model in &resolved.models {
@@ -211,6 +211,15 @@ fn scale_checks(role: &GenRole, scale: &GenScale) -> String {
     out
 }
 
+/// The raw range the first untyped entry of `role` covering mode `bit`
+/// gives, if it gives one.
+fn untyped_range(role: &GenRole, bit: fr9::Modes) -> Option<(i64, i64)> {
+    role.untyped
+        .iter()
+        .find(|u| u.modes & bit != 0)
+        .and_then(|u| u.range)
+}
+
 /// One model's FR-9 roles: Tier 1 finds what Tier 2 names, absent roles
 /// are absent, and every scale converts the table's unit to SI.
 fn render_roles(out: &mut String, model: &GenModel) {
@@ -249,7 +258,12 @@ fn render_roles(out: &mut String, model: &GenModel) {
             absent.join(", ")
         );
     }
-    let plain = |r: &&GenRole| r.scales.is_empty() && r.from_fw == 0 && r.bounded_by.is_none();
+    let plain = |r: &&GenRole| {
+        r.scales.is_empty()
+            && r.from_fw == 0
+            && r.bounded_by.is_none()
+            && r.untyped.iter().all(|u| u.range.is_none())
+    };
     let raw: Vec<String> = model
         .typed
         .iter()
@@ -288,20 +302,26 @@ fn render_roles(out: &mut String, model: &GenModel) {
         );
         let _ = writeln!(body, "assert_eq!(role.bounded_by(), {bound});");
         let covered = role.scales.iter().fold(0, |acc, s| acc | s.modes);
-        let uncovered = fr9::mode_names(ALL & !covered);
-        if !uncovered.is_empty() {
-            let modes: Vec<String> = uncovered
-                .iter()
-                .map(|m| format!("LimitMode::{m}"))
-                .collect();
-            let _ = writeln!(
-                body,
-                "for mode in [{}] {{\nassert_eq!(role.scale(mode), None);\nassert_eq!(role.raw_range(mode), {});\nassert_eq!(data.typed(Role::{}, mode), Some(({ty}::{}, None)));\n}}",
-                modes.join(", "),
-                range_value(role.row_range),
+        let mut by_range: Vec<(Option<(i64, i64)>, Vec<String>)> = Vec::new();
+        for bit in (0..7)
+            .map(|i| 1u8 << i)
+            .filter(|bit| ALL & !covered & bit != 0)
+        {
+            let range = untyped_range(role, bit).or(role.row_range);
+            let name = format!("LimitMode::{}", fr9::mode_names(bit)[0]);
+            match by_range.iter_mut().find(|(r, _)| *r == range) {
+                Some((_, modes)) => modes.push(name),
+                None => by_range.push((range, vec![name])),
+            }
+        }
+        for (range, modes) in by_range {
+            let check = format!(
+                "assert_eq!(role.scale(mode), None);\nassert_eq!(role.raw_range(mode), {});\nassert_eq!(data.typed(Role::{}, mode), Some(({ty}::{}, None)));\n",
+                range_value(range),
                 role.def.variant,
                 const_ident(&role.row.data_name),
             );
+            let _ = writeln!(body, "{{\n{}}}", each("mode", &modes, &check));
         }
         for scale in &role.scales {
             body.push_str("{\n");
@@ -584,7 +604,7 @@ fn firmware_points(list: &LookupList) -> Vec<u8> {
 }
 
 /// The lookup of one (protocol, model number) with its family on.
-fn render_lookup(out: &mut String, list: &LookupList) {
+fn render_lookup(out: &mut String, list: &LookupList, reads_firmware: bool) {
     let protocol = format!("ProtocolVersion::{}", list.protocol.variant());
     let number = list.number;
     let types: BTreeSet<&str> = list.variants.iter().map(|(_, ty)| ty.as_str()).collect();
@@ -601,7 +621,7 @@ fn render_lookup(out: &mut String, list: &LookupList) {
         })
         .collect();
     let firmware_register = match list.variants.first() {
-        Some((_, first)) if list.firmware_dependent() => format!("Some({first}::FIRMWARE_VERSION)"),
+        Some((_, first)) if reads_firmware => format!("Some({first}::FIRMWARE_VERSION)"),
         _ => "None".to_string(),
     };
     let _ = writeln!(
@@ -823,7 +843,7 @@ mod tests {
             "assert!(close(scale.load(100).ratio(),0.097751714));",
             "assert!(close(scale.load(1124).ratio(),-0.097751714));",
             "assert!(close(scale.si_of(100),0.5061455));",
-            "(Role::GoalVelocity,<AxasHasGoalVelocity>::ROLE,Ax::MOVING_SPEED,None),",
+            "letrole=<AxasHasGoalVelocity>::ROLE;assert_eq!(role.from_firmware(),0);assert_eq!(role.bounded_by(),None);{formodein[LimitMode::Bounded,LimitMode::Unbounded,LimitMode::Pwm,LimitMode::UnboundedCurrent,LimitMode::Velocity,LimitMode::Current]{assert_eq!(role.scale(mode),None);assert_eq!(role.raw_range(mode),None);assert_eq!(data.typed(Role::GoalVelocity,mode),Some((Ax::MOVING_SPEED,None)));}}{letmode=LimitMode::Wheel;assert_eq!(role.scale(mode),None);assert_eq!(role.raw_range(mode),Some(0..=2047));assert_eq!(data.typed(Role::GoalVelocity,mode),Some((Ax::MOVING_SPEED,None)));}",
             "(Role::CwComplianceSlope,<AxasHasCwComplianceSlope>::ROLE,Ax::CW_COMPLIANCE_SLOPE,Some(0..=254)),",
             "assert_eq!((tier2.from_firmware(),tier2.bounded_by()),(0,None));formodeinALL_MODES{assert_eq!(tier2.scale(mode),None);assert_eq!(tier2.raw_range(mode),range);assert_eq!(data.typed(role,mode),Some((register,None)));}",
             "formodein[LimitMode::Unbounded,LimitMode::Pwm,LimitMode::UnboundedCurrent,LimitMode::Velocity,LimitMode::Current,LimitMode::Wheel]{assert_eq!(role.scale(mode),None);assert_eq!(role.raw_range(mode),None);assert_eq!(data.typed(Role::SpeedLimit,mode),Some((Ax::MOVING_SPEED,None)));}",

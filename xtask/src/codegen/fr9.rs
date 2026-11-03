@@ -372,6 +372,8 @@ pub(crate) struct Untyped {
     pub(crate) value: f64,
     /// The table's unit.
     pub(crate) unit: String,
+    /// The raw range the e-Manual gives in these modes, if it gives one.
+    pub(crate) range: Option<(i64, i64)>,
     /// The Drive Mode profile the entry is for, if only one.
     pub(crate) profile: Option<String>,
 }
@@ -754,6 +756,7 @@ fn role_of(
                     modes,
                     value: entry.value,
                     unit: entry.unit.clone(),
+                    range: entry.range.map(|r| (r.min, r.max)),
                     profile: entry.profile.clone(),
                 });
             } else {
@@ -971,11 +974,13 @@ mod tests {
             (goal.untyped[0].modes, goal.untyped[0].unit.as_str()),
             (WHEEL, "%")
         );
+        assert_eq!(goal.untyped[0].range, Some((0, 2047)));
 
         let present = roles["present_velocity"];
         assert_eq!(present.scales.len(), 1);
         assert_eq!(present.scales[0].sign, SignKind::DirectionBit(10));
         assert_eq!(present.untyped.len(), 1);
+        assert_eq!(present.untyped[0].range, None);
 
         let load = roles["present_load"];
         assert!(close(load.scales[0].si_per_raw, 1.0 / 1023.0));

@@ -155,7 +155,7 @@ impl HasPresentTemperature for Xm430W350 {
         register: Self::PRESENT_TEMPERATURE,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(1.0, Sign::Unsigned, 1, false),
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
             range: None,
         }],
         bounded_by: None,
@@ -171,7 +171,7 @@ impl HasPresentVoltage for Xm430W350 {
         register: Self::PRESENT_INPUT_VOLTAGE,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.1, Sign::Unsigned, 2, false),
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 2, false)),
             range: None,
         }],
         bounded_by: None,
@@ -187,7 +187,12 @@ impl HasPresentVelocity for Xm430W350 {
         register: Self::PRESENT_VELOCITY,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.023980824, Sign::TwosComplement, 4, false),
+            scale: Some(RegisterScale::new(
+                0.023980824,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
             range: None,
         }],
         bounded_by: None,
@@ -203,7 +208,12 @@ impl HasGoalVelocity for Xm430W350 {
         register: Self::GOAL_VELOCITY,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.023980824, Sign::TwosComplement, 4, false),
+            scale: Some(RegisterScale::new(
+                0.023980824,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
             range: None,
         }],
         bounded_by: Some(Self::VELOCITY_LIMIT),
@@ -219,11 +229,18 @@ impl HasSpeedLimit for Xm430W350 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Profile Velocity",
         register: Self::PROFILE_VELOCITY,
-        scales: &[ModeScale {
-            modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.023980824, Sign::Unsigned, 4, true),
-            range: Some((0, 32767)),
-        }],
+        scales: &[
+            ModeScale {
+                modes: ModeSet::ALL,
+                scale: Some(RegisterScale::new(0.023980824, Sign::Unsigned, 4, true)),
+                range: Some((0, 32767)),
+            },
+            ModeScale {
+                modes: ModeSet::ALL,
+                scale: None,
+                range: Some((0, 32737)),
+            },
+        ],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -237,7 +254,7 @@ impl HasPresentCurrent for Xm430W350 {
         register: Self::PRESENT_CURRENT,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.00269, Sign::TwosComplement, 2, false),
+            scale: Some(RegisterScale::new(0.00269, Sign::TwosComplement, 2, false)),
             range: None,
         }],
         bounded_by: None,
@@ -253,7 +270,7 @@ impl HasGoalCurrent for Xm430W350 {
         register: Self::GOAL_CURRENT,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.00269, Sign::TwosComplement, 2, false),
+            scale: Some(RegisterScale::new(0.00269, Sign::TwosComplement, 2, false)),
             range: None,
         }],
         bounded_by: Some(Self::CURRENT_LIMIT),
@@ -305,7 +322,7 @@ impl HasRealtimeTick for Xm430W350 {
         register: Self::REALTIME_TICK,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.001, Sign::Unsigned, 2, false),
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
             range: Some((0, 32767)),
         }],
         bounded_by: None,

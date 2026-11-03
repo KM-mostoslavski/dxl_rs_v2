@@ -94,6 +94,12 @@ pub(crate) mod sealed {
 
     /// A register every model may have. Only this crate implements it.
     pub trait Field {
+        /// Whether the register is the actuator's own fault report
+        /// (Hardware Error Status): a single read of it whose reply has
+        /// only the Protocol 2 alert bit set returns the non-zero value the
+        /// reply carries, after marking the actuator `Faulted`.
+        const FAULT_REPORT: bool = false;
+
         /// The field's site on `kind`.
         ///
         /// # Errors
@@ -187,6 +193,8 @@ pub trait WriteField: Field + Rule {
 pub struct Raw<F>(pub F);
 
 impl<F: Field> Field for Raw<F> {
+    const FAULT_REPORT: bool = F::FAULT_REPORT;
+
     fn site(kind: &ActuatorKind) -> Result<Site, ValidationError> {
         F::site(kind)
     }
@@ -232,13 +240,18 @@ fn plain_site(kind: &ActuatorKind, reg: Register, name: &'static str) -> Site {
 }
 
 /// The site of `role` on `kind`, with its scale and range in the recorded
-/// mode.
+/// mode. A register the table has only from a later firmware than the one
+/// Setup recorded is missing too.
 fn role_site(kind: &ActuatorKind, role: Role) -> Result<Site, ValidationError> {
     let id = kind.id();
-    let found = kind.data().role(role).ok_or(ValidationError::Unsupported {
-        id,
-        register: role.name(),
-    })?;
+    let found = kind
+        .data()
+        .role(role)
+        .filter(|found| found.from_firmware() <= kind.cache().firmware())
+        .ok_or(ValidationError::Unsupported {
+            id,
+            register: role.name(),
+        })?;
     let mode = kind.cache().mode();
     Ok(Site {
         scale: found.scale(mode),
@@ -419,7 +432,7 @@ role_field!(
     ///
     /// AX and RX wheel-mode Moving Speed is a share of output (about 0.1 %
     /// per step, bit 10 the direction), not a velocity: only its raw form
-    /// is written there.
+    /// is written there, within the e-Manual's 0 to 2047.
     GoalVelocity,
     GoalVelocity
 );
@@ -470,12 +483,25 @@ role_field!(
     LedBlue,
     LedBlue
 );
-role_field!(
-    /// Hardware Error Status, a set of fault flags ([`HardwareErrors`]).
-    /// MX(2.0), X, Y, PRO. Read only.
-    HardwareErrorStatus,
-    HardwareErrorStatus
-);
+/// Hardware Error Status, a set of fault flags ([`HardwareErrors`]).
+/// MX(2.0), X, Y, PRO. Read only.
+///
+/// An actuator with a fault answers every instruction with the alert bit
+/// set. A single read of this field
+/// ([`ActuatorRef::hardware_errors`](crate::ActuatorRef::hardware_errors))
+/// still returns the flags that reply carries, after marking the actuator
+/// `Faulted`, so the caller learns which fault it is. The multi-actuator
+/// reads stay strict: there the reply is the `Status` error of that target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HardwareErrorStatus;
+
+impl Field for HardwareErrorStatus {
+    const FAULT_REPORT: bool = true;
+
+    fn site(kind: &ActuatorKind) -> Result<Site, ValidationError> {
+        role_site(kind, Role::HardwareErrorStatus)
+    }
+}
 role_field!(
     /// Realtime Tick, the actuator's wrapping millisecond clock ([`Tick`]).
     /// Read only.

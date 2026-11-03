@@ -349,7 +349,8 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// For each listed actuator, in `Id` order, Setup pings it, checks its
     /// model number (from the ping on Protocol 2, a Model Number read on
     /// Protocol 1), reads the firmware where the model's table depends on
-    /// it, the EEPROM position limits and the operating mode (none on
+    /// it (and on MX-64 Protocol 1, whose Realtime Tick needs firmware 40),
+    /// the EEPROM position limits and the operating mode (none on
     /// models whose mode follows from the angle limits; on MX-64 Protocol 1
     /// the Torque Ctrl Mode Enable(70) switch, after the limits), then, in
     /// velocity mode, Velocity Limit and, in current and current-based

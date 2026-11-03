@@ -1475,14 +1475,17 @@ impl ActuatorKind {
         }
     }
 
-    /// `Some` when this model's table depends on firmware on this protocol: the Firmware
-    /// Version register to read before calling [`ActuatorKind::new`]. `None` otherwise,
-    /// including when the model's family is off.
+    /// `Some` when this model's table depends on firmware on this protocol, or has an FR-9
+    /// register only from some firmware on: the Firmware Version register to read before
+    /// calling [`ActuatorKind::new`]. `None` otherwise, including when the model's family
+    /// is off.
     pub(crate) fn firmware_register(
         protocol: ProtocolVersion,
         model_number: ModelNumber,
     ) -> Option<Register> {
         match (protocol, model_number.get()) {
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 310) => Some(Mx64P1::FIRMWARE_VERSION),
             #[cfg(feature = "x-series")]
             (ProtocolVersion::P2, 1190) => Some(Xl330M077Fw52::FIRMWARE_VERSION),
             #[cfg(feature = "x-series")]

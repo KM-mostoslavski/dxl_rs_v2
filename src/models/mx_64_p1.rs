@@ -136,7 +136,7 @@ impl HasPresentTemperature for Mx64P1 {
         register: Self::PRESENT_TEMPERATURE,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(1.0, Sign::Unsigned, 1, false),
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
             range: None,
         }],
         bounded_by: None,
@@ -152,7 +152,7 @@ impl HasPresentVoltage for Mx64P1 {
         register: Self::PRESENT_VOLTAGE,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.1, Sign::Unsigned, 1, false),
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
             range: None,
         }],
         bounded_by: None,
@@ -168,7 +168,12 @@ impl HasPresentVelocity for Mx64P1 {
         register: Self::PRESENT_SPEED,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.011519173, Sign::DirectionBit(10), 2, false),
+            scale: Some(RegisterScale::new(
+                0.011519173,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
             range: Some((0, 2047)),
         }],
         bounded_by: None,
@@ -184,7 +189,12 @@ impl HasGoalVelocity for Mx64P1 {
         register: Self::MOVING_SPEED,
         scales: &[ModeScale {
             modes: ModeSet::of(&[LimitMode::Wheel]),
-            scale: RegisterScale::new(0.011938052, Sign::DirectionBit(10), 2, false),
+            scale: Some(RegisterScale::new(
+                0.011938052,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
             range: Some((0, 2047)),
         }],
         bounded_by: None,
@@ -200,7 +210,7 @@ impl HasSpeedLimit for Mx64P1 {
         register: Self::MOVING_SPEED,
         scales: &[ModeScale {
             modes: ModeSet::of(&[LimitMode::Bounded, LimitMode::Unbounded]),
-            scale: RegisterScale::new(0.011938052, Sign::Unsigned, 2, true),
+            scale: Some(RegisterScale::new(0.011938052, Sign::Unsigned, 2, true)),
             range: Some((0, 1023)),
         }],
         bounded_by: None,
@@ -217,7 +227,12 @@ impl HasPresentLoad for Mx64P1 {
         register: Self::PRESENT_LOAD,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.0009775171, Sign::DirectionBit(10), 2, false),
+            scale: Some(RegisterScale::new(
+                0.0009775171,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
             range: Some((0, 2047)),
         }],
         bounded_by: None,
@@ -233,7 +248,7 @@ impl HasGoalCurrent for Mx64P1 {
         register: Self::GOAL_TORQUE,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.0045, Sign::DirectionBit(10), 2, false),
+            scale: Some(RegisterScale::new(0.0045, Sign::DirectionBit(10), 2, false)),
             range: Some((0, 2047)),
         }],
         bounded_by: None,
@@ -274,7 +289,7 @@ impl HasRealtimeTick for Mx64P1 {
         register: Self::REALTIME_TICK,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.001, Sign::Unsigned, 2, false),
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
             range: Some((0, 32767)),
         }],
         bounded_by: None,

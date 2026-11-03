@@ -126,7 +126,7 @@ impl HasPresentTemperature for Ax12a {
         register: Self::PRESENT_TEMPERATURE,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(1.0, Sign::Unsigned, 1, false),
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
             range: None,
         }],
         bounded_by: None,
@@ -142,7 +142,7 @@ impl HasPresentVoltage for Ax12a {
         register: Self::PRESENT_VOLTAGE,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.1, Sign::Unsigned, 1, false),
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
             range: None,
         }],
         bounded_by: None,
@@ -157,11 +157,23 @@ impl HasPresentVelocity for Ax12a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Speed",
         register: Self::PRESENT_SPEED,
-        scales: &[ModeScale {
-            modes: ModeSet::of(&[LimitMode::Bounded]),
-            scale: RegisterScale::new(0.011623893, Sign::DirectionBit(10), 2, false),
-            range: Some((0, 2047)),
-        }],
+        scales: &[
+            ModeScale {
+                modes: ModeSet::of(&[LimitMode::Bounded]),
+                scale: Some(RegisterScale::new(
+                    0.011623893,
+                    Sign::DirectionBit(10),
+                    2,
+                    false,
+                )),
+                range: Some((0, 2047)),
+            },
+            ModeScale {
+                modes: ModeSet::of(&[LimitMode::Wheel]),
+                scale: None,
+                range: Some((0, 2047)),
+            },
+        ],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -174,7 +186,11 @@ impl HasGoalVelocity for Ax12a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Moving Speed",
         register: Self::MOVING_SPEED,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::of(&[LimitMode::Wheel]),
+            scale: None,
+            range: Some((0, 2047)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -188,7 +204,7 @@ impl HasSpeedLimit for Ax12a {
         register: Self::MOVING_SPEED,
         scales: &[ModeScale {
             modes: ModeSet::of(&[LimitMode::Bounded]),
-            scale: RegisterScale::new(0.011623893, Sign::Unsigned, 2, true),
+            scale: Some(RegisterScale::new(0.011623893, Sign::Unsigned, 2, true)),
             range: Some((0, 1023)),
         }],
         bounded_by: None,
@@ -205,7 +221,12 @@ impl HasPresentLoad for Ax12a {
         register: Self::PRESENT_LOAD,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.0009775171, Sign::DirectionBit(10), 2, false),
+            scale: Some(RegisterScale::new(
+                0.0009775171,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
             range: Some((0, 2047)),
         }],
         bounded_by: None,
@@ -245,7 +266,7 @@ impl HasCwComplianceMargin for Ax12a {
         register: Self::CW_COMPLIANCE_MARGIN,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false),
+            scale: Some(RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false)),
             range: Some((0, 255)),
         }],
         bounded_by: None,
@@ -261,7 +282,7 @@ impl HasCcwComplianceMargin for Ax12a {
         register: Self::CCW_COMPLIANCE_MARGIN,
         scales: &[ModeScale {
             modes: ModeSet::ALL,
-            scale: RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false),
+            scale: Some(RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false)),
             range: Some((0, 255)),
         }],
         bounded_by: None,

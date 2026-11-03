@@ -364,6 +364,9 @@ pub(crate) const RX28: u16 = 28;
 pub(crate) const XM430_FW: u8 = 52;
 /// MX-64 on Protocol 1.0 model number.
 pub(crate) const MX64_P1: u16 = 310;
+/// The firmware the MX-64 (Protocol 1.0) helpers report: 41, so its
+/// Realtime Tick (from firmware 40) is there.
+pub(crate) const MX64_P1_FW: u8 = 41;
 /// MX-64(2.0) model number.
 pub(crate) const MX64: u16 = 311;
 /// MX-64(2.0) firmware used by the fixtures.
@@ -463,8 +466,8 @@ pub(crate) fn mx64_p2(
     xm430_p2_reads(line, at + 1, id, min, max, mode)
 }
 
-/// Scripts an MX-64 on Protocol 1.0 at `id` answering Setup from flush
-/// `at`: as [`angle_p1`], then Torque Ctrl Mode Enable(70) = `switch`.
+/// Scripts an MX-64 on Protocol 1.0 at `id` with firmware
+/// [`MX64_P1_FW`] answering Setup from flush `at`, as [`mx64_p1_fw`].
 /// Returns the next free flush number.
 pub(crate) fn mx64_p1(
     line: &mut MockTransport<'_>,
@@ -474,9 +477,41 @@ pub(crate) fn mx64_p1(
     ccw: u16,
     switch: u8,
 ) -> usize {
-    let next = angle_p1(line, at, id, MX64_P1, cw, ccw);
-    line.reply_to(next, &p1_status(id, 0, &[switch]));
-    next + 1
+    mx64_p1_fw(line, at, id, MX64_P1_FW, cw, ccw, switch)
+}
+
+/// Scripts an MX-64 on Protocol 1.0 at `id` answering Setup from flush
+/// `at`: ping, Model Number (0), Firmware Version (2) = `fw` (its Realtime
+/// Tick needs firmware 40), CW and CCW Angle Limit (6, 8), then Torque Ctrl
+/// Mode Enable (70) = `switch`. Returns the next free flush number.
+pub(crate) fn mx64_p1_fw(
+    line: &mut MockTransport<'_>,
+    at: usize,
+    id: u8,
+    fw: u8,
+    cw: u16,
+    ccw: u16,
+    switch: u8,
+) -> usize {
+    line.reply_to(at, &p1_status(id, 0, &[]))
+        .reply_to(at + 1, &p1_status(id, 0, &MX64_P1.to_le_bytes()))
+        .reply_to(at + 2, &p1_status(id, 0, &[fw]))
+        .reply_to(at + 3, &p1_status(id, 0, &cw.to_le_bytes()))
+        .reply_to(at + 4, &p1_status(id, 0, &ccw.to_le_bytes()))
+        .reply_to(at + 5, &p1_status(id, 0, &[switch]));
+    at + 6
+}
+
+/// What Setup of [`mx64_p1_fw`] sends.
+pub(crate) fn mx64_p1_sent(id: u8) -> Vec<u8> {
+    concat(&[
+        p1_instruction(id, PING, &[]),
+        p1_read(id, 0, 2),
+        p1_read(id, 2, 1),
+        p1_read(id, 6, 2),
+        p1_read(id, 8, 2),
+        p1_read(id, 70, 1),
+    ])
 }
 
 /// Scripts an XL-320 at `id` on Protocol 2 answering Setup from flush `at`:

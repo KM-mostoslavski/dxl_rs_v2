@@ -326,7 +326,7 @@ fn p1_310_lookup() {
     }
     assert_eq!(
         ActuatorKind::firmware_register(ProtocolVersion::P1, ModelNumber(310)),
-        None
+        Some(Mx64P1::FIRMWARE_VERSION)
     );
 }
 
@@ -5143,12 +5143,6 @@ fn ax_12a_roles() {
     }
     for (role, tier2, register, range) in [
         (
-            Role::GoalVelocity,
-            <Ax12a as HasGoalVelocity>::ROLE,
-            Ax12a::MOVING_SPEED,
-            None,
-        ),
-        (
             Role::Moving,
             <Ax12a as HasMoving>::ROLE,
             Ax12a::MOVING,
@@ -5221,16 +5215,26 @@ fn ax_12a_roles() {
         let role = <Ax12a as HasPresentVelocity>::ROLE;
         assert_eq!(role.from_firmware(), 0);
         assert_eq!(role.bounded_by(), None);
-        for mode in [
-            LimitMode::Unbounded,
-            LimitMode::Pwm,
-            LimitMode::UnboundedCurrent,
-            LimitMode::Velocity,
-            LimitMode::Current,
-            LimitMode::Wheel,
-        ] {
+        {
+            for mode in [
+                LimitMode::Unbounded,
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::PresentVelocity, mode),
+                    Some((Ax12a::PRESENT_SPEED, None))
+                );
+            }
+        }
+        {
+            let mode = LimitMode::Wheel;
             assert_eq!(role.scale(mode), None);
-            assert_eq!(role.raw_range(mode), None);
+            assert_eq!(role.raw_range(mode), Some(0..=2047));
             assert_eq!(
                 data.typed(Role::PresentVelocity, mode),
                 Some((Ax12a::PRESENT_SPEED, None))
@@ -5254,23 +5258,56 @@ fn ax_12a_roles() {
         }
     }
     {
+        let role = <Ax12a as HasGoalVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            for mode in [
+                LimitMode::Bounded,
+                LimitMode::Unbounded,
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::GoalVelocity, mode),
+                    Some((Ax12a::MOVING_SPEED, None))
+                );
+            }
+        }
+        {
+            let mode = LimitMode::Wheel;
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(role.raw_range(mode), Some(0..=2047));
+            assert_eq!(
+                data.typed(Role::GoalVelocity, mode),
+                Some((Ax12a::MOVING_SPEED, None))
+            );
+        }
+    }
+    {
         let role = <Ax12a as HasSpeedLimit>::ROLE;
         assert_eq!(role.from_firmware(), 0);
         assert_eq!(role.bounded_by(), None);
-        for mode in [
-            LimitMode::Unbounded,
-            LimitMode::Pwm,
-            LimitMode::UnboundedCurrent,
-            LimitMode::Velocity,
-            LimitMode::Current,
-            LimitMode::Wheel,
-        ] {
-            assert_eq!(role.scale(mode), None);
-            assert_eq!(role.raw_range(mode), None);
-            assert_eq!(
-                data.typed(Role::SpeedLimit, mode),
-                Some((Ax12a::MOVING_SPEED, None))
-            );
+        {
+            for mode in [
+                LimitMode::Unbounded,
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+                LimitMode::Wheel,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::SpeedLimit, mode),
+                    Some((Ax12a::MOVING_SPEED, None))
+                );
+            }
         }
         {
             let scale = role.scale(LimitMode::Bounded).unwrap();
@@ -5657,12 +5694,6 @@ fn rx_28_roles() {
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
     }
     for (role, tier2, register, range) in [
-        (
-            Role::GoalVelocity,
-            <Rx28 as HasGoalVelocity>::ROLE,
-            Rx28::MOVING_SPEED,
-            None,
-        ),
         (Role::Moving, <Rx28 as HasMoving>::ROLE, Rx28::MOVING, None),
         (Role::Led, <Rx28 as HasLed>::ROLE, Rx28::LED, None),
         (
@@ -5731,16 +5762,26 @@ fn rx_28_roles() {
         let role = <Rx28 as HasPresentVelocity>::ROLE;
         assert_eq!(role.from_firmware(), 0);
         assert_eq!(role.bounded_by(), None);
-        for mode in [
-            LimitMode::Unbounded,
-            LimitMode::Pwm,
-            LimitMode::UnboundedCurrent,
-            LimitMode::Velocity,
-            LimitMode::Current,
-            LimitMode::Wheel,
-        ] {
+        {
+            for mode in [
+                LimitMode::Unbounded,
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::PresentVelocity, mode),
+                    Some((Rx28::PRESENT_SPEED, None))
+                );
+            }
+        }
+        {
+            let mode = LimitMode::Wheel;
             assert_eq!(role.scale(mode), None);
-            assert_eq!(role.raw_range(mode), None);
+            assert_eq!(role.raw_range(mode), Some(0..=2047));
             assert_eq!(
                 data.typed(Role::PresentVelocity, mode),
                 Some((Rx28::PRESENT_SPEED, None))
@@ -5764,23 +5805,56 @@ fn rx_28_roles() {
         }
     }
     {
+        let role = <Rx28 as HasGoalVelocity>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            for mode in [
+                LimitMode::Bounded,
+                LimitMode::Unbounded,
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::GoalVelocity, mode),
+                    Some((Rx28::MOVING_SPEED, None))
+                );
+            }
+        }
+        {
+            let mode = LimitMode::Wheel;
+            assert_eq!(role.scale(mode), None);
+            assert_eq!(role.raw_range(mode), Some(0..=2047));
+            assert_eq!(
+                data.typed(Role::GoalVelocity, mode),
+                Some((Rx28::MOVING_SPEED, None))
+            );
+        }
+    }
+    {
         let role = <Rx28 as HasSpeedLimit>::ROLE;
         assert_eq!(role.from_firmware(), 0);
         assert_eq!(role.bounded_by(), None);
-        for mode in [
-            LimitMode::Unbounded,
-            LimitMode::Pwm,
-            LimitMode::UnboundedCurrent,
-            LimitMode::Velocity,
-            LimitMode::Current,
-            LimitMode::Wheel,
-        ] {
-            assert_eq!(role.scale(mode), None);
-            assert_eq!(role.raw_range(mode), None);
-            assert_eq!(
-                data.typed(Role::SpeedLimit, mode),
-                Some((Rx28::MOVING_SPEED, None))
-            );
+        {
+            for mode in [
+                LimitMode::Unbounded,
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+                LimitMode::Wheel,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::SpeedLimit, mode),
+                    Some((Rx28::MOVING_SPEED, None))
+                );
+            }
         }
         {
             let scale = role.scale(LimitMode::Bounded).unwrap();
@@ -6642,20 +6716,22 @@ fn mx_64_p1_roles() {
         let role = <Mx64P1 as HasGoalVelocity>::ROLE;
         assert_eq!(role.from_firmware(), 0);
         assert_eq!(role.bounded_by(), None);
-        for mode in [
-            LimitMode::Bounded,
-            LimitMode::Unbounded,
-            LimitMode::Pwm,
-            LimitMode::UnboundedCurrent,
-            LimitMode::Velocity,
-            LimitMode::Current,
-        ] {
-            assert_eq!(role.scale(mode), None);
-            assert_eq!(role.raw_range(mode), None);
-            assert_eq!(
-                data.typed(Role::GoalVelocity, mode),
-                Some((Mx64P1::MOVING_SPEED, None))
-            );
+        {
+            for mode in [
+                LimitMode::Bounded,
+                LimitMode::Unbounded,
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::GoalVelocity, mode),
+                    Some((Mx64P1::MOVING_SPEED, None))
+                );
+            }
         }
         {
             let scale = role.scale(LimitMode::Wheel).unwrap();
@@ -6678,19 +6754,21 @@ fn mx_64_p1_roles() {
         let role = <Mx64P1 as HasSpeedLimit>::ROLE;
         assert_eq!(role.from_firmware(), 0);
         assert_eq!(role.bounded_by(), None);
-        for mode in [
-            LimitMode::Pwm,
-            LimitMode::UnboundedCurrent,
-            LimitMode::Velocity,
-            LimitMode::Current,
-            LimitMode::Wheel,
-        ] {
-            assert_eq!(role.scale(mode), None);
-            assert_eq!(role.raw_range(mode), None);
-            assert_eq!(
-                data.typed(Role::SpeedLimit, mode),
-                Some((Mx64P1::MOVING_SPEED, None))
-            );
+        {
+            for mode in [
+                LimitMode::Pwm,
+                LimitMode::UnboundedCurrent,
+                LimitMode::Velocity,
+                LimitMode::Current,
+                LimitMode::Wheel,
+            ] {
+                assert_eq!(role.scale(mode), None);
+                assert_eq!(role.raw_range(mode), None);
+                assert_eq!(
+                    data.typed(Role::SpeedLimit, mode),
+                    Some((Mx64P1::MOVING_SPEED, None))
+                );
+            }
         }
         {
             let scale = role.scale(LimitMode::Bounded).unwrap();

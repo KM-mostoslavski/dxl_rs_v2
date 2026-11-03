@@ -2,7 +2,7 @@
 
 use crate::Transport;
 use crate::actuator::{Actuator, Cache, Describe, ModelData, TorqueState};
-use crate::error::Error;
+use crate::error::{Error, StatusError, StatusReport};
 use crate::field::{
     DGain, GoalCurrent, GoalPosition, GoalVelocity, HardwareErrorStatus, Led, Moving, PGain,
     PresentCurrent, PresentLoad, PresentPosition, PresentTemperature, PresentVelocity,
@@ -214,14 +214,21 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///   unit in this mode (AX wheel-mode Present Speed is in %).
     ///
     /// Otherwise any error of the read; a reply reporting a hardware fault
-    /// marks the actuator `Faulted`.
+    /// marks the actuator `Faulted`. A read of
+    /// [`HardwareErrorStatus`](crate::field::HardwareErrorStatus) returns
+    /// the flags such a reply carries instead of its error, as
+    /// [`hardware_errors`](Self::hardware_errors) says.
     ///
     /// [`Unsupported`]: crate::ValidationError::Unsupported
     /// [`NoUnit`]: crate::ValidationError::NoUnit
     pub fn read<F: ReadField>(&mut self, field: F) -> Result<F::Value, Error> {
         let _ = field;
         let site = fields::read_site::<F>(self.kind)?;
-        let raw = self.read_reg(site.reg)?;
+        let raw = if F::FAULT_REPORT {
+            self.read_fault_report(site.reg)?
+        } else {
+            self.read_reg(site.reg)?
+        };
         Ok(F::Value::from_raw(raw, &site)?)
     }
 
@@ -535,13 +542,21 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         self.read(Led)
     }
 
-    /// Reads Hardware Error Status (MX(2.0), X, Y, PRO). Reading it does not
-    /// change the torque state; [`clear_fault`](Self::clear_fault) does.
+    /// Reads Hardware Error Status (MX(2.0), X, Y, PRO): which fault the
+    /// actuator reports.
+    ///
+    /// An actuator with a fault answers with the alert bit set. The read
+    /// then returns the flags that reply carries and, like every reply
+    /// reporting a fault, marks the actuator
+    /// [`Faulted`](TorqueState::Faulted); a clean answer leaves the torque
+    /// state as it is. Only [`clear_fault`](Self::clear_fault) clears
+    /// `Faulted`, after a [`reboot`](Self::reboot) on X-series.
     ///
     /// # Errors
     ///
     /// As [`read`](Self::read); `Unsupported` on AX, RX and MX on Protocol
-    /// 1, whose status packets carry their faults.
+    /// 1, whose status packets carry their faults. A reply with the alert
+    /// bit and no flag, or with another error, is returned as an error.
     pub fn hardware_errors(&mut self) -> Result<HardwareErrors, Error> {
         self.read(HardwareErrorStatus)
     }
@@ -550,7 +565,9 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`read`](Self::read).
+    /// As [`read`](Self::read); `Unsupported` on models without it, and on
+    /// MX-64 Protocol 1 firmware older than 40, the first with it (Setup
+    /// reads the firmware of an MX-64 on Protocol 1).
     pub fn realtime_tick(&mut self) -> Result<Tick, Error> {
         self.read(RealtimeTick)
     }
@@ -573,6 +590,34 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// As [`read`](Self::read); `Unsupported` on models without it.
     pub fn d_gain(&mut self) -> Result<Gain, Error> {
         self.read(DGain)
+    }
+
+    /// Reads and decodes `reg`, the actuator's fault report, as
+    /// [`read_reg`](Self::read_reg) does, except that a reply whose only
+    /// error is the Protocol 2 alert bit returns the non-zero value it
+    /// carries. The actuator is marked `Faulted` either way.
+    fn read_fault_report(&mut self, reg: crate::register::Register) -> Result<i32, Error> {
+        let mut buf = [0; 4];
+        let bytes =
+            buf.get_mut(..usize::from(reg.size))
+                .ok_or(crate::ValidationError::DoesNotFit {
+                    raw: 0,
+                    size: reg.size,
+                })?;
+        let result = self.wire.read(self.kind.id(), reg, bytes);
+        observe(self.state, &result);
+        match result {
+            Ok(()) => Ok(reg.decode(bytes)?),
+            Err(Error::Status(StatusError {
+                report:
+                    StatusReport::P2 {
+                        alert: true,
+                        code: None,
+                    },
+                ..
+            })) if bytes.iter().any(|&byte| byte != 0) => Ok(reg.decode(bytes)?),
+            Err(err) => Err(err),
+        }
     }
 
     /// Reads and decodes `reg`; a hardware fault in the reply marks the

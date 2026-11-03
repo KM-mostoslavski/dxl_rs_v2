@@ -171,7 +171,9 @@ fn read_model_number<P: Protocol, T: Transport, C: Clock>(
 /// Builds one actuator of `model` at `id` from what it reports, and pushes
 /// it with torque `Off`. `firmware` is the version a P2 ping returned.
 ///
-/// 1. Firmware, read only where the model's table depends on it.
+/// 1. Firmware, read only where the model's table depends on it or has a
+///    register only from some firmware on (MX-64 Protocol 1 Realtime
+///    Tick), and recorded.
 /// 2. The model variant for this protocol and firmware.
 /// 3. The EEPROM limits (CW is the minimum, CCW the maximum).
 /// 4. The limit mode: the mode register's value through the model's own
@@ -200,6 +202,7 @@ where
         (None, None) => 0,
     };
     let mut kind = ActuatorKind::new(P::VERSION, model, firmware, id)?;
+    kind.cache_mut().record_firmware(firmware);
     let data = kind.data();
     let min = wire.read_value(id, data.limits.min())?;
     let max = wire.read_value(id, data.limits.max())?;
@@ -620,28 +623,19 @@ mod tests {
         /// angle limits and Torque Ctrl Mode Enable value.
         fn mx64_p1(time: &MockTime, cw: u16, ccw: u16, switch: u8) -> TestBus<'_, P1> {
             let mut bus = test_bus::<P1, 32>(time);
-            let next = angle_p1(line(&mut bus), 1, 1, MX64, cw, ccw);
-            line(&mut bus).reply_to(next, &p1_status(1, 0, &[switch]));
+            crate::bus::testing::mx64_p1(line(&mut bus), 1, 1, cw, ccw, switch);
             bus
         }
 
         #[test]
-        fn torque_switch_is_read_after_the_angle_limits() {
+        fn firmware_then_torque_switch_after_the_angle_limits() {
             let time = MockTime::new();
             let mut bus = mx64_p1(&time, 0, 4095, 1);
             bus.declare([(id(1), model(MX64))]).unwrap();
-            assert_eq!(
-                sent(&bus),
-                concat(&[
-                    p1_instruction(1, PING, &[]),
-                    p1_read(1, 0, 2),
-                    p1_read(1, 6, 2),
-                    p1_read(1, 8, 2),
-                    p1_read(1, 70, 1),
-                ])
-            );
+            assert_eq!(sent(&bus), mx64_p1_sent(1));
             assert_done(&bus);
             let cache = bus.actuators()[0].cache();
+            assert_eq!(cache.firmware(), MX64_P1_FW);
             assert_eq!(cache.mode(), LimitMode::Current);
             assert_eq!(
                 cache.check_goal(2048),
@@ -677,6 +671,31 @@ mod tests {
                 .into())
             );
             assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn a_failed_firmware_read_fails_setup() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p1_status(1, 0, &[]))
+                .reply_to(2, &p1_status(1, 0, &MX64.to_le_bytes()));
+            assert_eq!(
+                bus.declare([(id(1), model(MX64))]),
+                Err(crate::TransportError::Timeout { id: Some(id(1)) }.into())
+            );
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[cfg(feature = "ax")]
+        #[test]
+        fn models_without_a_firmware_dependent_register_record_no_firmware() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            ax12_p1(line(&mut bus), 1, 1, 0, 1023);
+            bus.declare([(id(1), model(AX12))]).unwrap();
+            assert_eq!(sent(&bus), ax12_p1_sent(1));
+            assert_eq!(bus.actuators()[0].cache().firmware(), 0);
         }
     }
 

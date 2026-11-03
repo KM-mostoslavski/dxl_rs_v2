@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use super::fr9::{self, ALL, GenRole, GenScale, Quantity, SignKind};
+use super::fr9::{self, ALL, GenRole, GenScale, Quantity, SignKind, Untyped};
 use super::names::const_ident;
 use super::resolve::{GenModel, Limits, ModeRole, Resolved};
 use super::schema::{Access, Area, ProtocolTag, Row, Source, TypeInfo};
@@ -225,12 +225,25 @@ fn mode_scale_value(scale: &GenScale) -> String {
         |(min, max)| format!("Some(({min}, {max}))"),
     );
     format!(
-        "ModeScale {{ modes: {}, scale: RegisterScale::new({}, {}, {}, {}), range: {range} }}",
+        "ModeScale {{ modes: {}, scale: Some(RegisterScale::new({}, {}, {}, {})), range: {range} }}",
         modes_value(scale.modes),
         si_literal(scale),
         sign_value(scale.sign),
         scale.size,
         scale.zero_is_unlimited
+    )
+}
+
+/// One `ModeScale { .. }` literal without a scale, for an entry whose unit
+/// is not the role's quantity: it keeps the entry's raw range.
+fn untyped_value(untyped: &Untyped) -> String {
+    let range = untyped.range.map_or_else(
+        || "None".to_string(),
+        |(min, max)| format!("Some(({min}, {max}))"),
+    );
+    format!(
+        "ModeScale {{ modes: {}, scale: None, range: {range} }}",
+        modes_value(untyped.modes)
     )
 }
 
@@ -313,7 +326,12 @@ fn role_doc(role: &GenRole) -> String {
 
 /// The Tier 2 trait impl of one role, holding its `RoleRegister`.
 fn render_role(out: &mut String, ty: &str, role: &GenRole) {
-    let scales: Vec<String> = role.scales.iter().map(mode_scale_value).collect();
+    let scales: Vec<String> = role
+        .scales
+        .iter()
+        .map(mode_scale_value)
+        .chain(role.untyped.iter().map(untyped_value))
+        .collect();
     let bounded_by = role.bounded_by.as_ref().map_or_else(
         || "None".to_string(),
         |row| format!("Some({})", self::role(row)),
@@ -373,10 +391,11 @@ fn model_imports(model: &GenModel) -> String {
     }
     actuator.extend(["Model", "ModelData", "Protocols", "Roles"]);
     let scales = || model.typed.iter().flat_map(|r| r.scales.iter());
-    if scales().next().is_some() {
+    let untyped = || model.typed.iter().flat_map(|r| r.untyped.iter());
+    if scales().next().is_some() || untyped().next().is_some() {
         actuator.extend(["ModeScale", "ModeSet"]);
     }
-    if scales().any(|s| s.modes != ALL) {
+    if scales().any(|s| s.modes != ALL) || untyped().any(|u| u.modes != ALL) {
         actuator.push("LimitMode");
     }
     if !model.typed.is_empty() {
@@ -545,16 +564,21 @@ fn render_lookup(out: &mut String, resolved: &Resolved) {
     );
 
     out.push_str(
-        "    /// `Some` when this model's table depends on firmware on this protocol: the Firmware\n\
-         \x20   /// Version register to read before calling [`ActuatorKind::new`]. `None` otherwise,\n\
-         \x20   /// including when the model's family is off.\n\
+        "    /// `Some` when this model's table depends on firmware on this protocol, or has an FR-9\n\
+         \x20   /// register only from some firmware on: the Firmware Version register to read before\n\
+         \x20   /// calling [`ActuatorKind::new`]. `None` otherwise, including when the model's family\n\
+         \x20   /// is off.\n\
          \x20   pub(crate) fn firmware_register(\n\
          \x20       protocol: ProtocolVersion,\n\
          \x20       model_number: ModelNumber,\n\
          \x20   ) -> Option<Register> {\n\
          \x20       match (protocol, model_number.get()) {\n",
     );
-    for list in resolved.lookups.iter().filter(|l| l.firmware_dependent()) {
+    for list in resolved
+        .lookups
+        .iter()
+        .filter(|list| resolved.reads_firmware(list))
+    {
         let Some((_, first)) = list.variants.first() else {
             continue;
         };
@@ -810,11 +834,12 @@ mod tests {
             "roles:Roles{present_temperature:Some(<SelfasHasPresentTemperature>::ROLE),",
             "speed_limit:Some(<SelfasHasSpeedLimit>::ROLE),",
             "..Roles::NONE}",
-            "implHasSpeedLimitforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[ModeScale{modes:ModeSet::of(&[LimitMode::Bounded]),scale:RegisterScale::new(0.011623893,Sign::Unsigned,2,true),range:Some((0,1023))}],bounded_by:None,from_fw:0,row_range:None,};}",
-            "implHasGoalVelocityforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[],",
-            "scale:RegisterScale::new(0.0009775171,Sign::DirectionBit(10),2,false),range:Some((0,2047))",
+            "implHasSpeedLimitforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[ModeScale{modes:ModeSet::of(&[LimitMode::Bounded]),scale:Some(RegisterScale::new(0.011623893,Sign::Unsigned,2,true)),range:Some((0,1023))}],bounded_by:None,from_fw:0,row_range:None,};}",
+            "implHasGoalVelocityforAx{constROLE:RoleRegister=RoleRegister{name:\"MovingSpeed\",register:Self::MOVING_SPEED,scales:&[ModeScale{modes:ModeSet::of(&[LimitMode::Wheel]),scale:None,range:Some((0,2047))}],",
+            "implHasPresentVelocityforAx{constROLE:RoleRegister=RoleRegister{name:\"PresentSpeed\",register:Self::PRESENT_SPEED,scales:&[ModeScale{modes:ModeSet::of(&[LimitMode::Bounded]),scale:Some(RegisterScale::new(0.011623893,Sign::DirectionBit(10),2,false)),range:None},ModeScale{modes:ModeSet::of(&[LimitMode::Wheel]),scale:None,range:None}],",
+            "scale:Some(RegisterScale::new(0.0009775171,Sign::DirectionBit(10),2,false)),range:Some((0,2047))",
             "implHasCwComplianceSlopeforAx{constROLE:RoleRegister=RoleRegister{name:\"CWComplianceSlope\",register:Self::CW_COMPLIANCE_SLOPE,scales:&[],bounded_by:None,from_fw:0,row_range:Some((0,254)),};}",
-            "scale:RegisterScale::new(0.0050614546,Sign::Unsigned,1,false)",
+            "scale:Some(RegisterScale::new(0.0050614546,Sign::Unsigned,1,false))",
         ] {
             assert!(c.contains(part), "{part}");
         }
@@ -855,7 +880,7 @@ mod tests {
         assert!(c.contains(
             "mode:ModeSource::TorqueControl{register:Self::TORQUE_CTRL_MODE_ENABLE,on:1,values:(0,1)}"
         ));
-        assert!(c.contains("implHasGoalCurrentforMx{constROLE:RoleRegister=RoleRegister{name:\"GoalTorque\",register:Self::GOAL_TORQUE,scales:&[ModeScale{modes:ModeSet::ALL,scale:RegisterScale::new(0.0045,Sign::DirectionBit(10),2,false),range:Some((0,2047))}]"));
+        assert!(c.contains("implHasGoalCurrentforMx{constROLE:RoleRegister=RoleRegister{name:\"GoalTorque\",register:Self::GOAL_TORQUE,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.0045,Sign::DirectionBit(10),2,false)),range:Some((0,2047))}]"));
         assert!(c.contains("implHasTorqueCtrlModeEnableforMx{"));
         assert!(c.contains("modes:ModeSet::of(&[LimitMode::Bounded,LimitMode::Unbounded])"));
         assert!(c.contains("modes:ModeSet::of(&[LimitMode::Wheel])"));
@@ -867,6 +892,10 @@ mod tests {
             "pub(crate) const TORQUE_CTRL_MODE_ENABLE: Register = super::reg(70, 1, Access::RW, Area::Ram);"
         ));
         assert!(!uses(mx)[0].contains("ModeValues"));
+        let module = compact(file(&files, "models.rs"));
+        assert!(module.contains("(ProtocolVersion::P1,1020)=>Some(Mx::FIRMWARE_VERSION),"));
+        let ax = compact(file(&one("ax", Table::ax_fr9()), "models.rs"));
+        assert!(!ax.contains("=>Some(Ax::FIRMWARE_VERSION)"));
     }
 
     #[test]
@@ -875,7 +904,7 @@ mod tests {
         let xm = file(&files, "models/xm.rs");
         let c = compact(xm);
         assert!(c.contains("current:&[0],velocity:&[1],pwm:&[16],current_position:&[5]"));
-        assert!(c.contains("register:Self::GOAL_VELOCITY,scales:&[ModeScale{modes:ModeSet::ALL,scale:RegisterScale::new(0.023980824,Sign::TwosComplement,4,false),range:None}],bounded_by:Some(Self::VELOCITY_LIMIT),"));
+        assert!(c.contains("register:Self::GOAL_VELOCITY,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.023980824,Sign::TwosComplement,4,false)),range:None}],bounded_by:Some(Self::VELOCITY_LIMIT),"));
         assert!(c.contains("bounded_by:Some(Self::CURRENT_LIMIT),"));
         assert!(c.contains("RegisterScale::new(0.00269,Sign::TwosComplement,2,false)"));
         for line in [

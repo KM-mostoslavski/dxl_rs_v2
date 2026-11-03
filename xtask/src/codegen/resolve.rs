@@ -168,6 +168,21 @@ pub(crate) struct Resolved {
     pub(crate) model_number: Option<(Access, Area)>,
 }
 
+impl Resolved {
+    /// Whether Setup must read the firmware version of `list`'s model: its
+    /// table depends on firmware, or one of its tables has an FR-9 register
+    /// only from some firmware on (MX-64 Protocol 1 Realtime Tick).
+    pub(crate) fn reads_firmware(&self, list: &LookupList) -> bool {
+        list.firmware_dependent()
+            || list.variants.iter().any(|(_, ty)| {
+                self.models
+                    .iter()
+                    .filter(|model| &model.type_ident == ty)
+                    .any(|model| model.typed.iter().any(|role| role.from_fw > 0))
+            })
+    }
+}
+
 /// The resolved input and every problem found.
 #[derive(Debug, Default)]
 pub(crate) struct Outcome {

@@ -732,7 +732,12 @@ mod tests {
                     assert!(module.contains(&arm), "{arm}");
                 }
                 let dependent = format!("(ProtocolVersion::{variant}, {number}) => Some(");
-                assert_eq!(module.contains(&dependent), list.len() > 1, "{dependent}");
+                let from_fw_role = (variant, number) == ("P1", 310);
+                assert_eq!(
+                    module.contains(&dependent),
+                    list.len() > 1 || from_fw_role,
+                    "{dependent}"
+                );
             }
         }
 
@@ -743,6 +748,7 @@ mod tests {
             module
                 .contains("(ProtocolVersion::P2, 1190) => Some(Xl330M077Fw52::FIRMWARE_VERSION),")
         );
+        assert!(module.contains("(ProtocolVersion::P1, 310) => Some(Mx64P1::FIRMWARE_VERSION),"));
         assert!(!module.contains("(ProtocolVersion::P2, 1020) => Some("));
         assert!(!module.contains("(ProtocolVersion::P1, 1020) => Some("));
         assert!(
