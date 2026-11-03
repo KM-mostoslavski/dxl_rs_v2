@@ -658,9 +658,14 @@ impl<T: Transport, C: Clock> ActuatorRef<'_, P2, T, C> {
     ///
     /// The actuator comes back with torque off, so the torque state becomes
     /// `Off`, whatever the reply; a `Faulted` actuator stays `Faulted`
-    /// until [`clear_fault`](Self::clear_fault) asks it. Setup is not
-    /// repeated: limits and mode are those read before (they are EEPROM
-    /// values the reboot keeps). There is no factory reset.
+    /// until [`clear_fault`](Self::clear_fault) asks it.
+    ///
+    /// Setup is not repeated, and needs not be: what it read (position
+    /// limits, operating mode, the goal's Velocity or Current Limit,
+    /// firmware) lives in EEPROM, which a reboot leaves unchanged, so the
+    /// bus's cache stays valid. RAM registers (goals, LED, gains) start
+    /// again from their initial values, as after power-on. There is no
+    /// factory reset.
     ///
     /// Protocol 1 has no typed reboot:
     ///

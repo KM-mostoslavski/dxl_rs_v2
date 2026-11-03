@@ -56,6 +56,29 @@ impl Stage {
     }
 }
 
+/// Raw Bulk Read targets (`raw-registers`).
+#[cfg(feature = "raw-registers")]
+impl Stage {
+    /// A raw Bulk Read of `len` bytes at `addr` of slot `slot`. A raw
+    /// target has no register size and its bytes go straight to the
+    /// caller, so its length rides in `bytes`.
+    pub(crate) fn raw_read(slot: u8, addr: u16, len: u16) -> Self {
+        let [lo, hi] = len.to_le_bytes();
+        Self {
+            slot,
+            addr,
+            size: 0,
+            bytes: [lo, hi, 0, 0],
+        }
+    }
+
+    /// The length of a [`raw_read`](Stage::raw_read) target, in bytes.
+    pub(crate) fn raw_len(&self) -> u16 {
+        let [lo, hi, ..] = self.bytes;
+        u16::from_le_bytes([lo, hi])
+    }
+}
+
 /// The error for a slot index that is not in the list. `resolve` only
 /// stages slots it found, so it never happens.
 fn lost(kinds: &[ActuatorKind]) -> Error {

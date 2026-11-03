@@ -20,6 +20,11 @@
 //! Every actuator appears once in a call (the e-Manual: "The same ID cannot
 //! be used multiple times in the Parameter").
 //!
+//! The raw form (`raw-registers` feature) takes any address and length per
+//! actuator, with no field checks: `Bus::bulk_read_raw` with one `RawRead`
+//! per target, and `Bus::bulk_write_raw` (Protocol 2) with one `RawWrite`
+//! per target.
+//!
 //! [`ValidationError::UnsupportedInstruction`]: crate::ValidationError::UnsupportedInstruction
 
 use core::cell::Cell;
@@ -39,6 +44,12 @@ use super::id_set::IdSet;
 use super::observe::observe;
 use super::slots::{Bound, Slots, find};
 use super::wire::Wire;
+
+#[cfg(feature = "raw-registers")]
+pub(super) mod raw;
+
+#[cfg(feature = "raw-registers")]
+pub use raw::{RawRead, RawWrite};
 
 pub(crate) mod sealed {
     use super::{ActuatorKind, Bound, Error, IdSet, Stage, TorqueState};

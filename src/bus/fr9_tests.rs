@@ -1515,4 +1515,29 @@ mod dyn_bus {
         expected.extend(p2_sync_read(146, 1, &[1, 2]));
         assert_eq!(line.sent(), expected);
     }
+
+    #[test]
+    fn dyn_bus_reboots_on_protocol_2_and_keeps_its_cache() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        let next = xm430_p2(&mut line, 1, 1, 0, 4095, 1);
+        line.reply_to(next, &p2_status(1, 0, &[]))
+            .reply_to(next + 1, &p2_status(1, 0, &[]));
+        let mut bus = DynBus::<P2, _, _>::new(line, Ticker(&time), Config::new());
+        bus.declare([(id(1), ModelNumber(XM430))]).unwrap();
+        bus.enable_torque([id(1)]).unwrap();
+        let mut xm = bus.actuator(id(1)).unwrap();
+        xm.reboot().unwrap();
+        assert_eq!(xm.torque_state(), TorqueState::Off);
+        assert_eq!(xm.limit_mode(), LimitMode::Velocity);
+        assert_eq!(xm.goal_bound_raw(), Some(XM430_VELOCITY_LIMIT));
+        let (line, _) = bus.into_parts();
+        let mut expected = p2_instruction(1, PING, &[]);
+        expected.extend(xm430_p2_reads_sent_in(1, 1));
+        expected.extend(concat(&[
+            p2_write(1, 64, &[1]),
+            p2_instruction(1, REBOOT, &[]),
+        ]));
+        assert_eq!(line.sent(), expected);
+    }
 }

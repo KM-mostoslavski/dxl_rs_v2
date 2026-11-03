@@ -17,7 +17,7 @@ mod p2;
 #[cfg(test)]
 mod no_alloc;
 #[cfg(test)]
-mod vectors;
+pub(crate) mod vectors;
 
 pub use clock::Clock;
 #[cfg(feature = "std")]

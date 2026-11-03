@@ -163,6 +163,79 @@ fn p2_cycle_never_allocates() {
     line.assert_done();
 }
 
+/// Bulk Read, Bulk Write and Reboot on Protocol 2, typed and (with
+/// `raw-registers`) raw.
+#[cfg(feature = "x-series")]
+#[test]
+fn p2_bulk_and_reboot_never_allocate() {
+    use dxl_rs_v2::field::{Led, PresentTemperature, PresentVoltage, Raw};
+    use dxl_rs_v2::{Bus, Config, Id, MockTime, MockTransport, ModelNumber, P2, Temperature, bulk};
+
+    let (a, b) = (Id::new(1).unwrap(), Id::new(2).unwrap());
+    let mut replies = Vec::new();
+    for n in [1, 2] {
+        replies.push(p2_status(n, &[0xFC, 0x03, 52]));
+        replies.push(p2_status(n, &0i32.to_le_bytes()));
+        replies.push(p2_status(n, &4095i32.to_le_bytes()));
+        replies.push(p2_status(n, &[3]));
+    }
+    let mut script: Vec<(usize, Vec<u8>)> = replies
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| (i + 1, r))
+        .chain([
+            (9, p2_status(1, &[36])),
+            (9, p2_status(2, &[0x77, 0x00])),
+            (11, p2_status(1, &[])),
+        ])
+        .collect();
+    if cfg!(feature = "raw-registers") {
+        script.push((12, p2_status(2, &[37])));
+        script.push((12, p2_status(1, &2100i32.to_le_bytes())));
+    }
+
+    let time = MockTime::new();
+    let mut line = MockTransport::new(&time);
+    for (flush, reply) in &script {
+        line.reply_to(*flush, reply);
+    }
+    let mut bus = Bus::<P2, _, _>::new(line, time.ticker(10), Config::new());
+    bus.declare([(a, ModelNumber(1020)), (b, ModelNumber(1020))])
+        .unwrap();
+    let mut celsius = [Temperature::default(); 1];
+    let mut volts = [0; 1];
+    #[cfg(feature = "raw-registers")]
+    let (mut position, mut raw_celsius) = ([0; 4], [0; 1]);
+
+    let before = allocations();
+    bus.bulk_read((
+        bulk::read(PresentTemperature, [a], &mut celsius),
+        bulk::read(Raw(PresentVoltage), [b], &mut volts),
+    ))
+    .unwrap();
+    bus.bulk_write(bulk::write(Led, [a, b], &[true, false]))
+        .unwrap();
+    bus.actuator(a).unwrap().reboot().unwrap();
+    #[cfg(feature = "raw-registers")]
+    {
+        bus.bulk_read_raw(&mut [
+            bulk::RawRead::new(a, 132, &mut position),
+            bulk::RawRead::new(b, 146, &mut raw_celsius),
+        ])
+        .unwrap();
+        bus.bulk_write_raw(&[bulk::RawWrite::new(b, 65, &[1])])
+            .unwrap();
+    }
+    let after = allocations();
+
+    assert_eq!(after - before, 0, "a bulk call or a reboot allocated");
+    assert_eq!((celsius[0].celsius(), volts), (36.0, [0x77]));
+    #[cfg(feature = "raw-registers")]
+    assert_eq!((i32::from_le_bytes(position), raw_celsius), (2100, [37]));
+    let (line, _) = bus.into_parts();
+    line.assert_done();
+}
+
 #[cfg(feature = "ax")]
 #[test]
 fn p1_cycle_never_allocates() {

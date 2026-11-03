@@ -410,6 +410,36 @@ impl<T: Transport, C: Clock> DynBus<P2, T, C> {
     }
 }
 
+/// Raw Bulk Read, on both protocols (`raw-registers` feature).
+#[cfg(feature = "raw-registers")]
+impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
+    /// Reads `out.len()` bytes from `addr` of every target with one Bulk
+    /// Read, as [`Bus::bulk_read_raw`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::bulk_read_raw`].
+    pub fn bulk_read_raw(&mut self, targets: &mut [bulk::RawRead<'_>]) -> Result<(), Error> {
+        let (mut wire, mut slots, stages) = self.split_staged();
+        bulk::raw::bulk_read_raw(&mut wire, &mut slots, stages, targets)
+    }
+}
+
+/// Raw Bulk Write, Protocol 2 only (`raw-registers` feature).
+#[cfg(feature = "raw-registers")]
+impl<T: Transport, C: Clock> DynBus<P2, T, C> {
+    /// Writes `data` from `addr` of every target with one Bulk Write, as
+    /// [`Bus::bulk_write_raw`] does. Protocol 2 only.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bus::bulk_write_raw`].
+    pub fn bulk_write_raw(&mut self, targets: &[bulk::RawWrite<'_>]) -> Result<(), Error> {
+        let (mut wire, slots) = self.split();
+        bulk::raw::bulk_write_raw(&mut wire, &slots, targets)
+    }
+}
+
 /// Reads with one result per target (`partial-reads` feature).
 #[cfg(feature = "partial-reads")]
 impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
