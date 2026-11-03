@@ -12,19 +12,8 @@
 
 extern crate std;
 
-use std::vec::Vec;
-
-use crate::actuator::{Actuator, LimitMode, ModelNumber, TorqueState};
-use crate::bus::testing::*;
-use crate::error::{Error, SetupError, ValidationError};
-use crate::field::{self, Raw};
-use crate::transport::MockTime;
-use crate::units::{
-    ComplianceMargin, ComplianceSlope, Current, Gain, RegisterScale, SpeedLimit, Velocity,
-};
-use crate::{TransportError, bulk};
-
 /// Whether `a` and `b` agree to 1e-4 relative.
+#[cfg(any(feature = "ax", feature = "rx", feature = "mx"))]
 #[track_caller]
 fn close(a: f32, b: f32) {
     assert!(
@@ -34,11 +23,12 @@ fn close(a: f32, b: f32) {
 }
 
 /// The scale `role` of model `kind` has in `mode`.
+#[cfg(any(feature = "ax", feature = "rx", feature = "mx"))]
 fn scale_of(
     kind: &crate::ActuatorKind,
     role: crate::actuator::Role,
-    mode: LimitMode,
-) -> RegisterScale {
+    mode: crate::actuator::LimitMode,
+) -> crate::units::RegisterScale {
     use crate::actuator::Describe;
     kind.data().role(role).unwrap().scale(mode).unwrap()
 }
@@ -46,9 +36,15 @@ fn scale_of(
 #[cfg(feature = "ax")]
 mod ax12a {
     use super::*;
-    use crate::actuator::Role;
+    use crate::actuator::{Actuator, LimitMode, ModelNumber, Role, TorqueState};
+    use crate::bulk;
+    use crate::bus::testing::*;
+    use crate::error::ValidationError;
+    use crate::field::{self, Raw};
     use crate::models::{Ax12a, Ax18a};
     use crate::protocol::P1;
+    use crate::transport::MockTime;
+    use crate::units::{ComplianceMargin, ComplianceSlope, Current, SpeedLimit, Velocity};
 
     /// An AX-12A at ID 1 with these angle limits, torque `on` or off.
     fn ax12(time: &MockTime, cw: u16, ccw: u16, on: bool) -> TestBus<'_, P1> {
@@ -399,9 +395,15 @@ mod ax12a {
 #[cfg(feature = "rx")]
 mod rx28 {
     use super::*;
-    use crate::actuator::Role;
+    use crate::actuator::{LimitMode, ModelNumber, Role};
+    use crate::bulk;
+    use crate::bus::testing::*;
+    use crate::error::ValidationError;
+    use crate::field::{self, Raw};
     use crate::models::Rx28;
     use crate::protocol::P1;
+    use crate::transport::MockTime;
+    use crate::units::{ComplianceSlope, Velocity};
 
     /// RX-28 at IDs `ids`, joint mode 0..=1023, torque off.
     fn rx28s<'t>(time: &'t MockTime, ids: &[u8]) -> TestBus<'t, P1> {
@@ -574,7 +576,7 @@ mod rx28 {
         close(out[0].unwrap().volts(), 12.0);
         assert_eq!(
             out[1],
-            Err(TransportError::Timeout { id: Some(id(2)) }.into())
+            Err(crate::TransportError::Timeout { id: Some(id(2)) }.into())
         );
     }
 }
@@ -582,9 +584,17 @@ mod rx28 {
 #[cfg(feature = "mx")]
 mod mx64_p1 {
     use super::*;
-    use crate::actuator::Role;
+    use crate::bus::testing::*;
+    use std::vec::Vec;
+
+    use crate::actuator::{LimitMode, ModelNumber, Role};
+    use crate::bulk;
+    use crate::error::ValidationError;
+    use crate::field::{self, Raw};
     use crate::models::Mx64P1;
     use crate::protocol::P1;
+    use crate::transport::MockTime;
+    use crate::units::{Current, Gain, Velocity};
 
     /// MX-64 (Protocol 1.0) at `ids` with these angle limits and torque
     /// switch, torque on.
@@ -809,10 +819,18 @@ mod mx64_p1 {
 #[cfg(feature = "mx")]
 mod mx64_p2 {
     use super::*;
-    use crate::actuator::Role;
+    use crate::bus::testing::*;
+    use std::vec::Vec;
+
+    use crate::actuator::{LimitMode, ModelNumber, Role, TorqueState};
+    use crate::error::{Error, SetupError, ValidationError};
+    use crate::field::{self, Raw};
     use crate::models::{Mx64, Mx64P1};
     use crate::protocol::P2;
+    use crate::transport::MockTime;
+    use crate::units::{Current, Gain, SpeedLimit, Velocity};
     use crate::{HardwareErrors, Temperature};
+    use crate::{TransportError, bulk};
 
     /// MX-64(2.0) at `ids`, limits 0..=4095, in Operating Mode `mode`, with
     /// torque on where `on`.
@@ -1390,8 +1408,11 @@ mod mx64_p2 {
 #[cfg(feature = "pro")]
 mod pro {
     use super::*;
+    use crate::bus::testing::*;
+    use crate::error::{Error, ValidationError};
     use crate::models::Ph54200S500;
     use crate::protocol::P2;
+    use crate::transport::MockTime;
 
     #[test]
     fn rgb_led_is_tier2_and_unscaled_registers_are_raw_only() {
@@ -1437,9 +1458,18 @@ mod pro {
 #[cfg(all(feature = "x-series", feature = "std"))]
 mod dyn_bus {
     use super::*;
+    use crate::bus::testing::*;
+    use std::vec::Vec;
+
+    use crate::actuator::{Actuator, LimitMode, ModelNumber, TorqueState};
+    use crate::bulk;
     use crate::bus::DynBus;
+    use crate::error::ValidationError;
+    use crate::field;
     use crate::protocol::P2;
+    use crate::transport::MockTime;
     use crate::transport::MockTransport;
+    use crate::units::{Current, Velocity};
     use crate::{Config, Temperature};
 
     #[test]

@@ -656,16 +656,23 @@ impl<T: Transport, C: Clock> ActuatorRef<'_, P2, T, C> {
     /// Reboots the actuator (Reboot instruction, `0x08`) and waits for its
     /// status packet, which it sends before restarting. Never retried.
     ///
-    /// The actuator comes back with torque off, so the torque state becomes
-    /// `Off`, whatever the reply; a `Faulted` actuator stays `Faulted`
-    /// until [`clear_fault`](Self::clear_fault) asks it.
+    /// The torque state becomes `Off`, whatever the reply, as at Setup:
+    /// the hardware's Torque Enable is not read. A `Faulted` actuator stays
+    /// `Faulted` until [`clear_fault`](Self::clear_fault) asks it.
+    ///
+    /// With factory settings the actuator comes back with torque off and
+    /// its RAM registers (goals, LED, gains) at their initial values, as
+    /// after power-on. A model with Startup Configuration (address 60, e.g.
+    /// XM430-W350 from firmware V45, PH54-200-S500-R from V12) can be set
+    /// to come back with torque on (bit 0) or with its RAM restored from
+    /// the backup (bit 1). The bus does not read it: `Off` then still
+    /// means goal writes are refused until
+    /// [`enable_torque`](Self::enable_torque).
     ///
     /// Setup is not repeated, and needs not be: what it read (position
     /// limits, operating mode, the goal's Velocity or Current Limit,
     /// firmware) lives in EEPROM, which a reboot leaves unchanged, so the
-    /// bus's cache stays valid. RAM registers (goals, LED, gains) start
-    /// again from their initial values, as after power-on. There is no
-    /// factory reset.
+    /// bus's cache stays valid. There is no factory reset.
     ///
     /// Protocol 1 has no typed reboot:
     ///

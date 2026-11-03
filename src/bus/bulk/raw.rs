@@ -212,8 +212,9 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// buffer receives every reply in turn, so no buffer of the bus's own
     /// has to be that long.
     ///
-    /// On Protocol 1 only MX firmware has Bulk Read: each target's control
-    /// table must list it (MX-64 does; AX and RX do not).
+    /// On Protocol 1, Bulk Read exists on MX, MX(2.0) and X series firmware
+    /// except XL-320 (e-Manual Protocol 1.0): each target's control table
+    /// must list it (MX-64 does; AX and RX do not).
     #[cfg_attr(
         all(feature = "mock", feature = "x-series"),
         doc = r#"
@@ -334,9 +335,6 @@ mod tests {
     use core::iter;
 
     use super::*;
-    use crate::bus::testing::*;
-    use crate::error::TransportError;
-    use crate::transport::MockTime;
 
     /// The instruction order of `count` targets whose longest is `last`.
     fn order(count: usize, last: usize) -> impl Iterator<Item = usize> {
@@ -364,9 +362,11 @@ mod tests {
     #[cfg(feature = "x-series")]
     mod p2 {
         use super::*;
-        use crate::error::{Error, StatusError, StatusReport};
+        use crate::bus::testing::*;
+        use crate::error::{Error, StatusError, StatusReport, TransportError};
         use crate::protocol::P2;
         use crate::protocol::vectors::p2 as v;
+        use crate::transport::MockTime;
 
         /// XM430-W350s at `ids`, limits 0..=4095, torque `state`.
         fn xm430s<'t>(
@@ -622,8 +622,10 @@ mod tests {
     #[cfg(all(feature = "mx", feature = "ax"))]
     mod p1 {
         use super::*;
+        use crate::bus::testing::*;
         use crate::protocol::P1;
         use crate::protocol::vectors::p1 as v;
+        use crate::transport::MockTime;
 
         #[test]
         fn bulk_read_raw_is_the_e_manual_example_on_mx() {

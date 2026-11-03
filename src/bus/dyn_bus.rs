@@ -333,7 +333,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
     }
 
     /// Reads every part with one Bulk Read, as [`Bus::bulk_read`] does.
-    /// Protocol 2, and Protocol 1 on MX firmware.
+    /// Protocol 2, and Protocol 1 on the firmware that has it.
     ///
     /// # Errors
     ///

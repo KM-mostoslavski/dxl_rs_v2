@@ -7,11 +7,11 @@
 //! and size, so one instruction carries them all:
 //!
 //! - [`Bus::bulk_read`](crate::Bus::bulk_read): Protocol 2, and Protocol 1
-//!   on MX firmware (the e-Manual Protocol 1.0 page: Bulk Read is
-//!   "Supported: MX, MX(2.0), and X Series"). On Protocol 1 each target's
-//!   control table must list Bulk Read; AX and RX do not, and are refused
-//!   with [`ValidationError::UnsupportedInstruction`] before anything is
-//!   sent.
+//!   on the firmware that has it (the e-Manual Protocol 1.0 page:
+//!   "Supported products : DYNAMIXEL MX, MX(2.0) and X Series (excluding
+//!   XL-320)"). On Protocol 1 each target's control table must list Bulk
+//!   Read; AX and RX do not, and are refused with
+//!   [`ValidationError::UnsupportedInstruction`] before anything is sent.
 //! - [`Bus::bulk_write`](crate::Bus::bulk_write): Protocol 2 only. Protocol
 //!   1 has no Bulk Write, so the method does not exist there.
 //!
@@ -437,8 +437,9 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// change only if every target answered; every reply passes the fault
     /// check. Not retried. An empty call sends nothing.
     ///
-    /// On Protocol 1 only MX firmware has Bulk Read: each target's control
-    /// table must list it (MX-64 does; AX and RX do not).
+    /// On Protocol 1, Bulk Read exists on MX, MX(2.0) and X series firmware
+    /// except XL-320 (e-Manual Protocol 1.0): each target's control table
+    /// must list it (MX-64 does; AX and RX do not).
     #[cfg_attr(
         all(feature = "mock", feature = "x-series"),
         doc = r#"

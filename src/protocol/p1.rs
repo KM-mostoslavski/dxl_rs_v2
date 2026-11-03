@@ -20,8 +20,8 @@ use crate::error::{
 ///
 /// Has no Sync Read, no Bulk Write and no typed Reboot, and its Ping reply
 /// carries no model number; those operations are absent by design, so code
-/// using them with `P1` does not compile. Its Bulk Read exists on MX
-/// firmware only.
+/// using them with `P1` does not compile. Its Bulk Read exists on MX,
+/// MX(2.0) and X series firmware except XL-320.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct P1;
 

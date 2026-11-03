@@ -193,8 +193,8 @@ pub trait Exchange: sealed::Sealed {
     /// order, with that actuator's data or its own error. `scratch` holds
     /// one reply and must be at least as long as the largest `size`.
     ///
-    /// Protocol 1 has it on MX firmware only; the caller checks each
-    /// target's table.
+    /// Protocol 1 has it on MX, MX(2.0) and X series firmware except
+    /// XL-320; the caller checks each target's table.
     ///
     /// Returns `Err` when the request is invalid, before anything is sent
     /// (an ID listed twice, a size or address out of range), or when the
