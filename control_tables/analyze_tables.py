@@ -7,12 +7,15 @@ Parses every control_tables/*.ron, extracts the control_table
   - per-register presence/address/size consistency across all models
   - address collisions (aliases) within a model
   - pairwise similarity / clustering (exact -> similar -> unique)
-  - protocol classification (P1 vs P2 by CW/CCW Angle Limit presence)
+  - protocol grouping (P1 only, P2 only, both) from each table's `protocols`
 
 Emits a big markdown report to control_table_analysis.md.
 """
-import re, os, json, itertools
+import re, os, sys, json, itertools
 from collections import defaultdict, OrderedDict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from check_tables import Ident, parse_ron  # noqa: E402
 
 RON_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_MAP_FILE = os.path.join(RON_DIR, "dynamixel.ron")
@@ -24,14 +27,29 @@ ENTRY = re.compile(r'address:\s*(\d+)\s*,\s*size:\s*(\d+)\s*,\s*data_name:\s*"([
 SKIP = {"dynamixel.ron"}  # model-number map, not a control table
 
 def load_model_numbers():
+    """file stem -> model number, from the `p1` and `p2` lists of dynamixel.ron."""
     m = {}
     try:
         txt = open(MODEL_MAP_FILE).read()
     except OSError:
         return m
-    for num, fn in re.findall(r'(\d+)\s*:\s*"([^"]+)\.model"', txt):
-        m[fn] = int(num)
+    models = parse_ron(txt, "dynamixel.ron").get("models", {})
+    for num, entry in models.items():
+        for key in ("p1", "p2"):
+            for ref in entry.get(key) or []:
+                m.setdefault(ref["file"], num)
     return m
+
+def load_protocols(path):
+    """The table's `protocols` as a list of names, or [] when the table has none yet."""
+    table = parse_ron(open(path).read(), os.path.basename(path))
+    protocols = table.get("protocols") if isinstance(table, dict) else None
+    if not isinstance(protocols, list):
+        return []
+    return [p.name for p in protocols if isinstance(p, Ident)]
+
+def proto_label(protocols):
+    return ", ".join(protocols) if protocols else "?"
 
 def parse(path):
     txt = open(path).read()
@@ -60,11 +78,11 @@ def main():
             if name not in regmap:
                 regmap[name] = (addr, size)
         aliases = {a: ns for a, ns in addr_names.items() if len(set(ns)) > 1}
-        is_p1 = ("CW Angle Limit" in regmap and "CCW Angle Limit" in regmap)
+        protocols = load_protocols(os.path.join(RON_DIR, f))
         models[stem] = dict(
             file=f, entries=entries, regmap=regmap, aliases=aliases,
-            proto="P1" if is_p1 else "P2",
-            model_number=model_num.get(f[:-4] + ".model"),
+            protocols=protocols, proto=proto_label(protocols),
+            model_number=model_num.get(stem),
         )
 
     # ---- exact-duplicate groups: signature over sorted (name,addr,size) ----
@@ -116,16 +134,15 @@ def main():
         same = sum(1 for n in shared if A[n] == B[n])
         return same / len(shared)
 
-    # ---- architectural tier: keyed by (proto, Goal Position addr,size) ----
+    # ---- architectural tier: keyed by the Goal Position (addr,size) ----
     # The Goal-Position location encodes the RAM-layout 'generation'.
     def tier_key(stem):
-        gp = models[stem]["regmap"].get("Goal Position")
-        return (models[stem]["proto"], gp)
+        return models[stem]["regmap"].get("Goal Position")
     TIER_LABEL = {
-        ("P1", (30, 2)): "T1 · P1 legacy (AX / XL320)",
-        ("P2", (116, 4)): "T2 · Modern X-series (XM/XH/XD/XC/XL430/XL330/XW + MX2.0)",
-        ("P2", (532, 4)): "T3 · YM series",
-        ("P2", (564, 4)): "T4 · Pro / P-series (H/M/PH/PM/RH)",
+        (30, 2): "T1 · Legacy layout (AX / RX-28 / XL320)",
+        (116, 4): "T2 · Modern X-series (XM/XH/XD/XC/XL430/XL330/XW + MX2.0)",
+        (532, 4): "T3 · YM series",
+        (564, 4): "T4 · Pro / P-series (H/M/PH/PM/RH)",
     }
     tiers = defaultdict(list)
     for g in exact_groups:
@@ -140,10 +157,17 @@ def main():
     w(f"Generated from `control_tables/*.ron` — **{n_models} models** "
       f"(excludes `dynamixel.ron` model-number map).")
     w()
-    w(f"- Protocol 1 (CW/CCW Angle Limit): "
-      f"**{sum(1 for m in models.values() if m['proto']=='P1')}**")
-    w(f"- Protocol 2: "
-      f"**{sum(1 for m in models.values() if m['proto']=='P2')}**")
+    w(f"- Protocol 1 only (`protocols: [P1]`): "
+      f"**{sum(1 for m in models.values() if m['protocols']==['P1'])}**")
+    w(f"- Protocol 2 only (`protocols: [P2]`): "
+      f"**{sum(1 for m in models.values() if m['protocols']==['P2'])}**")
+    w(f"- Both protocols (`protocols: [P1, P2]`): "
+      f"**{sum(1 for m in models.values() if sorted(m['protocols'])==['P1', 'P2'])}**")
+    w(f"- No `protocols` yet: "
+      f"**{sum(1 for m in models.values() if not m['protocols'])}**")
+    for label, want in (("P1 only", ["P1"]), ("P2 only", ["P2"]), ("P1 and P2", ["P1", "P2"])):
+        members = [s for s, m in models.items() if sorted(m["protocols"]) == want]
+        w(f"  - {label}: {', '.join(members) if members else '—'}")
     w(f"- Distinct register names across all models: **{len(reg_universe)}**")
     w(f"- Distinct control-table layouts (exact signatures): **{len(exact_groups)}**")
     w()
@@ -161,7 +185,8 @@ def main():
         rep = models[g[0]]
         nums = ", ".join(str(models[s]["model_number"]) for s in g
                          if models[s]["model_number"] is not None)
-        w(f"| {i} | {rep['proto']} | {', '.join(g)} | "
+        protos = " / ".join(sorted({models[s]["proto"] for s in g}))
+        w(f"| {i} | {protos} | {', '.join(g)} | "
           f"{len(rep['regmap'])} | {nums or '—'} |")
     w()
 
@@ -175,18 +200,17 @@ def main():
       "registers sit at different addresses — so a name-keyed trait works, but "
       "addresses must be per-model constants.")
     w()
-    tier_order = [("P1", (30, 2)), ("P2", (116, 4)),
-                  ("P2", (532, 4)), ("P2", (564, 4))]
+    tier_order = [(30, 2), (116, 4), (532, 4), (564, 4)]
     tier_list = [(k, tiers[k]) for k in tier_order if k in tiers] + \
                 [(k, v) for k, v in tiers.items() if k not in tier_order]
     for tk, gs in tier_list:
         members = [s for g in gs for s in g]
         common = set.intersection(*(nameset[s] for s in members))
         union = set.union(*(nameset[s] for s in members))
-        label = TIER_LABEL.get(tk, f"{tk[0]} · Goal Position @ {tk[1]}")
+        label = TIER_LABEL.get(tk, f"Goal Position @ {tk}")
         w(f"### {label}")
         w(f"- {len(members)} models, {len(gs)} exact layouts, "
-          f"Goal Position @ addr {tk[1][0]} size {tk[1][1]}")
+          f"Goal Position @ addr {tk[0]} size {tk[1]}")
         w(f"- Register-count range: "
           f"{min(len(models[s]['regmap']) for s in members)}–"
           f"{max(len(models[s]['regmap']) for s in members)}")
@@ -338,7 +362,7 @@ def main():
     dump = {
         "n_models": n_models,
         "exact_groups": exact_groups,
-        "tiers": {TIER_LABEL.get(tk, f"{tk[0]} GP@{tk[1]}"): gs
+        "tiers": {TIER_LABEL.get(tk, f"GP@{tk}"): gs
                   for tk, gs in tier_list},
         "registers": {
             r["name"]: {
@@ -350,7 +374,8 @@ def main():
             } for r in reg_rows
         },
         "models": {
-            s: {"proto": m["proto"], "model_number": m["model_number"],
+            s: {"proto": m["proto"], "protocols": m["protocols"],
+                "model_number": m["model_number"],
                 "n_regs": len(m["regmap"]),
                 "regs": {n: list(v) for n, v in m["regmap"].items()}}
             for s, m in models.items()
