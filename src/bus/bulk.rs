@@ -174,6 +174,8 @@ where
 fn lost(kinds: &[ActuatorKind]) -> Error {
     SetupError::TooManyActuators {
         capacity: kinds.len(),
+        ids: kinds.iter().map(|kind| kind.id()).collect(),
+        declared: false,
     }
     .into()
 }
@@ -304,6 +306,7 @@ tuples! {
 /// A register of `size` bytes at `addr`, to decode a staged reply.
 fn layout(addr: u16, size: u8) -> Register {
     Register {
+        name: "",
         addr,
         size,
         access: Access::R,
@@ -384,7 +387,7 @@ where
         }
         first.note(target, &result);
     })?;
-    first.into_result()?;
+    first.into_diagnosed(wire, kinds)?;
     parts.deliver(&mut Delivery {
         kinds,
         stages,

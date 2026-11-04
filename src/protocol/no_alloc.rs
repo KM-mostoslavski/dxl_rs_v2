@@ -83,6 +83,7 @@ fn exchanges_never_allocate() {
             transport: &mut p2_line,
             clock: &mut clock,
             timeout: Duration::from_millis(1),
+            request: crate::error::Request::NONE,
         };
         P2::ping(&mut link, id(1)).unwrap();
         P2::read(&mut link, id(1), 132, &mut out).unwrap();
@@ -104,6 +105,7 @@ fn exchanges_never_allocate() {
             transport: &mut p1_line,
             clock: &mut clock,
             timeout: Duration::from_millis(1),
+            request: crate::error::Request::NONE,
         };
         P1::ping(&mut link, id(1)).unwrap();
         P1::read(&mut link, id(1), 43, &mut out[..1]).unwrap();

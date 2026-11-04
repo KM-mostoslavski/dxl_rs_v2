@@ -3,7 +3,7 @@
 use core::ops::{Add, AddAssign, Sub, SubAssign};
 
 use crate::Id;
-use crate::error::ValidationError;
+use crate::error::{Request, ValidationError};
 
 /// An angle in radians.
 ///
@@ -169,11 +169,15 @@ impl PositionScale {
     ///   fit an `i32`.
     pub fn to_raw(&self, position: Position) -> Result<i32, ValidationError> {
         if !position.0.is_finite() {
-            return Err(ValidationError::NotFinite);
+            return Err(ValidationError::NOT_FINITE);
         }
         let raw = round_half_away(position.0 * self.ticks_per_radian)
             .saturating_add(i64::from(self.zero_raw));
-        i32::try_from(raw).map_err(|_| ValidationError::DoesNotFit { raw, size: 0 })
+        i32::try_from(raw).map_err(|_| ValidationError::DoesNotFit {
+            raw,
+            size: 0,
+            request: Request::NONE,
+        })
     }
 }
 
@@ -329,7 +333,7 @@ mod tests {
         for radians in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             assert_eq!(
                 xm().to_raw(Position::from_radians(radians)),
-                Err(ValidationError::NotFinite)
+                Err(ValidationError::NOT_FINITE)
             );
         }
     }
@@ -347,7 +351,8 @@ mod tests {
             exact.to_raw(ticks_from_zero(exact, 2_147_483_904.0)),
             Err(ValidationError::DoesNotFit {
                 raw: 2_147_483_904,
-                size: 0
+                size: 0,
+                request: Request::NONE,
             })
         );
         assert_eq!(

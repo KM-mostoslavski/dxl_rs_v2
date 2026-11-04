@@ -81,7 +81,7 @@ mod tests {
         assert_eq!(MX64_CURRENT.current_to_raw(Current::ZERO), Ok(0));
         assert_eq!(
             MX64_CURRENT.current_to_raw(Current::from_amps(f32::INFINITY)),
-            Err(ValidationError::NotFinite)
+            Err(ValidationError::NOT_FINITE)
         );
         assert!(
             MX64_CURRENT

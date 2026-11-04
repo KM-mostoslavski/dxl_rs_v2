@@ -371,8 +371,9 @@ mod tests {
 
     fn reg_line(row: &schema::Row) -> String {
         format!(
-            "pub(crate) const {}: Register = super::reg({}, {}, Access::{:?}, Area::{:?});",
+            "pub(crate) const {}: Register = super::reg({:?}, {}, {}, Access::{:?}, Area::{:?});",
             names::const_ident(&row.data_name),
+            row.data_name,
             row.address,
             row.size,
             row.access,
@@ -525,10 +526,10 @@ mod tests {
 
         let xm = real.text("xm430_w350");
         assert!(xm.contains(
-            "pub(crate) const GOAL_POSITION: Register = super::reg(116, 4, Access::RW, Area::Ram);"
+            "pub(crate) const GOAL_POSITION: Register = super::reg(\"Goal Position\", 116, 4, Access::RW, Area::Ram);"
         ));
         assert!(xm.contains(
-            "pub(crate) const OPERATING_MODE: Register = super::reg(11, 1, Access::RW, Area::Eeprom);"
+            "pub(crate) const OPERATING_MODE: Register = super::reg(\"Operating Mode\", 11, 1, Access::RW, Area::Eeprom);"
         ));
         assert!(compact(xm).contains("mode:ModeSource::Register{register:Self::OPERATING_MODE,"));
 
@@ -704,7 +705,7 @@ mod tests {
             let mn = find(table, "Model Number").unwrap();
             assert_eq!((mn.address, mn.size), (0, 2), "{}", model.file);
             assert!(module.contains(&format!(
-                "pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::{:?}, Area::{:?});",
+                "pub(crate) const MODEL_NUMBER: Register = reg(\"Model Number\", 0, 2, Access::{:?}, Area::{:?});",
                 mn.access, mn.area
             )));
             let p = |tag| table.protocols.contains(&tag);

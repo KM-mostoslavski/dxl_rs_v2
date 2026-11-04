@@ -14,6 +14,7 @@ use crate::units::{
     Current, Gain, HardwareErrors, Load, Position, SpeedLimit, Temperature, Tick, Velocity, Voltage,
 };
 
+use super::diagnose::diagnosed;
 use super::field::{self as fields, sealed::Decode};
 use super::observe::{after_torque_write, check_clear, observe};
 use super::slots::Bound;
@@ -171,6 +172,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         let id = self.kind.id();
         let wanted = self.state.enable(id)?;
         let result = self.wire.write_value(id, self.data().torque_enable, 1);
+        let result = diagnosed(&mut self.wire, self.kind, result);
         after_torque_write(self.state, wanted, &result);
         result
     }
@@ -187,6 +189,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         let id = self.kind.id();
         let wanted = self.state.disable();
         let result = self.wire.write_value(id, self.data().torque_enable, 0);
+        let result = diagnosed(&mut self.wire, self.kind, result);
         after_torque_write(self.state, wanted, &result);
         result
     }
@@ -280,6 +283,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
             &mut buf,
         )?;
         let result = self.wire.write(id, reg, bytes);
+        let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);
         result
     }
@@ -598,12 +602,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// carries. The actuator is marked `Faulted` either way.
     fn read_fault_report(&mut self, reg: crate::register::Register) -> Result<i32, Error> {
         let mut buf = [0; 4];
-        let bytes =
-            buf.get_mut(..usize::from(reg.size))
-                .ok_or(crate::ValidationError::DoesNotFit {
-                    raw: 0,
-                    size: reg.size,
-                })?;
+        let bytes = reg.buf(&mut buf)?;
         let result = self.wire.read(self.kind.id(), reg, bytes);
         observe(self.state, &result);
         match result {
@@ -624,6 +623,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// actuator `Faulted`.
     fn read_reg(&mut self, reg: crate::register::Register) -> Result<i32, Error> {
         let result = self.wire.read_value(self.kind.id(), reg);
+        let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);
         result
     }
@@ -692,6 +692,7 @@ impl<T: Transport, C: Clock> ActuatorRef<'_, P2, T, C> {
         let id = self.kind.id();
         let wanted = self.state.disable();
         let result = self.wire.reboot(id);
+        let result = diagnosed(&mut self.wire, self.kind, result);
         after_torque_write(self.state, wanted, &result);
         result
     }
@@ -725,9 +726,23 @@ mod tests {
         use super::super::*;
         use crate::actuator::ModelNumber;
         use crate::bus::testing::*;
-        use crate::error::{StatusError, TransportError, ValidationError};
+        use crate::error::{
+            Celsius, FaultError, Instruction, Request, TemperatureError, TransportError,
+            ValidationError,
+        };
         use crate::protocol::P2;
         use crate::transport::MockTime;
+        use crate::units::HardwareErrors;
+
+        /// `instruction` of `register` at `addr` (`len` bytes) on actuator 1.
+        fn on_1(instruction: Instruction, register: &'static str, addr: u16, len: u16) -> Request {
+            Request::NONE
+                .instruction(instruction)
+                .id(id(1))
+                .register(register)
+                .addr(addr)
+                .len(len)
+        }
 
         /// An XM430-W350 at ID 1, limits 1000..=3000, in Operating Mode
         /// `mode`, torque off.
@@ -887,12 +902,69 @@ mod tests {
         fn alert_on_present_read_faults() {
             let time = MockTime::new();
             let mut bus = xm430_on(&time, 3);
+            script(
+                &mut bus,
+                &[
+                    p2_status(1, 0x80, &2000i32.to_le_bytes()),
+                    p2_status(1, 0x80, &[0x04]),
+                    p2_status(1, 0x80, &[80]),
+                    p2_status(1, 0x80, &[72]),
+                ],
+            );
+            let mark = mark(&bus);
+            let mut xm = bus.actuator(id(1)).unwrap();
+            let err = xm.present_position_raw().unwrap_err();
+            assert_eq!(
+                err,
+                Error::Fault(FaultError::Temperature(TemperatureError::AboveLimit {
+                    id: id(1),
+                    measured: Celsius(80),
+                    limit: Celsius(72),
+                    faults: HardwareErrors::from_raw(0x04),
+                    request: on_1(Instruction::Read, "Present Position", 132, 4),
+                }))
+            );
+            assert_eq!(
+                std::string::ToString::to_string(&err),
+                "actuator 1 measures 80 °C, above its Temperature Limit 72 °C; let it cool \
+                 and reduce its load in reply to Read of Present Position (address 132, 4 bytes) \
+                 from actuator 1"
+            );
+            assert_eq!(xm.torque_state(), TorqueState::Faulted);
+            assert_eq!(
+                sent_since(&bus, mark),
+                concat(&[
+                    p2_read(1, 132, 4),
+                    p2_read(1, 70, 1),
+                    p2_read(1, 146, 1),
+                    p2_read(1, 31, 1),
+                ])
+            );
+        }
+
+        #[test]
+        fn failed_diagnosis_still_faults() {
+            let time = MockTime::new();
+            let mut bus = xm430_on(&time, 3);
             line(&mut bus).reply(&p2_status(1, 0x80, &2000i32.to_le_bytes()));
             let mut xm = bus.actuator(id(1)).unwrap();
-            assert!(matches!(
+            assert_eq!(
                 xm.present_position_raw(),
-                Err(Error::Status(StatusError { .. }))
-            ));
+                Err(StatusError {
+                    id: id(1),
+                    report: StatusReport::P2 {
+                        alert: true,
+                        code: None,
+                    },
+                    request: on_1(Instruction::Read, "Present Position", 132, 4),
+                }
+                .into())
+            );
+            assert_eq!(xm.torque_state(), TorqueState::Faulted);
+            let mut bus = xm430(&time, 3);
+            line(&mut bus).reply(&p2_status(1, 0x80, &[]));
+            let mut xm = bus.actuator(id(1)).unwrap();
+            assert!(xm.enable_torque().is_err());
             assert_eq!(xm.torque_state(), TorqueState::Faulted);
         }
 
@@ -900,15 +972,32 @@ mod tests {
         fn hardware_fault_on_torque_write_faults() {
             let time = MockTime::new();
             let mut bus = xm430(&time, 3);
-            line(&mut bus).reply(&p2_status(1, 0x80, &[]));
+            script(
+                &mut bus,
+                &[p2_status(1, 0x80, &[]), p2_status(1, 0x80, &[0x20])],
+            );
             let mut xm = bus.actuator(id(1)).unwrap();
-            assert!(matches!(xm.enable_torque(), Err(Error::Status(_))));
+            assert_eq!(
+                xm.enable_torque(),
+                Err(FaultError::Overload {
+                    id: id(1),
+                    faults: HardwareErrors::from_raw(0x20),
+                    request: on_1(Instruction::Write, "Torque Enable", 64, 1),
+                }
+                .into())
+            );
             assert_eq!(xm.torque_state(), TorqueState::Faulted);
         }
 
         fn faulted(time: &MockTime) -> TestBus<'_, P2> {
             let mut bus = xm430_on(time, 3);
-            line(&mut bus).reply(&p2_status(1, 0x80, &2000i32.to_le_bytes()));
+            script(
+                &mut bus,
+                &[
+                    p2_status(1, 0x80, &2000i32.to_le_bytes()),
+                    p2_status(1, 0x80, &[0x20]),
+                ],
+            );
             let _ = bus.actuator(id(1)).unwrap().present_position_raw();
             assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Faulted));
             bus
@@ -949,10 +1038,14 @@ mod tests {
             let time = MockTime::new();
             let mut bus = xm430(&time, 3);
             let mut xm = bus.actuator(id(1)).unwrap();
-            assert!(matches!(
+            assert_eq!(
                 xm.enable_torque(),
-                Err(Error::Transport(TransportError::Timeout { .. }))
-            ));
+                Err(TransportError::NoReply {
+                    request: on_1(Instruction::Write, "Torque Enable", 64, 1),
+                    timeout_us: 10_000,
+                }
+                .into())
+            );
             assert_eq!(xm.torque_state(), TorqueState::Off);
 
             let mut bus = xm430_on(&time, 3);
@@ -1037,7 +1130,10 @@ mod tests {
             );
             assert_eq!(
                 xm.set_goal_position(Position::from_radians(f32::NAN)),
-                Err(ValidationError::NotFinite.into())
+                Err(ValidationError::NotFinite {
+                    request: on_1(Instruction::Write, "Goal Position", 116, 4),
+                }
+                .into())
             );
             assert_quiet(&bus, mark);
         }
@@ -1155,7 +1251,20 @@ mod tests {
             let mut bus = ax12_on(&time, 0, 1023);
             line(&mut bus).reply(&p1_status(1, 0x20, &512u16.to_le_bytes()));
             let mut ax = bus.actuator(id(1)).unwrap();
-            assert!(matches!(ax.present_position_raw(), Err(Error::Status(_))));
+            assert_eq!(
+                ax.present_position_raw(),
+                Err(crate::error::FaultError::Overload {
+                    id: id(1),
+                    faults: crate::units::HardwareErrors::from_raw(0x20),
+                    request: crate::error::Request::NONE
+                        .instruction(crate::error::Instruction::Read)
+                        .id(id(1))
+                        .register("Present Position")
+                        .addr(36)
+                        .len(2),
+                }
+                .into())
+            );
             assert_eq!(ax.torque_state(), TorqueState::Faulted);
         }
 

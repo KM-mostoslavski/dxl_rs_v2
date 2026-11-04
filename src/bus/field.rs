@@ -60,7 +60,7 @@
 
 use crate::Id;
 use crate::actuator::{Actuator, Cache, Describe, LimitMode, Role};
-use crate::error::{Error, ValidationError};
+use crate::error::{Error, Instruction, ValidationError};
 use crate::models::ActuatorKind;
 use crate::register::{Access, Register};
 use crate::units::{
@@ -90,6 +90,20 @@ pub(crate) mod sealed {
         pub(crate) scale: Option<RegisterScale>,
         /// The raw range the e-Manual gives for the register in `mode`.
         pub(crate) range: Option<(i64, i64)>,
+    }
+
+    impl Site {
+        /// A call of `instruction` on this site, for errors.
+        pub(crate) const fn request(
+            &self,
+            instruction: crate::error::Instruction,
+        ) -> crate::error::Request {
+            self.reg
+                .request()
+                .register(self.name)
+                .instruction(instruction)
+                .id(self.id)
+        }
     }
 
     /// A register every model may have. Only this crate implements it.
@@ -847,7 +861,7 @@ pub(crate) fn read_site<F: ReadField>(kind: &ActuatorKind) -> Result<Site, Valid
 /// As [`read_site`].
 pub(crate) fn decode<F: ReadField>(kind: &ActuatorKind, raw: i32) -> Result<F::Value, Error> {
     let site = read_site::<F>(kind)?;
-    Ok(F::Value::from_raw(raw, &site)?)
+    F::Value::from_raw(raw, &site).map_err(|err| err.within(site.request(Instruction::Read)).into())
 }
 
 /// Validates a write of `value` to field `F` of `kind` and encodes it into
@@ -877,9 +891,13 @@ pub(crate) fn encode_write<'o, F: WriteField>(
         on?;
     }
     F::check_mode(&site, kind)?;
-    let raw = value.to_raw(&site)?;
-    let raw = F::check_value(&site, kind.cache(), bound, raw)?;
-    let bytes = site.reg.encode(raw, out)?;
+    let request = site.request(Instruction::Write);
+    let raw = value.to_raw(&site).map_err(|err| err.within(request))?;
+    let raw = F::check_value(&site, kind.cache(), bound, raw).map_err(|err| err.within(request))?;
+    let bytes = site
+        .reg
+        .encode(raw, out)
+        .map_err(|err| err.within(request))?;
     Ok((site.reg, bytes))
 }
 
@@ -907,6 +925,7 @@ mod tests {
         Site {
             id: id(1),
             reg: Register {
+                name: "Goal Velocity",
                 addr: 104,
                 size: 4,
                 access: Access::RW,

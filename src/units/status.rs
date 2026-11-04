@@ -12,11 +12,11 @@
 pub struct HardwareErrors(u8);
 
 impl HardwareErrors {
-    const INPUT_VOLTAGE: u8 = 1 << 0;
-    const OVERHEATING: u8 = 1 << 2;
-    const ENCODER: u8 = 1 << 3;
-    const ELECTRICAL_SHOCK: u8 = 1 << 4;
-    const OVERLOAD: u8 = 1 << 5;
+    pub(crate) const INPUT_VOLTAGE: u8 = 1 << 0;
+    pub(crate) const OVERHEATING: u8 = 1 << 2;
+    pub(crate) const ENCODER: u8 = 1 << 3;
+    pub(crate) const ELECTRICAL_SHOCK: u8 = 1 << 4;
+    pub(crate) const OVERLOAD: u8 = 1 << 5;
 
     /// The flags of raw register value `raw`.
     pub const fn from_raw(raw: u8) -> Self {
@@ -62,6 +62,40 @@ impl HardwareErrors {
                 | Self::ELECTRICAL_SHOCK
                 | Self::OVERLOAD)
             == 0
+    }
+}
+
+impl HardwareErrors {
+    /// The flags without `bit`.
+    pub(crate) const fn without(self, bit: u8) -> Self {
+        Self(self.0 & !bit)
+    }
+
+    /// Each fault bit with its name, lowest bit first.
+    const NAMES: [(u8, &'static str); 5] = [
+        (Self::INPUT_VOLTAGE, "an input voltage error"),
+        (Self::OVERHEATING, "overheating"),
+        (Self::ENCODER, "a motor encoder malfunction"),
+        (Self::ELECTRICAL_SHOCK, "an electrical shock"),
+        (Self::OVERLOAD, "an overload"),
+    ];
+}
+
+/// The set faults by name, e.g. "an input voltage error, overheating";
+/// "no fault" when none is set. Unused bits are left out.
+impl core::fmt::Display for HardwareErrors {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut set = Self::NAMES
+            .iter()
+            .filter(|(bit, _)| self.0 & bit != 0)
+            .map(|(_, name)| name);
+        match set.next() {
+            None => f.write_str("no fault"),
+            Some(first) => {
+                f.write_str(first)?;
+                set.try_for_each(|name| write!(f, ", {name}"))
+            }
+        }
     }
 }
 

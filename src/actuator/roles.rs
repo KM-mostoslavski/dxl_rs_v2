@@ -318,6 +318,15 @@ roles! {
     CcwComplianceSlope, ccw_compliance_slope, HasCcwComplianceSlope, "CCW Compliance Slope";
     /// MX Protocol 1 Torque Ctrl Mode Enable, a flag.
     TorqueCtrlModeEnable, torque_ctrl_mode_enable, HasTorqueCtrlModeEnable, "Torque Ctrl Mode Enable";
+    /// Min Voltage Limit, V: the EEPROM bound below which the actuator
+    /// reports an input voltage error.
+    MinVoltageLimit, min_voltage_limit, HasMinVoltageLimit, "Min Voltage Limit";
+    /// Max Voltage Limit, V: the EEPROM bound above which the actuator
+    /// reports an input voltage error.
+    MaxVoltageLimit, max_voltage_limit, HasMaxVoltageLimit, "Max Voltage Limit";
+    /// Temperature Limit, °C: the EEPROM bound above which the actuator
+    /// reports overheating.
+    TemperatureLimit, temperature_limit, HasTemperatureLimit, "Temperature Limit";
 }
 
 #[cfg(test)]
@@ -328,6 +337,7 @@ mod tests {
 
     const fn reg(addr: u16, size: u8) -> Register {
         Register {
+            name: "Test",
             addr,
             size,
             access: Access::RW,
@@ -478,7 +488,8 @@ mod tests {
         assert_eq!(roles.get(Role::SpeedLimit), Some(&MOVING_SPEED));
         assert_eq!(roles.get(Role::RealtimeTick), Some(&TICK));
         assert_eq!(roles.get(Role::GoalVelocity), None);
-        assert_eq!(Role::ALL.len(), 22);
+        assert_eq!(Role::ALL.len(), 25);
+        assert_eq!(Role::TemperatureLimit.name(), "Temperature Limit");
         assert_eq!(Role::SpeedLimit.name(), "Profile Velocity");
         assert_eq!(Role::TorqueCtrlModeEnable.name(), "Torque Ctrl Mode Enable");
     }

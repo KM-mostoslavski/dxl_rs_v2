@@ -701,9 +701,10 @@ mod tests {
                 .reply_to(26, &concat(&[present(2, 2048), present(1, 1024)]))
                 .reply_to(27, &p2_status(3, 0, &600u16.to_le_bytes()))
                 .reply_to(28, &concat(&[present(1, 1), p2_status(2, 0x80, &[0; 4])]))
-                .reply_to(29, &ack(1))
-                .reply_to(30, &ack(2))
-                .reply_to(31, &ack(3));
+                .reply_to(29, &p2_status(2, 0x80, &[0x20]))
+                .reply_to(30, &ack(1))
+                .reply_to(31, &ack(2))
+                .reply_to(32, &ack(3));
         }
 
         #[test]
@@ -772,7 +773,22 @@ mod tests {
             );
             assert_eq!(steps[17], "[1000, 3000, 512, 7]");
             assert_eq!(steps[21], "[600]");
-            assert!(steps[23].starts_with("Err(Status"));
+            assert_eq!(
+                steps[23],
+                show(Err::<(), Error>(
+                    crate::error::FaultError::Overload {
+                        id: id(2),
+                        faults: crate::units::HardwareErrors::from_raw(0x20),
+                        request: crate::error::Request::NONE
+                            .instruction(crate::error::Instruction::SyncRead)
+                            .id(id(2))
+                            .register("Present Position")
+                            .addr(132)
+                            .len(4),
+                    }
+                    .into()
+                ))
+            );
             assert_eq!(steps[25], show([ON, FAULTED, ON]));
             assert_eq!(steps[28], show([OFF, FAULTED, OFF]));
         }
@@ -807,7 +823,8 @@ mod tests {
                         p2_status(1, 0x80, &[0; 4]),
                         p2_status(2, 0, &100i32.to_le_bytes()),
                     ]),
-                );
+                )
+                .reply_to(at + 2, &p2_status(1, 0x80, &[0x20]));
         }
 
         #[cfg(feature = "partial-reads")]
@@ -829,10 +846,15 @@ mod tests {
                     show(bus.torque_states()),
                 ]
             });
-            assert!(steps[2].contains("Ok(") && steps[2].contains("Timeout"));
-            assert!(steps[4].starts_with("[Err(Status") && steps[4].ends_with("Ok(100), Ok(-7)]"));
-            assert!(steps[5].contains("DuplicateId"));
-            assert!(steps[6].contains("BufferLength"));
+            assert!(steps[2].contains("Ok(") && steps[2].contains("no reply within 10 ms"));
+            assert!(
+                steps[4].starts_with("[Err(actuator 1 reports an overload")
+                    && steps[4].ends_with("Ok(100), Ok(-7)]"),
+                "{}",
+                steps[4]
+            );
+            assert!(steps[5].contains("actuator 1 is listed more than once"));
+            assert!(steps[6].contains("buffer has 0 slots for 2 targets"));
             assert_eq!(steps[7], show([FAULTED, OFF]));
         }
 
@@ -845,7 +867,11 @@ mod tests {
             assert_eq!(bus.stages.len(), 1);
             assert_eq!(
                 bus.declare([(id(1), ModelNumber(XM430))]),
-                Err(SetupError::Missing { id: id(1) }.into())
+                Err(SetupError::Missing {
+                    id: id(1),
+                    timeout_us: 10_000,
+                }
+                .into())
             );
             assert_empty(&bus);
             assert_eq!(

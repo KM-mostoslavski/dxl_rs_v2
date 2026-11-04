@@ -5048,8 +5048,9 @@ fn h54_200_s500_ra_describe_round_trip() {
 fn ax_12a_roles() {
     use crate::actuator::{
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
-        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+        HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ax12a;
     use crate::units::{Sign, SpeedLimit};
@@ -5122,6 +5123,24 @@ fn ax_12a_roles() {
             <Ax12a as HasCcwComplianceSlope>::ROLE,
             Ax12a::CCW_COMPLIANCE_SLOPE,
             "CCW Compliance Slope",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Ax12a as HasMinVoltageLimit>::ROLE,
+            Ax12a::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ax12a as HasMaxVoltageLimit>::ROLE,
+            Ax12a::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ax12a as HasTemperatureLimit>::ROLE,
+            Ax12a::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -5390,6 +5409,69 @@ fn ax_12a_roles() {
             );
         }
     }
+    {
+        let role = <Ax12a as HasMinVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(50..=160));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MinVoltageLimit, LimitMode::Bounded),
+                Some((Ax12a::MIN_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasMaxVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(50..=160));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MaxVoltageLimit, LimitMode::Bounded),
+                Some((Ax12a::MAX_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Ax12a as HasTemperatureLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=100));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::TemperatureLimit, LimitMode::Bounded),
+                Some((Ax12a::TEMPERATURE_LIMIT, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "ax")]
@@ -5411,8 +5493,9 @@ fn ax_12a_mode_source() {
 fn ax_18a_roles() {
     use crate::actuator::{
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
-        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+        HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ax18a;
 
@@ -5484,6 +5567,24 @@ fn ax_18a_roles() {
             <Ax18a as HasCcwComplianceSlope>::ROLE,
             Ax18a::CCW_COMPLIANCE_SLOPE,
             "CCW Compliance Slope",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Ax18a as HasMinVoltageLimit>::ROLE,
+            Ax18a::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ax18a as HasMaxVoltageLimit>::ROLE,
+            Ax18a::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ax18a as HasTemperatureLimit>::ROLE,
+            Ax18a::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -5571,6 +5672,24 @@ fn ax_18a_roles() {
             Ax18a::CCW_COMPLIANCE_SLOPE,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ax18a as HasMinVoltageLimit>::ROLE,
+            Ax18a::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ax18a as HasMaxVoltageLimit>::ROLE,
+            Ax18a::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ax18a as HasTemperatureLimit>::ROLE,
+            Ax18a::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -5600,8 +5719,9 @@ fn ax_18a_mode_source() {
 fn rx_28_roles() {
     use crate::actuator::{
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
-        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+        HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Rx28;
     use crate::units::{Sign, SpeedLimit};
@@ -5674,6 +5794,24 @@ fn rx_28_roles() {
             <Rx28 as HasCcwComplianceSlope>::ROLE,
             Rx28::CCW_COMPLIANCE_SLOPE,
             "CCW Compliance Slope",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Rx28 as HasMinVoltageLimit>::ROLE,
+            Rx28::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Rx28 as HasMaxVoltageLimit>::ROLE,
+            Rx28::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Rx28 as HasTemperatureLimit>::ROLE,
+            Rx28::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -5937,6 +6075,69 @@ fn rx_28_roles() {
             );
         }
     }
+    {
+        let role = <Rx28 as HasMinVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(50..=250));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MinVoltageLimit, LimitMode::Bounded),
+                Some((Rx28::MIN_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasMaxVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(50..=250));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MaxVoltageLimit, LimitMode::Bounded),
+                Some((Rx28::MAX_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Rx28 as HasTemperatureLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=100));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::TemperatureLimit, LimitMode::Bounded),
+                Some((Rx28::TEMPERATURE_LIMIT, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "rx")]
@@ -5957,9 +6158,9 @@ fn rx_28_mode_source() {
 #[test]
 fn mx_28_p1_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasLed, HasMoving, HasPGain, HasPresentLoad,
-        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
-        HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving,
+        HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Mx28P1;
 
@@ -6025,6 +6226,24 @@ fn mx_28_p1_roles() {
             <Mx28P1 as HasDGain>::ROLE,
             Mx28P1::D_GAIN,
             "D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Mx28P1 as HasMinVoltageLimit>::ROLE,
+            Mx28P1::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx28P1 as HasMaxVoltageLimit>::ROLE,
+            Mx28P1::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx28P1 as HasTemperatureLimit>::ROLE,
+            Mx28P1::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -6107,6 +6326,24 @@ fn mx_28_p1_roles() {
             Mx28P1::D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Mx28P1 as HasMinVoltageLimit>::ROLE,
+            Mx28P1::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx28P1 as HasMaxVoltageLimit>::ROLE,
+            Mx28P1::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx28P1 as HasTemperatureLimit>::ROLE,
+            Mx28P1::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -6135,9 +6372,10 @@ fn mx_28_p1_mode_source() {
 #[test]
 fn mx_28_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Mx28;
 
@@ -6209,6 +6447,24 @@ fn mx_28_roles() {
             <Mx28 as HasDGain>::ROLE,
             Mx28::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Mx28 as HasMinVoltageLimit>::ROLE,
+            Mx28::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx28 as HasMaxVoltageLimit>::ROLE,
+            Mx28::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx28 as HasTemperatureLimit>::ROLE,
+            Mx28::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -6291,6 +6547,24 @@ fn mx_28_roles() {
             Mx28::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Mx28 as HasMinVoltageLimit>::ROLE,
+            Mx28::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx28 as HasMaxVoltageLimit>::ROLE,
+            Mx28::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx28 as HasTemperatureLimit>::ROLE,
+            Mx28::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -6327,8 +6601,9 @@ fn mx_28_mode_source() {
 fn ax_12w_roles() {
     use crate::actuator::{
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
-        HasGoalVelocity, HasLed, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, LimitMode, Role,
+        HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ax12w;
 
@@ -6400,6 +6675,24 @@ fn ax_12w_roles() {
             <Ax12w as HasCcwComplianceSlope>::ROLE,
             Ax12w::CCW_COMPLIANCE_SLOPE,
             "CCW Compliance Slope",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Ax12w as HasMinVoltageLimit>::ROLE,
+            Ax12w::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ax12w as HasMaxVoltageLimit>::ROLE,
+            Ax12w::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ax12w as HasTemperatureLimit>::ROLE,
+            Ax12w::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -6487,6 +6780,24 @@ fn ax_12w_roles() {
             Ax12w::CCW_COMPLIANCE_SLOPE,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ax12w as HasMinVoltageLimit>::ROLE,
+            Ax12w::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ax12w as HasMaxVoltageLimit>::ROLE,
+            Ax12w::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ax12w as HasTemperatureLimit>::ROLE,
+            Ax12w::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -6515,9 +6826,10 @@ fn ax_12w_mode_source() {
 #[test]
 fn mx_64_p1_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMoving, HasPGain, HasPresentLoad,
-        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
-        HasSpeedLimit, HasTorqueCtrlModeEnable, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
+        HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        HasTorqueCtrlModeEnable, LimitMode, Role,
     };
     use crate::models::Mx64P1;
     use crate::units::{Sign, SpeedLimit};
@@ -6596,6 +6908,24 @@ fn mx_64_p1_roles() {
             <Mx64P1 as HasTorqueCtrlModeEnable>::ROLE,
             Mx64P1::TORQUE_CTRL_MODE_ENABLE,
             "Torque Ctrl Mode Enable",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Mx64P1 as HasMinVoltageLimit>::ROLE,
+            Mx64P1::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx64P1 as HasMaxVoltageLimit>::ROLE,
+            Mx64P1::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx64P1 as HasTemperatureLimit>::ROLE,
+            Mx64P1::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -6854,6 +7184,69 @@ fn mx_64_p1_roles() {
             );
         }
     }
+    {
+        let role = <Mx64P1 as HasMinVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MinVoltageLimit, LimitMode::Bounded),
+                Some((Mx64P1::MIN_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasMaxVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), None);
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MaxVoltageLimit, LimitMode::Bounded),
+                Some((Mx64P1::MAX_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64P1 as HasTemperatureLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=100));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::TemperatureLimit, LimitMode::Bounded),
+                Some((Mx64P1::TEMPERATURE_LIMIT, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "mx")]
@@ -6878,9 +7271,10 @@ fn mx_64_p1_mode_source() {
 #[test]
 fn mx_64_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Mx64;
     use crate::units::{Sign, SpeedLimit};
@@ -6959,6 +7353,24 @@ fn mx_64_roles() {
             <Mx64 as HasDGain>::ROLE,
             Mx64::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Mx64 as HasMinVoltageLimit>::ROLE,
+            Mx64::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx64 as HasMaxVoltageLimit>::ROLE,
+            Mx64::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx64 as HasTemperatureLimit>::ROLE,
+            Mx64::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -7180,6 +7592,69 @@ fn mx_64_roles() {
             );
         }
     }
+    {
+        let role = <Mx64 as HasMinVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(95..=160));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MinVoltageLimit, LimitMode::Bounded),
+                Some((Mx64::MIN_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasMaxVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(95..=160));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MaxVoltageLimit, LimitMode::Bounded),
+                Some((Mx64::MAX_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasTemperatureLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=100));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::TemperatureLimit, LimitMode::Bounded),
+                Some((Mx64::TEMPERATURE_LIMIT, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "mx")]
@@ -7209,9 +7684,9 @@ fn mx_64_mode_source() {
 #[test]
 fn mx_106_p1_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasLed, HasMoving, HasPGain, HasPresentLoad,
-        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
-        HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving,
+        HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Mx106P1;
 
@@ -7277,6 +7752,24 @@ fn mx_106_p1_roles() {
             <Mx106P1 as HasDGain>::ROLE,
             Mx106P1::D_GAIN,
             "D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Mx106P1 as HasMinVoltageLimit>::ROLE,
+            Mx106P1::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx106P1 as HasMaxVoltageLimit>::ROLE,
+            Mx106P1::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx106P1 as HasTemperatureLimit>::ROLE,
+            Mx106P1::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -7359,6 +7852,24 @@ fn mx_106_p1_roles() {
             Mx106P1::D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Mx106P1 as HasMinVoltageLimit>::ROLE,
+            Mx106P1::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx106P1 as HasMaxVoltageLimit>::ROLE,
+            Mx106P1::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx106P1 as HasTemperatureLimit>::ROLE,
+            Mx106P1::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -7387,9 +7898,10 @@ fn mx_106_p1_mode_source() {
 #[test]
 fn mx_106_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Mx106;
 
@@ -7467,6 +7979,24 @@ fn mx_106_roles() {
             <Mx106 as HasDGain>::ROLE,
             Mx106::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Mx106 as HasMinVoltageLimit>::ROLE,
+            Mx106::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx106 as HasMaxVoltageLimit>::ROLE,
+            Mx106::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx106 as HasTemperatureLimit>::ROLE,
+            Mx106::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -7559,6 +8089,24 @@ fn mx_106_roles() {
             Mx106::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Mx106 as HasMinVoltageLimit>::ROLE,
+            Mx106::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Mx106 as HasMaxVoltageLimit>::ROLE,
+            Mx106::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Mx106 as HasTemperatureLimit>::ROLE,
+            Mx106::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -7596,9 +8144,9 @@ fn mx_106_mode_source() {
 #[test]
 fn xl320_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xl320;
 
@@ -7664,6 +8212,24 @@ fn xl320_roles() {
             <Xl320 as HasDGain>::ROLE,
             Xl320::D_GAIN,
             "D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xl320 as HasMinVoltageLimit>::ROLE,
+            Xl320::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl320 as HasMaxVoltageLimit>::ROLE,
+            Xl320::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl320 as HasTemperatureLimit>::ROLE,
+            Xl320::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -7736,6 +8302,24 @@ fn xl320_roles() {
         ),
         (Role::PGain, <Xl320 as HasPGain>::ROLE, Xl320::P_GAIN, None),
         (Role::DGain, <Xl320 as HasDGain>::ROLE, Xl320::D_GAIN, None),
+        (
+            Role::MinVoltageLimit,
+            <Xl320 as HasMinVoltageLimit>::ROLE,
+            Xl320::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl320 as HasMaxVoltageLimit>::ROLE,
+            Xl320::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl320 as HasTemperatureLimit>::ROLE,
+            Xl320::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -7769,9 +8353,10 @@ fn xl320_mode_source() {
 #[test]
 fn xh430_w350_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh430W350;
 
@@ -7854,6 +8439,24 @@ fn xh430_w350_roles() {
             <Xh430W350 as HasDGain>::ROLE,
             Xh430W350::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430W350 as HasMinVoltageLimit>::ROLE,
+            Xh430W350::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430W350 as HasMaxVoltageLimit>::ROLE,
+            Xh430W350::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430W350 as HasTemperatureLimit>::ROLE,
+            Xh430W350::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -7946,6 +8549,24 @@ fn xh430_w350_roles() {
             Xh430W350::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430W350 as HasMinVoltageLimit>::ROLE,
+            Xh430W350::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430W350 as HasMaxVoltageLimit>::ROLE,
+            Xh430W350::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430W350 as HasTemperatureLimit>::ROLE,
+            Xh430W350::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -7983,9 +8604,10 @@ fn xh430_w350_mode_source() {
 #[test]
 fn xd430_t350_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xd430T350;
 
@@ -8068,6 +8690,24 @@ fn xd430_t350_roles() {
             <Xd430T350 as HasDGain>::ROLE,
             Xd430T350::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xd430T350 as HasMinVoltageLimit>::ROLE,
+            Xd430T350::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd430T350 as HasMaxVoltageLimit>::ROLE,
+            Xd430T350::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd430T350 as HasTemperatureLimit>::ROLE,
+            Xd430T350::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -8160,6 +8800,24 @@ fn xd430_t350_roles() {
             Xd430T350::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xd430T350 as HasMinVoltageLimit>::ROLE,
+            Xd430T350::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd430T350 as HasMaxVoltageLimit>::ROLE,
+            Xd430T350::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd430T350 as HasTemperatureLimit>::ROLE,
+            Xd430T350::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -8197,9 +8855,10 @@ fn xd430_t350_mode_source() {
 #[test]
 fn xh430_w210_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh430W210;
 
@@ -8282,6 +8941,24 @@ fn xh430_w210_roles() {
             <Xh430W210 as HasDGain>::ROLE,
             Xh430W210::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430W210 as HasMinVoltageLimit>::ROLE,
+            Xh430W210::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430W210 as HasMaxVoltageLimit>::ROLE,
+            Xh430W210::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430W210 as HasTemperatureLimit>::ROLE,
+            Xh430W210::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -8374,6 +9051,24 @@ fn xh430_w210_roles() {
             Xh430W210::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430W210 as HasMinVoltageLimit>::ROLE,
+            Xh430W210::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430W210 as HasMaxVoltageLimit>::ROLE,
+            Xh430W210::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430W210 as HasTemperatureLimit>::ROLE,
+            Xh430W210::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -8411,9 +9106,10 @@ fn xh430_w210_mode_source() {
 #[test]
 fn xd430_t210_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xd430T210;
 
@@ -8496,6 +9192,24 @@ fn xd430_t210_roles() {
             <Xd430T210 as HasDGain>::ROLE,
             Xd430T210::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xd430T210 as HasMinVoltageLimit>::ROLE,
+            Xd430T210::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd430T210 as HasMaxVoltageLimit>::ROLE,
+            Xd430T210::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd430T210 as HasTemperatureLimit>::ROLE,
+            Xd430T210::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -8588,6 +9302,24 @@ fn xd430_t210_roles() {
             Xd430T210::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xd430T210 as HasMinVoltageLimit>::ROLE,
+            Xd430T210::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd430T210 as HasMaxVoltageLimit>::ROLE,
+            Xd430T210::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd430T210 as HasTemperatureLimit>::ROLE,
+            Xd430T210::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -8625,9 +9357,10 @@ fn xd430_t210_mode_source() {
 #[test]
 fn xm430_w350_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xm430W350;
     use crate::units::{Sign, SpeedLimit};
@@ -8711,6 +9444,24 @@ fn xm430_w350_roles() {
             <Xm430W350 as HasDGain>::ROLE,
             Xm430W350::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xm430W350 as HasMinVoltageLimit>::ROLE,
+            Xm430W350::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xm430W350 as HasMaxVoltageLimit>::ROLE,
+            Xm430W350::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xm430W350 as HasTemperatureLimit>::ROLE,
+            Xm430W350::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -8937,6 +9688,69 @@ fn xm430_w350_roles() {
             );
         }
     }
+    {
+        let role = <Xm430W350 as HasMinVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(95..=160));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MinVoltageLimit, LimitMode::Bounded),
+                Some((Xm430W350::MIN_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasMaxVoltageLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 2, false)
+            );
+            assert!(close(scale.voltage(100).volts(), 10.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(95..=160));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MaxVoltageLimit, LimitMode::Bounded),
+                Some((Xm430W350::MAX_VOLTAGE_LIMIT, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasTemperatureLimit>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.temperature(100).celsius(), 100.0));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=100));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::TemperatureLimit, LimitMode::Bounded),
+                Some((Xm430W350::TEMPERATURE_LIMIT, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "x-series")]
@@ -8966,9 +9780,10 @@ fn xm430_w350_mode_source() {
 #[test]
 fn xm430_w210_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xm430W210;
 
@@ -9051,6 +9866,24 @@ fn xm430_w210_roles() {
             <Xm430W210 as HasDGain>::ROLE,
             Xm430W210::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xm430W210 as HasMinVoltageLimit>::ROLE,
+            Xm430W210::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xm430W210 as HasMaxVoltageLimit>::ROLE,
+            Xm430W210::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xm430W210 as HasTemperatureLimit>::ROLE,
+            Xm430W210::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9143,6 +9976,24 @@ fn xm430_w210_roles() {
             Xm430W210::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xm430W210 as HasMinVoltageLimit>::ROLE,
+            Xm430W210::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xm430W210 as HasMaxVoltageLimit>::ROLE,
+            Xm430W210::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xm430W210 as HasTemperatureLimit>::ROLE,
+            Xm430W210::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -9180,9 +10031,10 @@ fn xm430_w210_mode_source() {
 #[test]
 fn xh430_v350_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh430V350;
 
@@ -9265,6 +10117,24 @@ fn xh430_v350_roles() {
             <Xh430V350 as HasDGain>::ROLE,
             Xh430V350::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430V350 as HasMinVoltageLimit>::ROLE,
+            Xh430V350::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430V350 as HasMaxVoltageLimit>::ROLE,
+            Xh430V350::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430V350 as HasTemperatureLimit>::ROLE,
+            Xh430V350::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9357,6 +10227,24 @@ fn xh430_v350_roles() {
             Xh430V350::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430V350 as HasMinVoltageLimit>::ROLE,
+            Xh430V350::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430V350 as HasMaxVoltageLimit>::ROLE,
+            Xh430V350::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430V350 as HasTemperatureLimit>::ROLE,
+            Xh430V350::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -9394,9 +10282,10 @@ fn xh430_v350_mode_source() {
 #[test]
 fn xh430_v210_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh430V210;
 
@@ -9479,6 +10368,24 @@ fn xh430_v210_roles() {
             <Xh430V210 as HasDGain>::ROLE,
             Xh430V210::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430V210 as HasMinVoltageLimit>::ROLE,
+            Xh430V210::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430V210 as HasMaxVoltageLimit>::ROLE,
+            Xh430V210::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430V210 as HasTemperatureLimit>::ROLE,
+            Xh430V210::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9571,6 +10478,24 @@ fn xh430_v210_roles() {
             Xh430V210::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh430V210 as HasMinVoltageLimit>::ROLE,
+            Xh430V210::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh430V210 as HasMaxVoltageLimit>::ROLE,
+            Xh430V210::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh430V210 as HasTemperatureLimit>::ROLE,
+            Xh430V210::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -9608,9 +10533,10 @@ fn xh430_v210_mode_source() {
 #[test]
 fn xl430_w250_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Xl430W250;
 
@@ -9687,6 +10613,24 @@ fn xl430_w250_roles() {
             <Xl430W250 as HasDGain>::ROLE,
             Xl430W250::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xl430W250 as HasMinVoltageLimit>::ROLE,
+            Xl430W250::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl430W250 as HasMaxVoltageLimit>::ROLE,
+            Xl430W250::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl430W250 as HasTemperatureLimit>::ROLE,
+            Xl430W250::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9774,6 +10718,24 @@ fn xl430_w250_roles() {
             Xl430W250::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xl430W250 as HasMinVoltageLimit>::ROLE,
+            Xl430W250::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl430W250 as HasMaxVoltageLimit>::ROLE,
+            Xl430W250::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl430W250 as HasTemperatureLimit>::ROLE,
+            Xl430W250::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -9809,9 +10771,10 @@ fn xl430_w250_mode_source() {
 #[test]
 fn xc430_w150_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Xc430W150;
 
@@ -9888,6 +10851,24 @@ fn xc430_w150_roles() {
             <Xc430W150 as HasDGain>::ROLE,
             Xc430W150::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc430W150 as HasMinVoltageLimit>::ROLE,
+            Xc430W150::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc430W150 as HasMaxVoltageLimit>::ROLE,
+            Xc430W150::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc430W150 as HasTemperatureLimit>::ROLE,
+            Xc430W150::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9975,6 +10956,24 @@ fn xc430_w150_roles() {
             Xc430W150::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc430W150 as HasMinVoltageLimit>::ROLE,
+            Xc430W150::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc430W150 as HasMaxVoltageLimit>::ROLE,
+            Xc430W150::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc430W150 as HasTemperatureLimit>::ROLE,
+            Xc430W150::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -10010,9 +11009,10 @@ fn xc430_w150_mode_source() {
 #[test]
 fn xc430_w240_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Xc430W240;
 
@@ -10089,6 +11089,24 @@ fn xc430_w240_roles() {
             <Xc430W240 as HasDGain>::ROLE,
             Xc430W240::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc430W240 as HasMinVoltageLimit>::ROLE,
+            Xc430W240::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc430W240 as HasMaxVoltageLimit>::ROLE,
+            Xc430W240::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc430W240 as HasTemperatureLimit>::ROLE,
+            Xc430W240::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -10176,6 +11194,24 @@ fn xc430_w240_roles() {
             Xc430W240::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc430W240 as HasMinVoltageLimit>::ROLE,
+            Xc430W240::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc430W240 as HasMaxVoltageLimit>::ROLE,
+            Xc430W240::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc430W240 as HasTemperatureLimit>::ROLE,
+            Xc430W240::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -10211,9 +11247,10 @@ fn xc430_w240_mode_source() {
 #[test]
 fn two_xl430_w250_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::TwoXl430W250;
 
@@ -10290,6 +11327,24 @@ fn two_xl430_w250_roles() {
             <TwoXl430W250 as HasDGain>::ROLE,
             TwoXl430W250::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <TwoXl430W250 as HasMinVoltageLimit>::ROLE,
+            TwoXl430W250::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <TwoXl430W250 as HasMaxVoltageLimit>::ROLE,
+            TwoXl430W250::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <TwoXl430W250 as HasTemperatureLimit>::ROLE,
+            TwoXl430W250::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -10382,6 +11437,24 @@ fn two_xl430_w250_roles() {
             TwoXl430W250::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <TwoXl430W250 as HasMinVoltageLimit>::ROLE,
+            TwoXl430W250::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <TwoXl430W250 as HasMaxVoltageLimit>::ROLE,
+            TwoXl430W250::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <TwoXl430W250 as HasTemperatureLimit>::ROLE,
+            TwoXl430W250::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -10417,9 +11490,10 @@ fn two_xl430_w250_mode_source() {
 #[test]
 fn xh540_w270_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh540W270;
 
@@ -10502,6 +11576,24 @@ fn xh540_w270_roles() {
             <Xh540W270 as HasDGain>::ROLE,
             Xh540W270::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540W270 as HasMinVoltageLimit>::ROLE,
+            Xh540W270::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540W270 as HasMaxVoltageLimit>::ROLE,
+            Xh540W270::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540W270 as HasTemperatureLimit>::ROLE,
+            Xh540W270::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -10594,6 +11686,24 @@ fn xh540_w270_roles() {
             Xh540W270::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540W270 as HasMinVoltageLimit>::ROLE,
+            Xh540W270::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540W270 as HasMaxVoltageLimit>::ROLE,
+            Xh540W270::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540W270 as HasTemperatureLimit>::ROLE,
+            Xh540W270::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -10631,9 +11741,10 @@ fn xh540_w270_mode_source() {
 #[test]
 fn xd540_t270_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xd540T270;
 
@@ -10716,6 +11827,24 @@ fn xd540_t270_roles() {
             <Xd540T270 as HasDGain>::ROLE,
             Xd540T270::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xd540T270 as HasMinVoltageLimit>::ROLE,
+            Xd540T270::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd540T270 as HasMaxVoltageLimit>::ROLE,
+            Xd540T270::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd540T270 as HasTemperatureLimit>::ROLE,
+            Xd540T270::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -10808,6 +11937,24 @@ fn xd540_t270_roles() {
             Xd540T270::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xd540T270 as HasMinVoltageLimit>::ROLE,
+            Xd540T270::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd540T270 as HasMaxVoltageLimit>::ROLE,
+            Xd540T270::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd540T270 as HasTemperatureLimit>::ROLE,
+            Xd540T270::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -10845,9 +11992,10 @@ fn xd540_t270_mode_source() {
 #[test]
 fn xh540_w150_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh540W150;
 
@@ -10930,6 +12078,24 @@ fn xh540_w150_roles() {
             <Xh540W150 as HasDGain>::ROLE,
             Xh540W150::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540W150 as HasMinVoltageLimit>::ROLE,
+            Xh540W150::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540W150 as HasMaxVoltageLimit>::ROLE,
+            Xh540W150::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540W150 as HasTemperatureLimit>::ROLE,
+            Xh540W150::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11022,6 +12188,24 @@ fn xh540_w150_roles() {
             Xh540W150::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540W150 as HasMinVoltageLimit>::ROLE,
+            Xh540W150::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540W150 as HasMaxVoltageLimit>::ROLE,
+            Xh540W150::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540W150 as HasTemperatureLimit>::ROLE,
+            Xh540W150::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11059,9 +12243,10 @@ fn xh540_w150_mode_source() {
 #[test]
 fn xd540_t150_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xd540T150;
 
@@ -11144,6 +12329,24 @@ fn xd540_t150_roles() {
             <Xd540T150 as HasDGain>::ROLE,
             Xd540T150::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xd540T150 as HasMinVoltageLimit>::ROLE,
+            Xd540T150::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd540T150 as HasMaxVoltageLimit>::ROLE,
+            Xd540T150::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd540T150 as HasTemperatureLimit>::ROLE,
+            Xd540T150::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11236,6 +12439,24 @@ fn xd540_t150_roles() {
             Xd540T150::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xd540T150 as HasMinVoltageLimit>::ROLE,
+            Xd540T150::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xd540T150 as HasMaxVoltageLimit>::ROLE,
+            Xd540T150::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xd540T150 as HasTemperatureLimit>::ROLE,
+            Xd540T150::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11273,9 +12494,10 @@ fn xd540_t150_mode_source() {
 #[test]
 fn xm540_w270_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xm540W270;
 
@@ -11358,6 +12580,24 @@ fn xm540_w270_roles() {
             <Xm540W270 as HasDGain>::ROLE,
             Xm540W270::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xm540W270 as HasMinVoltageLimit>::ROLE,
+            Xm540W270::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xm540W270 as HasMaxVoltageLimit>::ROLE,
+            Xm540W270::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xm540W270 as HasTemperatureLimit>::ROLE,
+            Xm540W270::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11450,6 +12690,24 @@ fn xm540_w270_roles() {
             Xm540W270::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xm540W270 as HasMinVoltageLimit>::ROLE,
+            Xm540W270::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xm540W270 as HasMaxVoltageLimit>::ROLE,
+            Xm540W270::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xm540W270 as HasTemperatureLimit>::ROLE,
+            Xm540W270::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11487,9 +12745,10 @@ fn xm540_w270_mode_source() {
 #[test]
 fn xm540_w150_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xm540W150;
 
@@ -11572,6 +12831,24 @@ fn xm540_w150_roles() {
             <Xm540W150 as HasDGain>::ROLE,
             Xm540W150::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xm540W150 as HasMinVoltageLimit>::ROLE,
+            Xm540W150::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xm540W150 as HasMaxVoltageLimit>::ROLE,
+            Xm540W150::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xm540W150 as HasTemperatureLimit>::ROLE,
+            Xm540W150::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11664,6 +12941,24 @@ fn xm540_w150_roles() {
             Xm540W150::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xm540W150 as HasMinVoltageLimit>::ROLE,
+            Xm540W150::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xm540W150 as HasMaxVoltageLimit>::ROLE,
+            Xm540W150::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xm540W150 as HasTemperatureLimit>::ROLE,
+            Xm540W150::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11701,9 +12996,10 @@ fn xm540_w150_mode_source() {
 #[test]
 fn xh540_v270_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh540V270;
 
@@ -11786,6 +13082,24 @@ fn xh540_v270_roles() {
             <Xh540V270 as HasDGain>::ROLE,
             Xh540V270::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540V270 as HasMinVoltageLimit>::ROLE,
+            Xh540V270::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540V270 as HasMaxVoltageLimit>::ROLE,
+            Xh540V270::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540V270 as HasTemperatureLimit>::ROLE,
+            Xh540V270::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11878,6 +13192,24 @@ fn xh540_v270_roles() {
             Xh540V270::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540V270 as HasMinVoltageLimit>::ROLE,
+            Xh540V270::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540V270 as HasMaxVoltageLimit>::ROLE,
+            Xh540V270::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540V270 as HasTemperatureLimit>::ROLE,
+            Xh540V270::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11915,9 +13247,10 @@ fn xh540_v270_mode_source() {
 #[test]
 fn xh540_v150_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xh540V150;
 
@@ -12000,6 +13333,24 @@ fn xh540_v150_roles() {
             <Xh540V150 as HasDGain>::ROLE,
             Xh540V150::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540V150 as HasMinVoltageLimit>::ROLE,
+            Xh540V150::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540V150 as HasMaxVoltageLimit>::ROLE,
+            Xh540V150::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540V150 as HasTemperatureLimit>::ROLE,
+            Xh540V150::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -12092,6 +13443,24 @@ fn xh540_v150_roles() {
             Xh540V150::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xh540V150 as HasMinVoltageLimit>::ROLE,
+            Xh540V150::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xh540V150 as HasMaxVoltageLimit>::ROLE,
+            Xh540V150::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xh540V150 as HasTemperatureLimit>::ROLE,
+            Xh540V150::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12129,9 +13498,10 @@ fn xh540_v150_mode_source() {
 #[test]
 fn two_xc430_w250_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::TwoXc430W250;
 
@@ -12208,6 +13578,24 @@ fn two_xc430_w250_roles() {
             <TwoXc430W250 as HasDGain>::ROLE,
             TwoXc430W250::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <TwoXc430W250 as HasMinVoltageLimit>::ROLE,
+            TwoXc430W250::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <TwoXc430W250 as HasMaxVoltageLimit>::ROLE,
+            TwoXc430W250::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <TwoXc430W250 as HasTemperatureLimit>::ROLE,
+            TwoXc430W250::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -12300,6 +13688,24 @@ fn two_xc430_w250_roles() {
             TwoXc430W250::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <TwoXc430W250 as HasMinVoltageLimit>::ROLE,
+            TwoXc430W250::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <TwoXc430W250 as HasMaxVoltageLimit>::ROLE,
+            TwoXc430W250::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <TwoXc430W250 as HasTemperatureLimit>::ROLE,
+            TwoXc430W250::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12335,9 +13741,10 @@ fn two_xc430_w250_mode_source() {
 #[test]
 fn xw540_t260_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Xw540T260;
 
@@ -12415,6 +13822,24 @@ fn xw540_t260_roles() {
             Xw540T260::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xw540T260 as HasMinVoltageLimit>::ROLE,
+            Xw540T260::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw540T260 as HasMaxVoltageLimit>::ROLE,
+            Xw540T260::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw540T260 as HasTemperatureLimit>::ROLE,
+            Xw540T260::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -12506,6 +13931,24 @@ fn xw540_t260_roles() {
             Xw540T260::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xw540T260 as HasMinVoltageLimit>::ROLE,
+            Xw540T260::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw540T260 as HasMaxVoltageLimit>::ROLE,
+            Xw540T260::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw540T260 as HasTemperatureLimit>::ROLE,
+            Xw540T260::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12543,9 +13986,10 @@ fn xw540_t260_mode_source() {
 #[test]
 fn xw540_t140_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Xw540T140;
 
@@ -12622,6 +14066,24 @@ fn xw540_t140_roles() {
             <Xw540T140 as HasDGain>::ROLE,
             Xw540T140::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xw540T140 as HasMinVoltageLimit>::ROLE,
+            Xw540T140::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw540T140 as HasMaxVoltageLimit>::ROLE,
+            Xw540T140::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw540T140 as HasTemperatureLimit>::ROLE,
+            Xw540T140::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -12714,6 +14176,24 @@ fn xw540_t140_roles() {
             Xw540T140::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xw540T140 as HasMinVoltageLimit>::ROLE,
+            Xw540T140::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw540T140 as HasMaxVoltageLimit>::ROLE,
+            Xw540T140::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw540T140 as HasTemperatureLimit>::ROLE,
+            Xw540T140::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12751,9 +14231,10 @@ fn xw540_t140_mode_source() {
 #[test]
 fn xl330_m077_fw52_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xl330M077Fw52;
 
@@ -12837,6 +14318,24 @@ fn xl330_m077_fw52_roles() {
             Xl330M077Fw52::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M077Fw52 as HasMinVoltageLimit>::ROLE,
+            Xl330M077Fw52::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M077Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xl330M077Fw52::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M077Fw52 as HasTemperatureLimit>::ROLE,
+            Xl330M077Fw52::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -12933,6 +14432,24 @@ fn xl330_m077_fw52_roles() {
             Xl330M077Fw52::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M077Fw52 as HasMinVoltageLimit>::ROLE,
+            Xl330M077Fw52::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M077Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xl330M077Fw52::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M077Fw52 as HasTemperatureLimit>::ROLE,
+            Xl330M077Fw52::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12970,9 +14487,10 @@ fn xl330_m077_fw52_mode_source() {
 #[test]
 fn xl330_m077_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xl330M077;
 
@@ -13055,6 +14573,24 @@ fn xl330_m077_roles() {
             <Xl330M077 as HasDGain>::ROLE,
             Xl330M077::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M077 as HasMinVoltageLimit>::ROLE,
+            Xl330M077::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M077 as HasMaxVoltageLimit>::ROLE,
+            Xl330M077::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M077 as HasTemperatureLimit>::ROLE,
+            Xl330M077::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -13147,6 +14683,24 @@ fn xl330_m077_roles() {
             Xl330M077::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M077 as HasMinVoltageLimit>::ROLE,
+            Xl330M077::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M077 as HasMaxVoltageLimit>::ROLE,
+            Xl330M077::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M077 as HasTemperatureLimit>::ROLE,
+            Xl330M077::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -13184,9 +14738,10 @@ fn xl330_m077_mode_source() {
 #[test]
 fn xl330_m288_fw52_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xl330M288Fw52;
 
@@ -13269,6 +14824,24 @@ fn xl330_m288_fw52_roles() {
             <Xl330M288Fw52 as HasDGain>::ROLE,
             Xl330M288Fw52::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M288Fw52 as HasMinVoltageLimit>::ROLE,
+            Xl330M288Fw52::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M288Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xl330M288Fw52::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M288Fw52 as HasTemperatureLimit>::ROLE,
+            Xl330M288Fw52::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -13366,6 +14939,24 @@ fn xl330_m288_fw52_roles() {
             Xl330M288Fw52::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M288Fw52 as HasMinVoltageLimit>::ROLE,
+            Xl330M288Fw52::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M288Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xl330M288Fw52::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M288Fw52 as HasTemperatureLimit>::ROLE,
+            Xl330M288Fw52::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -13403,9 +14994,10 @@ fn xl330_m288_fw52_mode_source() {
 #[test]
 fn xl330_m288_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xl330M288;
 
@@ -13488,6 +15080,24 @@ fn xl330_m288_roles() {
             <Xl330M288 as HasDGain>::ROLE,
             Xl330M288::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M288 as HasMinVoltageLimit>::ROLE,
+            Xl330M288::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M288 as HasMaxVoltageLimit>::ROLE,
+            Xl330M288::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M288 as HasTemperatureLimit>::ROLE,
+            Xl330M288::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -13580,6 +15190,24 @@ fn xl330_m288_roles() {
             Xl330M288::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xl330M288 as HasMinVoltageLimit>::ROLE,
+            Xl330M288::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xl330M288 as HasMaxVoltageLimit>::ROLE,
+            Xl330M288::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xl330M288 as HasTemperatureLimit>::ROLE,
+            Xl330M288::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -13617,9 +15245,10 @@ fn xl330_m288_mode_source() {
 #[test]
 fn xc330_t181_fw52_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330T181Fw52;
 
@@ -13702,6 +15331,24 @@ fn xc330_t181_fw52_roles() {
             <Xc330T181Fw52 as HasDGain>::ROLE,
             Xc330T181Fw52::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T181Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330T181Fw52::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T181Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330T181Fw52::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T181Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330T181Fw52::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -13799,6 +15446,24 @@ fn xc330_t181_fw52_roles() {
             Xc330T181Fw52::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T181Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330T181Fw52::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T181Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330T181Fw52::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T181Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330T181Fw52::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -13836,9 +15501,10 @@ fn xc330_t181_fw52_mode_source() {
 #[test]
 fn xc330_t181_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330T181;
 
@@ -13921,6 +15587,24 @@ fn xc330_t181_roles() {
             <Xc330T181 as HasDGain>::ROLE,
             Xc330T181::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T181 as HasMinVoltageLimit>::ROLE,
+            Xc330T181::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T181 as HasMaxVoltageLimit>::ROLE,
+            Xc330T181::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T181 as HasTemperatureLimit>::ROLE,
+            Xc330T181::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14013,6 +15697,24 @@ fn xc330_t181_roles() {
             Xc330T181::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T181 as HasMinVoltageLimit>::ROLE,
+            Xc330T181::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T181 as HasMaxVoltageLimit>::ROLE,
+            Xc330T181::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T181 as HasTemperatureLimit>::ROLE,
+            Xc330T181::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14050,9 +15752,10 @@ fn xc330_t181_mode_source() {
 #[test]
 fn xc330_t288_fw52_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330T288Fw52;
 
@@ -14135,6 +15838,24 @@ fn xc330_t288_fw52_roles() {
             <Xc330T288Fw52 as HasDGain>::ROLE,
             Xc330T288Fw52::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T288Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330T288Fw52::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T288Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330T288Fw52::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T288Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330T288Fw52::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14232,6 +15953,24 @@ fn xc330_t288_fw52_roles() {
             Xc330T288Fw52::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T288Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330T288Fw52::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T288Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330T288Fw52::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T288Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330T288Fw52::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14269,9 +16008,10 @@ fn xc330_t288_fw52_mode_source() {
 #[test]
 fn xc330_t288_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330T288;
 
@@ -14354,6 +16094,24 @@ fn xc330_t288_roles() {
             <Xc330T288 as HasDGain>::ROLE,
             Xc330T288::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T288 as HasMinVoltageLimit>::ROLE,
+            Xc330T288::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T288 as HasMaxVoltageLimit>::ROLE,
+            Xc330T288::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T288 as HasTemperatureLimit>::ROLE,
+            Xc330T288::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14446,6 +16204,24 @@ fn xc330_t288_roles() {
             Xc330T288::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330T288 as HasMinVoltageLimit>::ROLE,
+            Xc330T288::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330T288 as HasMaxVoltageLimit>::ROLE,
+            Xc330T288::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330T288 as HasTemperatureLimit>::ROLE,
+            Xc330T288::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14483,9 +16259,10 @@ fn xc330_t288_mode_source() {
 #[test]
 fn xc330_m181_fw52_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330M181Fw52;
 
@@ -14568,6 +16345,24 @@ fn xc330_m181_fw52_roles() {
             <Xc330M181Fw52 as HasDGain>::ROLE,
             Xc330M181Fw52::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M181Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330M181Fw52::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M181Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330M181Fw52::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M181Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330M181Fw52::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14665,6 +16460,24 @@ fn xc330_m181_fw52_roles() {
             Xc330M181Fw52::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M181Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330M181Fw52::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M181Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330M181Fw52::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M181Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330M181Fw52::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14702,9 +16515,10 @@ fn xc330_m181_fw52_mode_source() {
 #[test]
 fn xc330_m181_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330M181;
 
@@ -14787,6 +16601,24 @@ fn xc330_m181_roles() {
             <Xc330M181 as HasDGain>::ROLE,
             Xc330M181::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M181 as HasMinVoltageLimit>::ROLE,
+            Xc330M181::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M181 as HasMaxVoltageLimit>::ROLE,
+            Xc330M181::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M181 as HasTemperatureLimit>::ROLE,
+            Xc330M181::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14879,6 +16711,24 @@ fn xc330_m181_roles() {
             Xc330M181::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M181 as HasMinVoltageLimit>::ROLE,
+            Xc330M181::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M181 as HasMaxVoltageLimit>::ROLE,
+            Xc330M181::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M181 as HasTemperatureLimit>::ROLE,
+            Xc330M181::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14916,9 +16766,10 @@ fn xc330_m181_mode_source() {
 #[test]
 fn xc330_m288_fw52_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330M288Fw52;
 
@@ -15001,6 +16852,24 @@ fn xc330_m288_fw52_roles() {
             <Xc330M288Fw52 as HasDGain>::ROLE,
             Xc330M288Fw52::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M288Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330M288Fw52::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M288Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330M288Fw52::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M288Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330M288Fw52::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -15098,6 +16967,24 @@ fn xc330_m288_fw52_roles() {
             Xc330M288Fw52::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M288Fw52 as HasMinVoltageLimit>::ROLE,
+            Xc330M288Fw52::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M288Fw52 as HasMaxVoltageLimit>::ROLE,
+            Xc330M288Fw52::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M288Fw52 as HasTemperatureLimit>::ROLE,
+            Xc330M288Fw52::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15135,9 +17022,10 @@ fn xc330_m288_fw52_mode_source() {
 #[test]
 fn xc330_m288_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMoving,
-        HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
+        HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xc330M288;
 
@@ -15220,6 +17108,24 @@ fn xc330_m288_roles() {
             <Xc330M288 as HasDGain>::ROLE,
             Xc330M288::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M288 as HasMinVoltageLimit>::ROLE,
+            Xc330M288::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M288 as HasMaxVoltageLimit>::ROLE,
+            Xc330M288::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M288 as HasTemperatureLimit>::ROLE,
+            Xc330M288::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -15312,6 +17218,24 @@ fn xc330_m288_roles() {
             Xc330M288::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xc330M288 as HasMinVoltageLimit>::ROLE,
+            Xc330M288::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xc330M288 as HasMaxVoltageLimit>::ROLE,
+            Xc330M288::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xc330M288 as HasTemperatureLimit>::ROLE,
+            Xc330M288::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15349,9 +17273,10 @@ fn xc330_m288_mode_source() {
 #[test]
 fn xw430_t333_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Xw430T333;
 
@@ -15429,6 +17354,24 @@ fn xw430_t333_roles() {
             Xw430T333::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xw430T333 as HasMinVoltageLimit>::ROLE,
+            Xw430T333::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw430T333 as HasMaxVoltageLimit>::ROLE,
+            Xw430T333::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw430T333 as HasTemperatureLimit>::ROLE,
+            Xw430T333::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -15520,6 +17463,24 @@ fn xw430_t333_roles() {
             Xw430T333::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xw430T333 as HasMinVoltageLimit>::ROLE,
+            Xw430T333::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw430T333 as HasMaxVoltageLimit>::ROLE,
+            Xw430T333::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw430T333 as HasTemperatureLimit>::ROLE,
+            Xw430T333::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15557,9 +17518,10 @@ fn xw430_t333_mode_source() {
 #[test]
 fn xw540_h260_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasMaxVoltageLimit,
+        HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+        LimitMode, Role,
     };
     use crate::models::Xw540H260;
 
@@ -15636,6 +17598,24 @@ fn xw540_h260_roles() {
             <Xw540H260 as HasDGain>::ROLE,
             Xw540H260::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <Xw540H260 as HasMinVoltageLimit>::ROLE,
+            Xw540H260::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw540H260 as HasMaxVoltageLimit>::ROLE,
+            Xw540H260::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw540H260 as HasTemperatureLimit>::ROLE,
+            Xw540H260::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -15728,6 +17708,24 @@ fn xw540_h260_roles() {
             Xw540H260::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Xw540H260 as HasMinVoltageLimit>::ROLE,
+            Xw540H260::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Xw540H260 as HasMaxVoltageLimit>::ROLE,
+            Xw540H260::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Xw540H260 as HasTemperatureLimit>::ROLE,
+            Xw540H260::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15766,8 +17764,9 @@ fn xw540_h260_mode_source() {
 fn ph42_020_s300_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ph42020S300;
 
@@ -15863,6 +17862,24 @@ fn ph42_020_s300_roles() {
             Ph42020S300::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ph42020S300 as HasMinVoltageLimit>::ROLE,
+            Ph42020S300::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ph42020S300 as HasMaxVoltageLimit>::ROLE,
+            Ph42020S300::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ph42020S300 as HasTemperatureLimit>::ROLE,
+            Ph42020S300::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -15969,6 +17986,24 @@ fn ph42_020_s300_roles() {
             Ph42020S300::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ph42020S300 as HasMinVoltageLimit>::ROLE,
+            Ph42020S300::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ph42020S300 as HasMaxVoltageLimit>::ROLE,
+            Ph42020S300::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ph42020S300 as HasTemperatureLimit>::ROLE,
+            Ph42020S300::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16006,8 +18041,9 @@ fn ph42_020_s300_mode_source() {
 fn ph54_100_s500_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ph54100S500;
 
@@ -16103,6 +18139,24 @@ fn ph54_100_s500_roles() {
             Ph54100S500::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ph54100S500 as HasMinVoltageLimit>::ROLE,
+            Ph54100S500::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ph54100S500 as HasMaxVoltageLimit>::ROLE,
+            Ph54100S500::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ph54100S500 as HasTemperatureLimit>::ROLE,
+            Ph54100S500::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -16209,6 +18263,24 @@ fn ph54_100_s500_roles() {
             Ph54100S500::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ph54100S500 as HasMinVoltageLimit>::ROLE,
+            Ph54100S500::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ph54100S500 as HasMaxVoltageLimit>::ROLE,
+            Ph54100S500::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ph54100S500 as HasTemperatureLimit>::ROLE,
+            Ph54100S500::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16246,8 +18318,9 @@ fn ph54_100_s500_mode_source() {
 fn ph54_200_s500_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ph54200S500;
 
@@ -16343,6 +18416,24 @@ fn ph54_200_s500_roles() {
             Ph54200S500::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ph54200S500 as HasMinVoltageLimit>::ROLE,
+            Ph54200S500::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ph54200S500 as HasMaxVoltageLimit>::ROLE,
+            Ph54200S500::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ph54200S500 as HasTemperatureLimit>::ROLE,
+            Ph54200S500::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -16449,6 +18540,24 @@ fn ph54_200_s500_roles() {
             Ph54200S500::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ph54200S500 as HasMinVoltageLimit>::ROLE,
+            Ph54200S500::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ph54200S500 as HasMaxVoltageLimit>::ROLE,
+            Ph54200S500::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Ph54200S500 as HasTemperatureLimit>::ROLE,
+            Ph54200S500::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16486,8 +18595,9 @@ fn ph54_200_s500_mode_source() {
 fn pm42_010_s260_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Pm42010S260;
 
@@ -16583,6 +18693,24 @@ fn pm42_010_s260_roles() {
             Pm42010S260::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Pm42010S260 as HasMinVoltageLimit>::ROLE,
+            Pm42010S260::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Pm42010S260 as HasMaxVoltageLimit>::ROLE,
+            Pm42010S260::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Pm42010S260 as HasTemperatureLimit>::ROLE,
+            Pm42010S260::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -16689,6 +18817,24 @@ fn pm42_010_s260_roles() {
             Pm42010S260::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Pm42010S260 as HasMinVoltageLimit>::ROLE,
+            Pm42010S260::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Pm42010S260 as HasMaxVoltageLimit>::ROLE,
+            Pm42010S260::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Pm42010S260 as HasTemperatureLimit>::ROLE,
+            Pm42010S260::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16726,8 +18872,9 @@ fn pm42_010_s260_mode_source() {
 fn pm54_040_s250_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Pm54040S250;
 
@@ -16823,6 +18970,24 @@ fn pm54_040_s250_roles() {
             Pm54040S250::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Pm54040S250 as HasMinVoltageLimit>::ROLE,
+            Pm54040S250::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Pm54040S250 as HasMaxVoltageLimit>::ROLE,
+            Pm54040S250::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Pm54040S250 as HasTemperatureLimit>::ROLE,
+            Pm54040S250::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -16929,6 +19094,24 @@ fn pm54_040_s250_roles() {
             Pm54040S250::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Pm54040S250 as HasMinVoltageLimit>::ROLE,
+            Pm54040S250::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Pm54040S250 as HasMaxVoltageLimit>::ROLE,
+            Pm54040S250::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Pm54040S250 as HasTemperatureLimit>::ROLE,
+            Pm54040S250::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16966,8 +19149,9 @@ fn pm54_040_s250_mode_source() {
 fn pm54_060_s250_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Pm54060S250;
 
@@ -17063,6 +19247,24 @@ fn pm54_060_s250_roles() {
             Pm54060S250::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Pm54060S250 as HasMinVoltageLimit>::ROLE,
+            Pm54060S250::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Pm54060S250 as HasMaxVoltageLimit>::ROLE,
+            Pm54060S250::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <Pm54060S250 as HasTemperatureLimit>::ROLE,
+            Pm54060S250::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -17169,6 +19371,24 @@ fn pm54_060_s250_roles() {
             Pm54060S250::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Pm54060S250 as HasMinVoltageLimit>::ROLE,
+            Pm54060S250::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Pm54060S250 as HasMaxVoltageLimit>::ROLE,
+            Pm54060S250::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <Pm54060S250 as HasTemperatureLimit>::ROLE,
+            Pm54060S250::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17205,8 +19425,9 @@ fn pm54_060_s250_mode_source() {
 #[test]
 fn ym070_210_m001_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym070210M001;
 
@@ -17272,6 +19493,18 @@ fn ym070_210_m001_roles() {
             Ym070210M001::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210M001 as HasMinVoltageLimit>::ROLE,
+            Ym070210M001::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210M001 as HasMaxVoltageLimit>::ROLE,
+            Ym070210M001::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -17288,6 +19521,7 @@ fn ym070_210_m001_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -17353,6 +19587,18 @@ fn ym070_210_m001_roles() {
             Ym070210M001::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210M001 as HasMinVoltageLimit>::ROLE,
+            Ym070210M001::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210M001 as HasMaxVoltageLimit>::ROLE,
+            Ym070210M001::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17387,8 +19633,9 @@ fn ym070_210_m001_mode_source() {
 #[test]
 fn ym070_210_b001_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym070210B001;
 
@@ -17454,6 +19701,18 @@ fn ym070_210_b001_roles() {
             Ym070210B001::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210B001 as HasMinVoltageLimit>::ROLE,
+            Ym070210B001::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210B001 as HasMaxVoltageLimit>::ROLE,
+            Ym070210B001::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -17470,6 +19729,7 @@ fn ym070_210_b001_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -17535,6 +19795,18 @@ fn ym070_210_b001_roles() {
             Ym070210B001::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210B001 as HasMinVoltageLimit>::ROLE,
+            Ym070210B001::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210B001 as HasMaxVoltageLimit>::ROLE,
+            Ym070210B001::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17569,8 +19841,9 @@ fn ym070_210_b001_mode_source() {
 #[test]
 fn ym070_210_r051_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym070210R051;
 
@@ -17636,6 +19909,18 @@ fn ym070_210_r051_roles() {
             Ym070210R051::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210R051 as HasMinVoltageLimit>::ROLE,
+            Ym070210R051::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210R051 as HasMaxVoltageLimit>::ROLE,
+            Ym070210R051::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -17652,6 +19937,7 @@ fn ym070_210_r051_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -17717,6 +20003,18 @@ fn ym070_210_r051_roles() {
             Ym070210R051::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210R051 as HasMinVoltageLimit>::ROLE,
+            Ym070210R051::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210R051 as HasMaxVoltageLimit>::ROLE,
+            Ym070210R051::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17751,8 +20049,9 @@ fn ym070_210_r051_mode_source() {
 #[test]
 fn ym070_210_r099_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym070210R099;
 
@@ -17818,6 +20117,18 @@ fn ym070_210_r099_roles() {
             Ym070210R099::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210R099 as HasMinVoltageLimit>::ROLE,
+            Ym070210R099::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210R099 as HasMaxVoltageLimit>::ROLE,
+            Ym070210R099::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -17834,6 +20145,7 @@ fn ym070_210_r099_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -17899,6 +20211,18 @@ fn ym070_210_r099_roles() {
             Ym070210R099::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210R099 as HasMinVoltageLimit>::ROLE,
+            Ym070210R099::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210R099 as HasMaxVoltageLimit>::ROLE,
+            Ym070210R099::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17933,8 +20257,9 @@ fn ym070_210_r099_mode_source() {
 #[test]
 fn ym070_210_a051_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym070210A051;
 
@@ -18000,6 +20325,18 @@ fn ym070_210_a051_roles() {
             Ym070210A051::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210A051 as HasMinVoltageLimit>::ROLE,
+            Ym070210A051::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210A051 as HasMaxVoltageLimit>::ROLE,
+            Ym070210A051::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -18016,6 +20353,7 @@ fn ym070_210_a051_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -18081,6 +20419,18 @@ fn ym070_210_a051_roles() {
             Ym070210A051::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210A051 as HasMinVoltageLimit>::ROLE,
+            Ym070210A051::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210A051 as HasMaxVoltageLimit>::ROLE,
+            Ym070210A051::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18115,8 +20465,9 @@ fn ym070_210_a051_mode_source() {
 #[test]
 fn ym070_210_a099_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym070210A099;
 
@@ -18182,6 +20533,18 @@ fn ym070_210_a099_roles() {
             Ym070210A099::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210A099 as HasMinVoltageLimit>::ROLE,
+            Ym070210A099::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210A099 as HasMaxVoltageLimit>::ROLE,
+            Ym070210A099::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -18198,6 +20561,7 @@ fn ym070_210_a099_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -18263,6 +20627,18 @@ fn ym070_210_a099_roles() {
             Ym070210A099::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym070210A099 as HasMinVoltageLimit>::ROLE,
+            Ym070210A099::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym070210A099 as HasMaxVoltageLimit>::ROLE,
+            Ym070210A099::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18297,8 +20673,9 @@ fn ym070_210_a099_mode_source() {
 #[test]
 fn ym080_230_m001_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym080230M001;
 
@@ -18364,6 +20741,18 @@ fn ym080_230_m001_roles() {
             Ym080230M001::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230M001 as HasMinVoltageLimit>::ROLE,
+            Ym080230M001::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230M001 as HasMaxVoltageLimit>::ROLE,
+            Ym080230M001::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -18380,6 +20769,7 @@ fn ym080_230_m001_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -18445,6 +20835,18 @@ fn ym080_230_m001_roles() {
             Ym080230M001::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230M001 as HasMinVoltageLimit>::ROLE,
+            Ym080230M001::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230M001 as HasMaxVoltageLimit>::ROLE,
+            Ym080230M001::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18479,8 +20881,9 @@ fn ym080_230_m001_mode_source() {
 #[test]
 fn ym080_230_b001_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym080230B001;
 
@@ -18546,6 +20949,18 @@ fn ym080_230_b001_roles() {
             Ym080230B001::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230B001 as HasMinVoltageLimit>::ROLE,
+            Ym080230B001::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230B001 as HasMaxVoltageLimit>::ROLE,
+            Ym080230B001::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -18562,6 +20977,7 @@ fn ym080_230_b001_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -18627,6 +21043,18 @@ fn ym080_230_b001_roles() {
             Ym080230B001::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230B001 as HasMinVoltageLimit>::ROLE,
+            Ym080230B001::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230B001 as HasMaxVoltageLimit>::ROLE,
+            Ym080230B001::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18661,8 +21089,9 @@ fn ym080_230_b001_mode_source() {
 #[test]
 fn ym080_230_r051_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym080230R051;
 
@@ -18728,6 +21157,18 @@ fn ym080_230_r051_roles() {
             Ym080230R051::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230R051 as HasMinVoltageLimit>::ROLE,
+            Ym080230R051::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230R051 as HasMaxVoltageLimit>::ROLE,
+            Ym080230R051::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -18744,6 +21185,7 @@ fn ym080_230_r051_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -18809,6 +21251,18 @@ fn ym080_230_r051_roles() {
             Ym080230R051::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230R051 as HasMinVoltageLimit>::ROLE,
+            Ym080230R051::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230R051 as HasMaxVoltageLimit>::ROLE,
+            Ym080230R051::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18843,8 +21297,9 @@ fn ym080_230_r051_mode_source() {
 #[test]
 fn ym080_230_r099_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym080230R099;
 
@@ -18910,6 +21365,18 @@ fn ym080_230_r099_roles() {
             Ym080230R099::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230R099 as HasMinVoltageLimit>::ROLE,
+            Ym080230R099::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230R099 as HasMaxVoltageLimit>::ROLE,
+            Ym080230R099::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -18926,6 +21393,7 @@ fn ym080_230_r099_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -18991,6 +21459,18 @@ fn ym080_230_r099_roles() {
             Ym080230R099::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230R099 as HasMinVoltageLimit>::ROLE,
+            Ym080230R099::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230R099 as HasMaxVoltageLimit>::ROLE,
+            Ym080230R099::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19025,8 +21505,9 @@ fn ym080_230_r099_mode_source() {
 #[test]
 fn ym080_230_a051_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym080230A051;
 
@@ -19092,6 +21573,18 @@ fn ym080_230_a051_roles() {
             Ym080230A051::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230A051 as HasMinVoltageLimit>::ROLE,
+            Ym080230A051::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230A051 as HasMaxVoltageLimit>::ROLE,
+            Ym080230A051::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -19108,6 +21601,7 @@ fn ym080_230_a051_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -19173,6 +21667,18 @@ fn ym080_230_a051_roles() {
             Ym080230A051::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230A051 as HasMinVoltageLimit>::ROLE,
+            Ym080230A051::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230A051 as HasMaxVoltageLimit>::ROLE,
+            Ym080230A051::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19207,8 +21713,9 @@ fn ym080_230_a051_mode_source() {
 #[test]
 fn ym080_230_a099_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasPGain, HasPresentCurrent,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxVoltageLimit, HasMinVoltageLimit,
+        HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, LimitMode, Role,
     };
     use crate::models::Ym080230A099;
 
@@ -19274,6 +21781,18 @@ fn ym080_230_a099_roles() {
             Ym080230A099::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230A099 as HasMinVoltageLimit>::ROLE,
+            Ym080230A099::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230A099 as HasMaxVoltageLimit>::ROLE,
+            Ym080230A099::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -19290,6 +21809,7 @@ fn ym080_230_a099_roles() {
         Role::CwComplianceSlope,
         Role::CcwComplianceSlope,
         Role::TorqueCtrlModeEnable,
+        Role::TemperatureLimit,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -19355,6 +21875,18 @@ fn ym080_230_a099_roles() {
             Ym080230A099::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <Ym080230A099 as HasMinVoltageLimit>::ROLE,
+            Ym080230A099::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <Ym080230A099 as HasMaxVoltageLimit>::ROLE,
+            Ym080230A099::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19390,8 +21922,9 @@ fn ym080_230_a099_mode_source() {
 fn rh_p12_rn_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::RhP12Rn;
 
@@ -19487,6 +22020,24 @@ fn rh_p12_rn_roles() {
             RhP12Rn::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <RhP12Rn as HasMinVoltageLimit>::ROLE,
+            RhP12Rn::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <RhP12Rn as HasMaxVoltageLimit>::ROLE,
+            RhP12Rn::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <RhP12Rn as HasTemperatureLimit>::ROLE,
+            RhP12Rn::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -19593,6 +22144,24 @@ fn rh_p12_rn_roles() {
             RhP12Rn::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <RhP12Rn as HasMinVoltageLimit>::ROLE,
+            RhP12Rn::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <RhP12Rn as HasMaxVoltageLimit>::ROLE,
+            RhP12Rn::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <RhP12Rn as HasTemperatureLimit>::ROLE,
+            RhP12Rn::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19627,8 +22196,9 @@ fn rh_p12_rn_mode_source() {
 fn m42_10_s260_ra_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::M4210S260Ra;
 
@@ -19724,6 +22294,24 @@ fn m42_10_s260_ra_roles() {
             M4210S260Ra::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <M4210S260Ra as HasMinVoltageLimit>::ROLE,
+            M4210S260Ra::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <M4210S260Ra as HasMaxVoltageLimit>::ROLE,
+            M4210S260Ra::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <M4210S260Ra as HasTemperatureLimit>::ROLE,
+            M4210S260Ra::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -19830,6 +22418,24 @@ fn m42_10_s260_ra_roles() {
             M4210S260Ra::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <M4210S260Ra as HasMinVoltageLimit>::ROLE,
+            M4210S260Ra::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <M4210S260Ra as HasMaxVoltageLimit>::ROLE,
+            M4210S260Ra::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <M4210S260Ra as HasTemperatureLimit>::ROLE,
+            M4210S260Ra::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19867,8 +22473,9 @@ fn m42_10_s260_ra_mode_source() {
 fn m54_40_s250_ra_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::M5440S250Ra;
 
@@ -19964,6 +22571,24 @@ fn m54_40_s250_ra_roles() {
             M5440S250Ra::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <M5440S250Ra as HasMinVoltageLimit>::ROLE,
+            M5440S250Ra::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <M5440S250Ra as HasMaxVoltageLimit>::ROLE,
+            M5440S250Ra::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <M5440S250Ra as HasTemperatureLimit>::ROLE,
+            M5440S250Ra::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -20070,6 +22695,24 @@ fn m54_40_s250_ra_roles() {
             M5440S250Ra::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <M5440S250Ra as HasMinVoltageLimit>::ROLE,
+            M5440S250Ra::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <M5440S250Ra as HasMaxVoltageLimit>::ROLE,
+            M5440S250Ra::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <M5440S250Ra as HasTemperatureLimit>::ROLE,
+            M5440S250Ra::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -20107,8 +22750,9 @@ fn m54_40_s250_ra_mode_source() {
 fn m54_60_s250_ra_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::M5460S250Ra;
 
@@ -20204,6 +22848,24 @@ fn m54_60_s250_ra_roles() {
             M5460S250Ra::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <M5460S250Ra as HasMinVoltageLimit>::ROLE,
+            M5460S250Ra::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <M5460S250Ra as HasMaxVoltageLimit>::ROLE,
+            M5460S250Ra::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <M5460S250Ra as HasTemperatureLimit>::ROLE,
+            M5460S250Ra::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -20310,6 +22972,24 @@ fn m54_60_s250_ra_roles() {
             M5460S250Ra::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <M5460S250Ra as HasMinVoltageLimit>::ROLE,
+            M5460S250Ra::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <M5460S250Ra as HasMaxVoltageLimit>::ROLE,
+            M5460S250Ra::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <M5460S250Ra as HasTemperatureLimit>::ROLE,
+            M5460S250Ra::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -20347,8 +23027,9 @@ fn m54_60_s250_ra_mode_source() {
 fn h42_20_s300_ra_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::H4220S300Ra;
 
@@ -20444,6 +23125,24 @@ fn h42_20_s300_ra_roles() {
             H4220S300Ra::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <H4220S300Ra as HasMinVoltageLimit>::ROLE,
+            H4220S300Ra::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <H4220S300Ra as HasMaxVoltageLimit>::ROLE,
+            H4220S300Ra::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <H4220S300Ra as HasTemperatureLimit>::ROLE,
+            H4220S300Ra::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -20550,6 +23249,24 @@ fn h42_20_s300_ra_roles() {
             H4220S300Ra::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <H4220S300Ra as HasMinVoltageLimit>::ROLE,
+            H4220S300Ra::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <H4220S300Ra as HasMaxVoltageLimit>::ROLE,
+            H4220S300Ra::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <H4220S300Ra as HasTemperatureLimit>::ROLE,
+            H4220S300Ra::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -20587,8 +23304,9 @@ fn h42_20_s300_ra_mode_source() {
 fn h54_100_s500_ra_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::H54100S500Ra;
 
@@ -20684,6 +23402,24 @@ fn h54_100_s500_ra_roles() {
             H54100S500Ra::POSITION_D_GAIN,
             "Position D Gain",
         ),
+        (
+            Role::MinVoltageLimit,
+            <H54100S500Ra as HasMinVoltageLimit>::ROLE,
+            H54100S500Ra::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <H54100S500Ra as HasMaxVoltageLimit>::ROLE,
+            H54100S500Ra::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <H54100S500Ra as HasTemperatureLimit>::ROLE,
+            H54100S500Ra::TEMPERATURE_LIMIT,
+            "Temperature Limit",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -20790,6 +23526,24 @@ fn h54_100_s500_ra_roles() {
             H54100S500Ra::POSITION_D_GAIN,
             None,
         ),
+        (
+            Role::MinVoltageLimit,
+            <H54100S500Ra as HasMinVoltageLimit>::ROLE,
+            H54100S500Ra::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <H54100S500Ra as HasMaxVoltageLimit>::ROLE,
+            H54100S500Ra::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <H54100S500Ra as HasTemperatureLimit>::ROLE,
+            H54100S500Ra::TEMPERATURE_LIMIT,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -20827,8 +23581,9 @@ fn h54_100_s500_ra_mode_source() {
 fn h54_200_s500_ra_roles() {
     use crate::actuator::{
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen,
-        HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitMode, Role,
+        HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
+        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::H54200S500Ra;
 
@@ -20923,6 +23678,24 @@ fn h54_200_s500_ra_roles() {
             <H54200S500Ra as HasDGain>::ROLE,
             H54200S500Ra::POSITION_D_GAIN,
             "Position D Gain",
+        ),
+        (
+            Role::MinVoltageLimit,
+            <H54200S500Ra as HasMinVoltageLimit>::ROLE,
+            H54200S500Ra::MIN_VOLTAGE_LIMIT,
+            "Min Voltage Limit",
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <H54200S500Ra as HasMaxVoltageLimit>::ROLE,
+            H54200S500Ra::MAX_VOLTAGE_LIMIT,
+            "Max Voltage Limit",
+        ),
+        (
+            Role::TemperatureLimit,
+            <H54200S500Ra as HasTemperatureLimit>::ROLE,
+            H54200S500Ra::TEMPERATURE_LIMIT,
+            "Temperature Limit",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -21028,6 +23801,24 @@ fn h54_200_s500_ra_roles() {
             Role::DGain,
             <H54200S500Ra as HasDGain>::ROLE,
             H54200S500Ra::POSITION_D_GAIN,
+            None,
+        ),
+        (
+            Role::MinVoltageLimit,
+            <H54200S500Ra as HasMinVoltageLimit>::ROLE,
+            H54200S500Ra::MIN_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::MaxVoltageLimit,
+            <H54200S500Ra as HasMaxVoltageLimit>::ROLE,
+            H54200S500Ra::MAX_VOLTAGE_LIMIT,
+            None,
+        ),
+        (
+            Role::TemperatureLimit,
+            <H54200S500Ra as HasTemperatureLimit>::ROLE,
+            H54200S500Ra::TEMPERATURE_LIMIT,
             None,
         ),
     ] {

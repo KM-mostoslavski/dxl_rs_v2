@@ -3,9 +3,10 @@
 
 use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-    HasLedBlue, HasLedGreen, HasLedRed, HasMoving, HasPGain, HasPresentCurrent,
-    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
-    LimitRegisters, ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
+    HasLedBlue, HasLedGreen, HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving,
+    HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+    HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, LimitRegisters, ModeSource, ModeValues,
+    Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -73,74 +74,131 @@ impl RhP12Rn {
             realtime_tick: Some(<Self as HasRealtimeTick>::ROLE),
             p_gain: Some(<Self as HasPGain>::ROLE),
             d_gain: Some(<Self as HasDGain>::ROLE),
+            min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
+            max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
+            temperature_limit: Some(<Self as HasTemperatureLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
     };
 
-    pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
-    pub(crate) const MODEL_INFORMATION: Register = super::reg(2, 4, Access::R, Area::Eeprom);
-    pub(crate) const FIRMWARE_VERSION: Register = super::reg(6, 1, Access::R, Area::Eeprom);
-    pub(crate) const ID: Register = super::reg(7, 1, Access::RW, Area::Eeprom);
-    pub(crate) const BAUD_RATE: Register = super::reg(8, 1, Access::RW, Area::Eeprom);
-    pub(crate) const RETURN_DELAY_TIME: Register = super::reg(9, 1, Access::RW, Area::Eeprom);
-    pub(crate) const OPERATING_MODE: Register = super::reg(11, 1, Access::RW, Area::Eeprom);
-    pub(crate) const SECONDARY_ID: Register = super::reg(12, 1, Access::RW, Area::Eeprom);
-    pub(crate) const PROTOCOL_TYPE: Register = super::reg(13, 1, Access::RW, Area::Eeprom);
-    pub(crate) const HOMING_OFFSET: Register = super::reg(20, 4, Access::RW, Area::Eeprom);
-    pub(crate) const MOVING_THRESHOLD: Register = super::reg(24, 4, Access::RW, Area::Eeprom);
-    pub(crate) const TEMPERATURE_LIMIT: Register = super::reg(31, 1, Access::RW, Area::Eeprom);
-    pub(crate) const MAX_VOLTAGE_LIMIT: Register = super::reg(32, 2, Access::RW, Area::Eeprom);
-    pub(crate) const MIN_VOLTAGE_LIMIT: Register = super::reg(34, 2, Access::RW, Area::Eeprom);
-    pub(crate) const PWM_LIMIT: Register = super::reg(36, 2, Access::RW, Area::Eeprom);
-    pub(crate) const CURRENT_LIMIT: Register = super::reg(38, 2, Access::RW, Area::Eeprom);
-    pub(crate) const ACCELERATION_LIMIT: Register = super::reg(40, 4, Access::RW, Area::Eeprom);
-    pub(crate) const VELOCITY_LIMIT: Register = super::reg(44, 4, Access::RW, Area::Eeprom);
-    pub(crate) const MAX_POSITION_LIMIT: Register = super::reg(48, 4, Access::RW, Area::Eeprom);
-    pub(crate) const MIN_POSITION_LIMIT: Register = super::reg(52, 4, Access::RW, Area::Eeprom);
-    pub(crate) const EXTERNAL_PORT_MODE_1: Register = super::reg(56, 1, Access::RW, Area::Eeprom);
-    pub(crate) const EXTERNAL_PORT_MODE_2: Register = super::reg(57, 1, Access::RW, Area::Eeprom);
-    pub(crate) const EXTERNAL_PORT_MODE_3: Register = super::reg(58, 1, Access::RW, Area::Eeprom);
-    pub(crate) const EXTERNAL_PORT_MODE_4: Register = super::reg(59, 1, Access::RW, Area::Eeprom);
-    pub(crate) const SHUTDOWN: Register = super::reg(63, 1, Access::RW, Area::Eeprom);
-    pub(crate) const INDIRECT_ADDRESS_1: Register = super::reg(168, 2, Access::RW, Area::Eeprom);
-    pub(crate) const TORQUE_ENABLE: Register = super::reg(512, 1, Access::RW, Area::Ram);
-    pub(crate) const LED_RED: Register = super::reg(513, 1, Access::RW, Area::Ram);
-    pub(crate) const LED_GREEN: Register = super::reg(514, 1, Access::RW, Area::Ram);
-    pub(crate) const LED_BLUE: Register = super::reg(515, 1, Access::RW, Area::Ram);
-    pub(crate) const STATUS_RETURN_LEVEL: Register = super::reg(516, 1, Access::RW, Area::Ram);
-    pub(crate) const REGISTERED_INSTRUCTION: Register = super::reg(517, 1, Access::R, Area::Ram);
-    pub(crate) const HARDWARE_ERROR_STATUS: Register = super::reg(518, 1, Access::R, Area::Ram);
-    pub(crate) const VELOCITY_I_GAIN: Register = super::reg(524, 2, Access::RW, Area::Ram);
-    pub(crate) const VELOCITY_P_GAIN: Register = super::reg(526, 2, Access::RW, Area::Ram);
-    pub(crate) const POSITION_D_GAIN: Register = super::reg(528, 2, Access::RW, Area::Ram);
-    pub(crate) const POSITION_P_GAIN: Register = super::reg(532, 2, Access::RW, Area::Ram);
-    pub(crate) const POSITION_I_GAIN: Register = super::reg(530, 2, Access::RW, Area::Ram);
-    pub(crate) const FEEDFORWARD_2ND_GAIN: Register = super::reg(536, 2, Access::RW, Area::Ram);
-    pub(crate) const FEEDFORWARD_1ST_GAIN: Register = super::reg(538, 2, Access::RW, Area::Ram);
-    pub(crate) const BUS_WATCHDOG: Register = super::reg(546, 1, Access::RW, Area::Ram);
-    pub(crate) const GOAL_PWM: Register = super::reg(548, 2, Access::RW, Area::Ram);
-    pub(crate) const GOAL_CURRENT: Register = super::reg(550, 2, Access::RW, Area::Ram);
-    pub(crate) const GOAL_VELOCITY: Register = super::reg(552, 4, Access::RW, Area::Ram);
-    pub(crate) const PROFILE_ACCELERATION: Register = super::reg(556, 4, Access::RW, Area::Ram);
-    pub(crate) const PROFILE_VELOCITY: Register = super::reg(560, 4, Access::RW, Area::Ram);
-    pub(crate) const GOAL_POSITION: Register = super::reg(564, 4, Access::RW, Area::Ram);
-    pub(crate) const REALTIME_TICK: Register = super::reg(568, 2, Access::R, Area::Ram);
-    pub(crate) const MOVING: Register = super::reg(570, 1, Access::R, Area::Ram);
-    pub(crate) const MOVING_STATUS: Register = super::reg(571, 1, Access::R, Area::Ram);
-    pub(crate) const PRESENT_PWM: Register = super::reg(572, 2, Access::R, Area::Ram);
-    pub(crate) const PRESENT_CURRENT: Register = super::reg(574, 2, Access::R, Area::Ram);
-    pub(crate) const PRESENT_VELOCITY: Register = super::reg(576, 4, Access::R, Area::Ram);
-    pub(crate) const PRESENT_POSITION: Register = super::reg(580, 4, Access::R, Area::Ram);
-    pub(crate) const VELOCITY_TRAJECTORY: Register = super::reg(584, 4, Access::R, Area::Ram);
-    pub(crate) const POSITION_TRAJECTORY: Register = super::reg(588, 4, Access::R, Area::Ram);
-    pub(crate) const PRESENT_INPUT_VOLTAGE: Register = super::reg(592, 2, Access::R, Area::Ram);
-    pub(crate) const PRESENT_TEMPERATURE: Register = super::reg(594, 1, Access::R, Area::Ram);
-    pub(crate) const EXTERNAL_PORT_DATA_1: Register = super::reg(600, 2, Access::RW, Area::Ram);
-    pub(crate) const EXTERNAL_PORT_DATA_2: Register = super::reg(602, 2, Access::RW, Area::Ram);
-    pub(crate) const EXTERNAL_PORT_DATA_3: Register = super::reg(604, 2, Access::RW, Area::Ram);
-    pub(crate) const EXTERNAL_PORT_DATA_4: Register = super::reg(606, 2, Access::RW, Area::Ram);
-    pub(crate) const INDIRECT_DATA_1: Register = super::reg(634, 1, Access::RW, Area::Ram);
+    pub(crate) const MODEL_NUMBER: Register =
+        super::reg("Model Number", 0, 2, Access::R, Area::Eeprom);
+    pub(crate) const MODEL_INFORMATION: Register =
+        super::reg("Model Information", 2, 4, Access::R, Area::Eeprom);
+    pub(crate) const FIRMWARE_VERSION: Register =
+        super::reg("Firmware Version", 6, 1, Access::R, Area::Eeprom);
+    pub(crate) const ID: Register = super::reg("ID", 7, 1, Access::RW, Area::Eeprom);
+    pub(crate) const BAUD_RATE: Register = super::reg("Baud Rate", 8, 1, Access::RW, Area::Eeprom);
+    pub(crate) const RETURN_DELAY_TIME: Register =
+        super::reg("Return Delay Time", 9, 1, Access::RW, Area::Eeprom);
+    pub(crate) const OPERATING_MODE: Register =
+        super::reg("Operating Mode", 11, 1, Access::RW, Area::Eeprom);
+    pub(crate) const SECONDARY_ID: Register =
+        super::reg("Secondary ID", 12, 1, Access::RW, Area::Eeprom);
+    pub(crate) const PROTOCOL_TYPE: Register =
+        super::reg("Protocol Type", 13, 1, Access::RW, Area::Eeprom);
+    pub(crate) const HOMING_OFFSET: Register =
+        super::reg("Homing Offset", 20, 4, Access::RW, Area::Eeprom);
+    pub(crate) const MOVING_THRESHOLD: Register =
+        super::reg("Moving Threshold", 24, 4, Access::RW, Area::Eeprom);
+    pub(crate) const TEMPERATURE_LIMIT: Register =
+        super::reg("Temperature Limit", 31, 1, Access::RW, Area::Eeprom);
+    pub(crate) const MAX_VOLTAGE_LIMIT: Register =
+        super::reg("Max Voltage Limit", 32, 2, Access::RW, Area::Eeprom);
+    pub(crate) const MIN_VOLTAGE_LIMIT: Register =
+        super::reg("Min Voltage Limit", 34, 2, Access::RW, Area::Eeprom);
+    pub(crate) const PWM_LIMIT: Register = super::reg("PWM Limit", 36, 2, Access::RW, Area::Eeprom);
+    pub(crate) const CURRENT_LIMIT: Register =
+        super::reg("Current Limit", 38, 2, Access::RW, Area::Eeprom);
+    pub(crate) const ACCELERATION_LIMIT: Register =
+        super::reg("Acceleration Limit", 40, 4, Access::RW, Area::Eeprom);
+    pub(crate) const VELOCITY_LIMIT: Register =
+        super::reg("Velocity Limit", 44, 4, Access::RW, Area::Eeprom);
+    pub(crate) const MAX_POSITION_LIMIT: Register =
+        super::reg("Max Position Limit", 48, 4, Access::RW, Area::Eeprom);
+    pub(crate) const MIN_POSITION_LIMIT: Register =
+        super::reg("Min Position Limit", 52, 4, Access::RW, Area::Eeprom);
+    pub(crate) const EXTERNAL_PORT_MODE_1: Register =
+        super::reg("External Port Mode 1", 56, 1, Access::RW, Area::Eeprom);
+    pub(crate) const EXTERNAL_PORT_MODE_2: Register =
+        super::reg("External Port Mode 2", 57, 1, Access::RW, Area::Eeprom);
+    pub(crate) const EXTERNAL_PORT_MODE_3: Register =
+        super::reg("External Port Mode 3", 58, 1, Access::RW, Area::Eeprom);
+    pub(crate) const EXTERNAL_PORT_MODE_4: Register =
+        super::reg("External Port Mode 4", 59, 1, Access::RW, Area::Eeprom);
+    pub(crate) const SHUTDOWN: Register = super::reg("Shutdown", 63, 1, Access::RW, Area::Eeprom);
+    pub(crate) const INDIRECT_ADDRESS_1: Register =
+        super::reg("Indirect Address 1", 168, 2, Access::RW, Area::Eeprom);
+    pub(crate) const TORQUE_ENABLE: Register =
+        super::reg("Torque Enable", 512, 1, Access::RW, Area::Ram);
+    pub(crate) const LED_RED: Register = super::reg("LED Red", 513, 1, Access::RW, Area::Ram);
+    pub(crate) const LED_GREEN: Register = super::reg("LED Green", 514, 1, Access::RW, Area::Ram);
+    pub(crate) const LED_BLUE: Register = super::reg("LED Blue", 515, 1, Access::RW, Area::Ram);
+    pub(crate) const STATUS_RETURN_LEVEL: Register =
+        super::reg("Status Return Level", 516, 1, Access::RW, Area::Ram);
+    pub(crate) const REGISTERED_INSTRUCTION: Register =
+        super::reg("Registered Instruction", 517, 1, Access::R, Area::Ram);
+    pub(crate) const HARDWARE_ERROR_STATUS: Register =
+        super::reg("Hardware Error Status", 518, 1, Access::R, Area::Ram);
+    pub(crate) const VELOCITY_I_GAIN: Register =
+        super::reg("Velocity I Gain", 524, 2, Access::RW, Area::Ram);
+    pub(crate) const VELOCITY_P_GAIN: Register =
+        super::reg("Velocity P Gain", 526, 2, Access::RW, Area::Ram);
+    pub(crate) const POSITION_D_GAIN: Register =
+        super::reg("Position D Gain", 528, 2, Access::RW, Area::Ram);
+    pub(crate) const POSITION_P_GAIN: Register =
+        super::reg("Position P Gain", 532, 2, Access::RW, Area::Ram);
+    pub(crate) const POSITION_I_GAIN: Register =
+        super::reg("Position I Gain", 530, 2, Access::RW, Area::Ram);
+    pub(crate) const FEEDFORWARD_2ND_GAIN: Register =
+        super::reg("Feedforward 2nd Gain", 536, 2, Access::RW, Area::Ram);
+    pub(crate) const FEEDFORWARD_1ST_GAIN: Register =
+        super::reg("Feedforward 1st Gain", 538, 2, Access::RW, Area::Ram);
+    pub(crate) const BUS_WATCHDOG: Register =
+        super::reg("Bus Watchdog", 546, 1, Access::RW, Area::Ram);
+    pub(crate) const GOAL_PWM: Register = super::reg("Goal PWM", 548, 2, Access::RW, Area::Ram);
+    pub(crate) const GOAL_CURRENT: Register =
+        super::reg("Goal Current", 550, 2, Access::RW, Area::Ram);
+    pub(crate) const GOAL_VELOCITY: Register =
+        super::reg("Goal Velocity", 552, 4, Access::RW, Area::Ram);
+    pub(crate) const PROFILE_ACCELERATION: Register =
+        super::reg("Profile Acceleration", 556, 4, Access::RW, Area::Ram);
+    pub(crate) const PROFILE_VELOCITY: Register =
+        super::reg("Profile Velocity", 560, 4, Access::RW, Area::Ram);
+    pub(crate) const GOAL_POSITION: Register =
+        super::reg("Goal Position", 564, 4, Access::RW, Area::Ram);
+    pub(crate) const REALTIME_TICK: Register =
+        super::reg("Realtime Tick", 568, 2, Access::R, Area::Ram);
+    pub(crate) const MOVING: Register = super::reg("Moving", 570, 1, Access::R, Area::Ram);
+    pub(crate) const MOVING_STATUS: Register =
+        super::reg("Moving Status", 571, 1, Access::R, Area::Ram);
+    pub(crate) const PRESENT_PWM: Register =
+        super::reg("Present PWM", 572, 2, Access::R, Area::Ram);
+    pub(crate) const PRESENT_CURRENT: Register =
+        super::reg("Present Current", 574, 2, Access::R, Area::Ram);
+    pub(crate) const PRESENT_VELOCITY: Register =
+        super::reg("Present Velocity", 576, 4, Access::R, Area::Ram);
+    pub(crate) const PRESENT_POSITION: Register =
+        super::reg("Present Position", 580, 4, Access::R, Area::Ram);
+    pub(crate) const VELOCITY_TRAJECTORY: Register =
+        super::reg("Velocity Trajectory", 584, 4, Access::R, Area::Ram);
+    pub(crate) const POSITION_TRAJECTORY: Register =
+        super::reg("Position Trajectory", 588, 4, Access::R, Area::Ram);
+    pub(crate) const PRESENT_INPUT_VOLTAGE: Register =
+        super::reg("Present Input Voltage", 592, 2, Access::R, Area::Ram);
+    pub(crate) const PRESENT_TEMPERATURE: Register =
+        super::reg("Present Temperature", 594, 1, Access::R, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_1: Register =
+        super::reg("External Port Data 1", 600, 2, Access::RW, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_2: Register =
+        super::reg("External Port Data 2", 602, 2, Access::RW, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_3: Register =
+        super::reg("External Port Data 3", 604, 2, Access::RW, Area::Ram);
+    pub(crate) const EXTERNAL_PORT_DATA_4: Register =
+        super::reg("External Port Data 4", 606, 2, Access::RW, Area::Ram);
+    pub(crate) const INDIRECT_DATA_1: Register =
+        super::reg("Indirect Data 1", 634, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for RhP12Rn {
@@ -336,6 +394,42 @@ impl HasDGain for RhP12Rn {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position D Gain",
         register: Self::POSITION_D_GAIN,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Min Voltage Limit: raw only, no unit in the table.
+impl HasMinVoltageLimit for RhP12Rn {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Min Voltage Limit",
+        register: Self::MIN_VOLTAGE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Max Voltage Limit: raw only, no unit in the table.
+impl HasMaxVoltageLimit for RhP12Rn {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Max Voltage Limit",
+        register: Self::MAX_VOLTAGE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Temperature Limit: raw only, no unit in the table.
+impl HasTemperatureLimit for RhP12Rn {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Temperature Limit",
+        register: Self::TEMPERATURE_LIMIT,
         scales: &[],
         bounded_by: None,
         from_fw: 0,

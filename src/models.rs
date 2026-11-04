@@ -312,8 +312,9 @@ pub use h54_200_s500_ra::H54200S500Ra;
 pub use crate::actuator::{
     HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
     HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasLedBlue,
-    HasLedGreen, HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentLoad,
-    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
+    HasLedGreen, HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain,
+    HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
+    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
     HasTorqueCtrlModeEnable, RoleRegister,
 };
 
@@ -325,8 +326,9 @@ pub use crate::actuator::Model;
 mod tests;
 
 /// Builds one register row. Private to `models`; model files call `super::reg`.
-const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {
+const fn reg(name: &'static str, addr: u16, size: u8, access: Access, area: Area) -> Register {
     Register {
+        name,
         addr,
         size,
         access,
@@ -335,7 +337,7 @@ const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {
 }
 
 /// Model Number location, the same in every table (codegen checks it). Read on P1 Setup.
-pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);
+pub(crate) const MODEL_NUMBER: Register = reg("Model Number", 0, 2, Access::R, Area::Eeprom);
 
 /// Any supported actuator, one variant per model type.
 ///

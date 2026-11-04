@@ -2,10 +2,11 @@
 // Source: control_tables/mx_64_p1.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMoving,
-    HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-    HasRealtimeTick, HasSpeedLimit, HasTorqueCtrlModeEnable, LimitMode, LimitRegisters, ModeScale,
-    ModeSet, ModeSource, Model, ModelData, Protocols, RoleRegister, Roles,
+    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
+    HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad,
+    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
+    HasTemperatureLimit, HasTorqueCtrlModeEnable, LimitMode, LimitRegisters, ModeScale, ModeSet,
+    ModeSource, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -64,49 +65,77 @@ impl Mx64P1 {
             p_gain: Some(<Self as HasPGain>::ROLE),
             d_gain: Some(<Self as HasDGain>::ROLE),
             torque_ctrl_mode_enable: Some(<Self as HasTorqueCtrlModeEnable>::ROLE),
+            min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
+            max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
+            temperature_limit: Some(<Self as HasTemperatureLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: true,
     };
 
-    pub(crate) const MODEL_NUMBER: Register = super::reg(0, 2, Access::R, Area::Eeprom);
-    pub(crate) const FIRMWARE_VERSION: Register = super::reg(2, 1, Access::R, Area::Eeprom);
-    pub(crate) const ID: Register = super::reg(3, 1, Access::RW, Area::Eeprom);
-    pub(crate) const BAUD_RATE: Register = super::reg(4, 1, Access::RW, Area::Eeprom);
-    pub(crate) const RETURN_DELAY_TIME: Register = super::reg(5, 1, Access::RW, Area::Eeprom);
-    pub(crate) const CW_ANGLE_LIMIT: Register = super::reg(6, 2, Access::RW, Area::Eeprom);
-    pub(crate) const CCW_ANGLE_LIMIT: Register = super::reg(8, 2, Access::RW, Area::Eeprom);
-    pub(crate) const TEMPERATURE_LIMIT: Register = super::reg(11, 1, Access::RW, Area::Eeprom);
-    pub(crate) const MIN_VOLTAGE_LIMIT: Register = super::reg(12, 1, Access::RW, Area::Eeprom);
-    pub(crate) const MAX_VOLTAGE_LIMIT: Register = super::reg(13, 1, Access::RW, Area::Eeprom);
-    pub(crate) const MAX_TORQUE: Register = super::reg(14, 2, Access::RW, Area::Eeprom);
-    pub(crate) const STATUS_RETURN_LEVEL: Register = super::reg(16, 1, Access::RW, Area::Eeprom);
-    pub(crate) const ALARM_LED: Register = super::reg(17, 1, Access::RW, Area::Eeprom);
-    pub(crate) const SHUTDOWN: Register = super::reg(18, 1, Access::RW, Area::Eeprom);
-    pub(crate) const MULTI_TURN_OFFSET: Register = super::reg(20, 2, Access::RW, Area::Eeprom);
-    pub(crate) const RESOLUTION_DIVIDER: Register = super::reg(22, 1, Access::RW, Area::Eeprom);
-    pub(crate) const TORQUE_ENABLE: Register = super::reg(24, 1, Access::RW, Area::Ram);
-    pub(crate) const LED: Register = super::reg(25, 1, Access::RW, Area::Ram);
-    pub(crate) const D_GAIN: Register = super::reg(26, 1, Access::RW, Area::Ram);
-    pub(crate) const I_GAIN: Register = super::reg(27, 1, Access::RW, Area::Ram);
-    pub(crate) const P_GAIN: Register = super::reg(28, 1, Access::RW, Area::Ram);
-    pub(crate) const GOAL_POSITION: Register = super::reg(30, 2, Access::RW, Area::Ram);
-    pub(crate) const MOVING_SPEED: Register = super::reg(32, 2, Access::RW, Area::Ram);
-    pub(crate) const TORQUE_LIMIT: Register = super::reg(34, 2, Access::RW, Area::Ram);
-    pub(crate) const PRESENT_POSITION: Register = super::reg(36, 2, Access::R, Area::Ram);
-    pub(crate) const PRESENT_SPEED: Register = super::reg(38, 2, Access::R, Area::Ram);
-    pub(crate) const PRESENT_LOAD: Register = super::reg(40, 2, Access::R, Area::Ram);
-    pub(crate) const PRESENT_VOLTAGE: Register = super::reg(42, 1, Access::R, Area::Ram);
-    pub(crate) const PRESENT_TEMPERATURE: Register = super::reg(43, 1, Access::R, Area::Ram);
-    pub(crate) const REGISTERED: Register = super::reg(44, 1, Access::R, Area::Ram);
-    pub(crate) const MOVING: Register = super::reg(46, 1, Access::R, Area::Ram);
-    pub(crate) const LOCK: Register = super::reg(47, 1, Access::RW, Area::Ram);
-    pub(crate) const PUNCH: Register = super::reg(48, 2, Access::RW, Area::Ram);
-    pub(crate) const REALTIME_TICK: Register = super::reg(50, 2, Access::R, Area::Ram);
-    pub(crate) const CURRENT: Register = super::reg(68, 2, Access::RW, Area::Ram);
-    pub(crate) const TORQUE_CTRL_MODE_ENABLE: Register = super::reg(70, 1, Access::RW, Area::Ram);
-    pub(crate) const GOAL_TORQUE: Register = super::reg(71, 2, Access::RW, Area::Ram);
-    pub(crate) const GOAL_ACCELERATION: Register = super::reg(73, 1, Access::RW, Area::Ram);
+    pub(crate) const MODEL_NUMBER: Register =
+        super::reg("Model Number", 0, 2, Access::R, Area::Eeprom);
+    pub(crate) const FIRMWARE_VERSION: Register =
+        super::reg("Firmware Version", 2, 1, Access::R, Area::Eeprom);
+    pub(crate) const ID: Register = super::reg("ID", 3, 1, Access::RW, Area::Eeprom);
+    pub(crate) const BAUD_RATE: Register = super::reg("Baud Rate", 4, 1, Access::RW, Area::Eeprom);
+    pub(crate) const RETURN_DELAY_TIME: Register =
+        super::reg("Return Delay Time", 5, 1, Access::RW, Area::Eeprom);
+    pub(crate) const CW_ANGLE_LIMIT: Register =
+        super::reg("CW Angle Limit", 6, 2, Access::RW, Area::Eeprom);
+    pub(crate) const CCW_ANGLE_LIMIT: Register =
+        super::reg("CCW Angle Limit", 8, 2, Access::RW, Area::Eeprom);
+    pub(crate) const TEMPERATURE_LIMIT: Register =
+        super::reg("Temperature Limit", 11, 1, Access::RW, Area::Eeprom);
+    pub(crate) const MIN_VOLTAGE_LIMIT: Register =
+        super::reg("Min Voltage Limit", 12, 1, Access::RW, Area::Eeprom);
+    pub(crate) const MAX_VOLTAGE_LIMIT: Register =
+        super::reg("Max Voltage Limit", 13, 1, Access::RW, Area::Eeprom);
+    pub(crate) const MAX_TORQUE: Register =
+        super::reg("Max Torque", 14, 2, Access::RW, Area::Eeprom);
+    pub(crate) const STATUS_RETURN_LEVEL: Register =
+        super::reg("Status Return Level", 16, 1, Access::RW, Area::Eeprom);
+    pub(crate) const ALARM_LED: Register = super::reg("Alarm LED", 17, 1, Access::RW, Area::Eeprom);
+    pub(crate) const SHUTDOWN: Register = super::reg("Shutdown", 18, 1, Access::RW, Area::Eeprom);
+    pub(crate) const MULTI_TURN_OFFSET: Register =
+        super::reg("Multi Turn Offset", 20, 2, Access::RW, Area::Eeprom);
+    pub(crate) const RESOLUTION_DIVIDER: Register =
+        super::reg("Resolution Divider", 22, 1, Access::RW, Area::Eeprom);
+    pub(crate) const TORQUE_ENABLE: Register =
+        super::reg("Torque Enable", 24, 1, Access::RW, Area::Ram);
+    pub(crate) const LED: Register = super::reg("LED", 25, 1, Access::RW, Area::Ram);
+    pub(crate) const D_GAIN: Register = super::reg("D Gain", 26, 1, Access::RW, Area::Ram);
+    pub(crate) const I_GAIN: Register = super::reg("I Gain", 27, 1, Access::RW, Area::Ram);
+    pub(crate) const P_GAIN: Register = super::reg("P Gain", 28, 1, Access::RW, Area::Ram);
+    pub(crate) const GOAL_POSITION: Register =
+        super::reg("Goal Position", 30, 2, Access::RW, Area::Ram);
+    pub(crate) const MOVING_SPEED: Register =
+        super::reg("Moving Speed", 32, 2, Access::RW, Area::Ram);
+    pub(crate) const TORQUE_LIMIT: Register =
+        super::reg("Torque Limit", 34, 2, Access::RW, Area::Ram);
+    pub(crate) const PRESENT_POSITION: Register =
+        super::reg("Present Position", 36, 2, Access::R, Area::Ram);
+    pub(crate) const PRESENT_SPEED: Register =
+        super::reg("Present Speed", 38, 2, Access::R, Area::Ram);
+    pub(crate) const PRESENT_LOAD: Register =
+        super::reg("Present Load", 40, 2, Access::R, Area::Ram);
+    pub(crate) const PRESENT_VOLTAGE: Register =
+        super::reg("Present Voltage", 42, 1, Access::R, Area::Ram);
+    pub(crate) const PRESENT_TEMPERATURE: Register =
+        super::reg("Present Temperature", 43, 1, Access::R, Area::Ram);
+    pub(crate) const REGISTERED: Register = super::reg("Registered", 44, 1, Access::R, Area::Ram);
+    pub(crate) const MOVING: Register = super::reg("Moving", 46, 1, Access::R, Area::Ram);
+    pub(crate) const LOCK: Register = super::reg("Lock", 47, 1, Access::RW, Area::Ram);
+    pub(crate) const PUNCH: Register = super::reg("Punch", 48, 2, Access::RW, Area::Ram);
+    pub(crate) const REALTIME_TICK: Register =
+        super::reg("Realtime Tick", 50, 2, Access::R, Area::Ram);
+    pub(crate) const CURRENT: Register = super::reg("Current", 68, 2, Access::RW, Area::Ram);
+    pub(crate) const TORQUE_CTRL_MODE_ENABLE: Register =
+        super::reg("Torque Ctrl Mode Enable", 70, 1, Access::RW, Area::Ram);
+    pub(crate) const GOAL_TORQUE: Register =
+        super::reg("Goal Torque", 71, 2, Access::RW, Area::Ram);
+    pub(crate) const GOAL_ACCELERATION: Register =
+        super::reg("Goal Acceleration", 73, 1, Access::RW, Area::Ram);
 }
 
 impl Describe for Mx64P1 {
@@ -334,5 +363,53 @@ impl HasTorqueCtrlModeEnable for Mx64P1 {
         bounded_by: None,
         from_fw: 0,
         row_range: Some((0, 1)),
+    };
+}
+
+/// Min Voltage Limit: 0.1 V per raw step in every mode.
+impl HasMinVoltageLimit for Mx64P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Min Voltage Limit",
+        register: Self::MIN_VOLTAGE_LIMIT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Max Voltage Limit: 0.1 V per raw step in every mode.
+impl HasMaxVoltageLimit for Mx64P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Max Voltage Limit",
+        register: Self::MAX_VOLTAGE_LIMIT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Temperature Limit: 1 °C per raw step in every mode.
+impl HasTemperatureLimit for Mx64P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Temperature Limit",
+        register: Self::TEMPERATURE_LIMIT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: Some((0, 100)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
     };
 }

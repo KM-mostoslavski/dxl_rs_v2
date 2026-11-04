@@ -1,6 +1,6 @@
 //! [`Velocity`] and [`SpeedLimit`].
 
-use crate::error::ValidationError;
+use crate::error::{Request, ValidationError};
 
 use super::scale::RegisterScale;
 
@@ -75,6 +75,7 @@ impl RegisterScale {
         let reserved = ValidationError::DoesNotFit {
             raw: 0,
             size: self.size(),
+            request: Request::NONE,
         };
         match (limit, self.zero_is_unlimited()) {
             (SpeedLimit::Unlimited, true) => Ok(0),
@@ -127,11 +128,15 @@ mod tests {
     fn non_finite_and_too_fast_are_refused() {
         assert_eq!(
             AX_SPEED.velocity_to_raw(Velocity::from_rad_per_s(f32::NAN)),
-            Err(ValidationError::NotFinite)
+            Err(ValidationError::NOT_FINITE)
         );
         assert_eq!(
             AX_SPEED.velocity_to_raw(Velocity::from_rad_per_s(rpm(0.111) * 1024.0)),
-            Err(ValidationError::DoesNotFit { raw: 1024, size: 2 })
+            Err(ValidationError::DoesNotFit {
+                raw: 1024,
+                size: 2,
+                request: Request::NONE,
+            })
         );
     }
 
@@ -152,11 +157,19 @@ mod tests {
         let tiny = SpeedLimit::Limited(Velocity::from_rad_per_s(rpm(0.01)));
         assert_eq!(
             AX_MOVING_SPEED.speed_limit_to_raw(tiny),
-            Err(ValidationError::DoesNotFit { raw: 0, size: 2 })
+            Err(ValidationError::DoesNotFit {
+                raw: 0,
+                size: 2,
+                request: Request::NONE,
+            })
         );
         assert_eq!(
             AX_MOVING_SPEED.speed_limit_to_raw(SpeedLimit::Limited(Velocity::ZERO)),
-            Err(ValidationError::DoesNotFit { raw: 0, size: 2 })
+            Err(ValidationError::DoesNotFit {
+                raw: 0,
+                size: 2,
+                request: Request::NONE,
+            })
         );
     }
 
@@ -169,7 +182,11 @@ mod tests {
         );
         assert_eq!(
             AX_SPEED.speed_limit_to_raw(SpeedLimit::Unlimited),
-            Err(ValidationError::DoesNotFit { raw: 0, size: 2 })
+            Err(ValidationError::DoesNotFit {
+                raw: 0,
+                size: 2,
+                request: Request::NONE,
+            })
         );
     }
 }

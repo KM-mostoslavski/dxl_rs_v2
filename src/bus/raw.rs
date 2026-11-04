@@ -8,6 +8,7 @@ use crate::error::Error;
 use crate::protocol::{Clock, Protocol};
 
 use super::actuator_ref::ActuatorRef;
+use super::diagnose::diagnosed;
 use super::observe::observe;
 
 /// Any register, by address (`raw-registers` feature).
@@ -16,7 +17,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// No guard and no check of `addr` against the model's control table.
     /// Retried like any unicast read ([`Config::retries`]). A reply
-    /// reporting a hardware fault is returned as [`Error::Status`] and marks
+    /// reporting a hardware fault is measured and returned as
+    /// [`Error::Fault`] and marks
     /// the actuator [`Faulted`](crate::TorqueState::Faulted) on this call,
     /// like every other reply. `out` holds the bytes only on `Ok`.
     ///
@@ -29,6 +31,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`Config::retries`]: crate::Config::retries
     pub fn read_raw(&mut self, addr: u16, out: &mut [u8]) -> Result<(), Error> {
         let result = self.wire.read_at(self.kind.id(), addr, out);
+        let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);
         result
     }
@@ -40,7 +43,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// of `addr` against the model's control table: the bytes are sent as
     /// given, even while torque is off. Retried like any unicast write
     /// ([`Config::retries`]). A reply reporting a hardware fault is
-    /// returned as [`Error::Status`] and marks the actuator
+    /// measured and returned as
+    /// [`Error::Fault`] and marks the actuator
     /// [`Faulted`](crate::TorqueState::Faulted), like every other reply.
     ///
     /// The write never updates the bus's view of the actuator:
@@ -61,6 +65,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`Config::retries`]: crate::Config::retries
     pub fn write_raw(&mut self, addr: u16, data: &[u8]) -> Result<(), Error> {
         let result = self.wire.write_at(self.kind.id(), addr, data);
+        let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);
         result
     }
@@ -73,9 +78,12 @@ mod tests {
         extern crate std;
 
         use crate::bus::testing::*;
-        use crate::error::{Error, StatusError, StatusReport, TransportError, ValidationError};
+        use crate::error::{
+            Error, FaultError, Instruction, Request, TransportError, ValidationError,
+        };
         use crate::protocol::P2;
         use crate::transport::{MockTime, MockTransport};
+        use crate::units::HardwareErrors;
         use crate::{Bus, Config};
 
         /// An XM430-W350 at ID 1, limits 1000..=3000, torque `state`.
@@ -85,13 +93,21 @@ mod tests {
             bus
         }
 
-        fn alert() -> Error {
-            StatusError {
+        /// The raw `instruction` at `addr` of `len` bytes on actuator 1.
+        fn raw(instruction: Instruction, addr: u16, len: u16) -> Request {
+            Request::NONE
+                .instruction(instruction)
+                .id(id(1))
+                .addr(addr)
+                .len(len)
+        }
+
+        /// The overload actuator 1 reports in reply to `request`, measured.
+        fn overload(request: Request) -> Error {
+            FaultError::Overload {
                 id: id(1),
-                report: StatusReport::P2 {
-                    alert: true,
-                    code: None,
-                },
+                faults: HardwareErrors::from_raw(0x20),
+                request,
             }
             .into()
         }
@@ -161,16 +177,26 @@ mod tests {
         fn raw_alert_reply_faults() {
             let time = MockTime::new();
             let mut bus = xm430(&time, ON);
-            line(&mut bus).reply_to(1, &p2_status(1, 0x80, &[0; 4]));
+            line(&mut bus)
+                .reply_to(1, &p2_status(1, 0x80, &[0; 4]))
+                .reply_to(2, &p2_status(1, 0x80, &[0x20]));
             let mut xm = bus.actuator(id(1)).unwrap();
-            assert_eq!(xm.read_raw(132, &mut [0; 4]), Err(alert()));
+            assert_eq!(
+                xm.read_raw(132, &mut [0; 4]),
+                Err(overload(raw(Instruction::Read, 132, 4)))
+            );
             assert_eq!(xm.torque_state(), FAULTED);
 
             let time = MockTime::new();
             let mut bus = xm430(&time, OFF);
-            line(&mut bus).reply_to(1, &p2_status(1, 0x80, &[]));
+            line(&mut bus)
+                .reply_to(1, &p2_status(1, 0x80, &[]))
+                .reply_to(2, &p2_status(1, 0x80, &[0x20]));
             let mut xm = bus.actuator(id(1)).unwrap();
-            assert_eq!(xm.write_raw(65, &[1]), Err(alert()));
+            assert_eq!(
+                xm.write_raw(65, &[1]),
+                Err(overload(raw(Instruction::Write, 65, 1)))
+            );
             assert_eq!(xm.torque_state(), FAULTED);
         }
 
@@ -181,7 +207,11 @@ mod tests {
             let mut xm = bus.actuator(id(1)).unwrap();
             assert_eq!(
                 xm.write_raw(65, &[1]),
-                Err(TransportError::Timeout { id: Some(id(1)) }.into())
+                Err(TransportError::NoReply {
+                    request: raw(Instruction::Write, 65, 1),
+                    timeout_us: 10_000,
+                }
+                .into())
             );
             assert_eq!(xm.torque_state(), ON);
         }
@@ -213,7 +243,7 @@ mod tests {
     #[cfg(feature = "ax")]
     mod ax {
         use crate::bus::testing::*;
-        use crate::error::{Error, ValidationError};
+        use crate::error::{Error, Instruction, Request, ValidationError};
         use crate::protocol::P1;
         use crate::transport::MockTime;
 
@@ -233,10 +263,19 @@ mod tests {
             assert_eq!(ax.torque_state(), OFF);
             let mark = mark(&bus);
             let mut ax = bus.actuator(id(1)).unwrap();
-            let far: Result<(), Error> =
-                Err(ValidationError::AddressOutOfRange { addr: 256 }.into());
-            assert_eq!(ax.write_raw(256, &[0]), far);
-            assert_eq!(ax.read_raw(256, &mut out), far);
+            let far = |instruction, len| -> Result<(), Error> {
+                Err(ValidationError::AddressOutOfRange {
+                    addr: 256,
+                    request: Request::NONE
+                        .instruction(instruction)
+                        .id(id(1))
+                        .addr(256)
+                        .len(len),
+                }
+                .into())
+            };
+            assert_eq!(ax.write_raw(256, &[0]), far(Instruction::Write, 1));
+            assert_eq!(ax.read_raw(256, &mut out), far(Instruction::Read, 2));
             assert_quiet(&bus, mark);
             assert_eq!(
                 sent(&bus),

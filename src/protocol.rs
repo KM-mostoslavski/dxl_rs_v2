@@ -30,7 +30,9 @@ use core::time::Duration;
 
 use embedded_io::{ErrorKind, Write};
 
-use crate::error::{Error, ProtocolError, StatusError, StatusReport, TransportError};
+use crate::error::{
+    Direction, Error, ProtocolError, Request, StatusError, StatusReport, TransportError,
+};
 use crate::{Id, Transport};
 
 mod sealed {
@@ -86,6 +88,10 @@ pub struct Link<'a, T, C> {
     pub(crate) clock: &'a mut C,
     /// How long to wait for each expected reply.
     pub(crate) timeout: Duration,
+    /// What the current exchange is doing, for its errors. The bus fills
+    /// the register and setup step; each exchange adds the instruction,
+    /// target, address and length.
+    pub(crate) request: Request,
 }
 
 impl<T: Transport, C: Clock> Link<'_, T, C> {
@@ -93,6 +99,21 @@ impl<T: Transport, C: Clock> Link<'_, T, C> {
     pub fn deadline(&mut self) -> u64 {
         let timeout = u64::try_from(self.timeout.as_micros()).unwrap_or(u64::MAX);
         self.clock.now_us().saturating_add(timeout)
+    }
+
+    /// The timeout in microseconds, for errors.
+    pub(crate) fn timeout_us(&self) -> u32 {
+        u32::try_from(self.timeout.as_micros()).unwrap_or(u32::MAX)
+    }
+
+    /// Runs one exchange with `request` filling what the bus did not set,
+    /// then restores the bus's request for the next exchange.
+    pub(crate) fn with<R>(&mut self, request: Request, exchange: impl FnOnce(&mut Self) -> R) -> R {
+        let base = self.request;
+        self.request.fill(request);
+        let result = exchange(self);
+        self.request = base;
+        result
     }
 }
 
@@ -233,26 +254,126 @@ pub(crate) trait Parser {
 
     /// Feeds one byte. Returns `Some` when a packet is complete or proven
     /// bad.
-    fn push(&mut self, byte: u8) -> Option<Result<Status, ProtocolError>>;
+    fn push(&mut self, byte: u8) -> Option<Result<Status, Defect>>;
 
-    /// The error to report instead of a timeout when the deadline passes,
+    /// The defect to report instead of a timeout when the deadline passes,
     /// e.g. because only malformed headers were seen.
-    fn on_deadline(&self) -> Option<ProtocolError> {
+    fn on_deadline(&self) -> Option<Defect> {
         None
+    }
+}
+
+/// What made received bytes fail to be a status packet; it becomes a
+/// [`ProtocolError`] once the request is attached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Defect {
+    /// Protocol 1 checksum mismatch.
+    Checksum {
+        packet_id: u8,
+        computed: u8,
+        received: u8,
+    },
+    /// Protocol 2 CRC mismatch.
+    Crc {
+        packet_id: u8,
+        computed: u16,
+        received: u16,
+    },
+    /// A length field below the protocol's minimum.
+    TooShort {
+        protocol: ProtocolVersion,
+        length: u16,
+        min: u16,
+    },
+    /// A Protocol 2 length field above what the expected reply can be.
+    TooLong { length: u16, max: u16 },
+}
+
+impl Defect {
+    /// The error for this defect in a reply to `request`.
+    pub(crate) fn error(self, request: Request) -> ProtocolError {
+        match self {
+            Self::Checksum {
+                packet_id,
+                computed,
+                received,
+            } => ProtocolError::Checksum {
+                request,
+                packet_id,
+                computed,
+                received,
+            },
+            Self::Crc {
+                packet_id,
+                computed,
+                received,
+            } => ProtocolError::Crc {
+                request,
+                packet_id,
+                computed,
+                received,
+            },
+            Self::TooShort {
+                protocol,
+                length,
+                min,
+            } => ProtocolError::LengthTooShort {
+                request,
+                protocol,
+                length,
+                min,
+            },
+            Self::TooLong { length, max } => ProtocolError::LengthTooLong {
+                request,
+                length,
+                max,
+            },
+        }
     }
 }
 
 /// Size of the stack buffer used for reading and writing.
 pub(crate) const CHUNK: usize = 32;
 
-/// What a `read` of zero bytes means: end of stream, the port is gone.
-const END_OF_STREAM: ErrorKind = ErrorKind::NotConnected;
-
-/// Maps a transport error; a transport-level timeout counts as ours.
-pub(crate) fn io_error<E: embedded_io::Error>(err: E, id: Option<Id>) -> Error {
+/// Maps a transport error from `direction` during `request`; the
+/// transport's own timeout is a [`TransportError::PortTimeout`].
+pub(crate) fn io_error<E: embedded_io::Error>(
+    err: E,
+    request: Request,
+    direction: Direction,
+) -> Error {
     match err.kind() {
-        ErrorKind::TimedOut => TransportError::Timeout { id }.into(),
-        kind => TransportError::Io(kind).into(),
+        ErrorKind::TimedOut => TransportError::PortTimeout { request, direction }.into(),
+        kind => TransportError::Io {
+            request,
+            direction,
+            kind,
+        }
+        .into(),
+    }
+}
+
+/// Reads whatever is waiting into `chunk`; `Ok(0)` when nothing is.
+/// A read of zero bytes after `read_ready` is the end of the stream.
+fn read_waiting<T: Transport, C: Clock>(
+    link: &mut Link<'_, T, C>,
+    chunk: &mut [u8],
+) -> Result<usize, Error> {
+    let request = link.request;
+    if !link
+        .transport
+        .read_ready()
+        .map_err(|e| io_error(e, request, Direction::ReadReady))?
+    {
+        return Ok(0);
+    }
+    match link
+        .transport
+        .read(chunk)
+        .map_err(|e| io_error(e, request, Direction::Read))?
+    {
+        0 => Err(TransportError::EndOfStream { request }.into()),
+        n => Ok(n),
     }
 }
 
@@ -262,53 +383,67 @@ pub(crate) fn io_error<E: embedded_io::Error>(err: E, id: Option<Id>) -> Error {
 pub(crate) fn drain<T: Transport, C: Clock>(link: &mut Link<'_, T, C>) -> Result<(), Error> {
     let deadline = link.deadline();
     let mut chunk = [0u8; CHUNK];
-    while link.transport.read_ready().map_err(|e| io_error(e, None))? {
-        if link.clock.now_us() >= deadline {
+    while link.clock.now_us() < deadline {
+        if read_waiting(link, &mut chunk)? == 0 {
             break;
-        }
-        let n = link
-            .transport
-            .read(&mut chunk)
-            .map_err(|e| io_error(e, None))?;
-        if n == 0 {
-            return Err(TransportError::Io(END_OF_STREAM).into());
         }
     }
     Ok(())
+}
+
+/// Counts the bytes that arrive within one more timeout: after a wait that
+/// got nothing, they are the late reply. The bytes are discarded.
+pub(crate) fn late_bytes<T: Transport, C: Clock>(
+    link: &mut Link<'_, T, C>,
+) -> Result<usize, Error> {
+    let deadline = link.deadline();
+    let mut chunk = [0u8; CHUNK];
+    let mut bytes = 0;
+    while link.clock.now_us() < deadline {
+        bytes += read_waiting(link, &mut chunk)?;
+    }
+    Ok(bytes)
 }
 
 /// Waits until `parser` completes a packet or `deadline` passes.
 ///
 /// Reads only as many bytes as the parser wants, so bytes of the next packet
 /// stay on the line for the next call.
+///
+/// At the deadline: the defect of a skipped malformed header if there was
+/// one, else [`TransportError::PartialReply`] when bytes arrived and
+/// [`TransportError::NoReply`] when none did.
 pub(crate) fn receive<T: Transport, C: Clock, P: Parser>(
     link: &mut Link<'_, T, C>,
     parser: &mut P,
     deadline: u64,
-    id: Option<Id>,
 ) -> Result<Status, Error> {
     let mut chunk = [0u8; CHUNK];
+    let mut bytes = 0;
     loop {
         if link.clock.now_us() >= deadline {
-            return Err(parser
-                .on_deadline()
-                .map_or(TransportError::Timeout { id }.into(), Error::from));
-        }
-        if !link.transport.read_ready().map_err(|e| io_error(e, id))? {
-            continue;
+            let (request, timeout_us) = (link.request, link.timeout_us());
+            return Err(match parser.on_deadline() {
+                Some(defect) => defect.error(request).into(),
+                None if bytes > 0 => TransportError::PartialReply {
+                    request,
+                    timeout_us,
+                    bytes,
+                }
+                .into(),
+                None => TransportError::NoReply {
+                    request,
+                    timeout_us,
+                }
+                .into(),
+            });
         }
         let want = parser.wanted().clamp(1, CHUNK);
-        let n = link
-            .transport
-            .read(&mut chunk[..want])
-            .map_err(|e| io_error(e, id))?;
-        if n == 0 {
-            return Err(TransportError::Io(END_OF_STREAM).into());
-        }
-        let n = n.min(want);
+        let n = read_waiting(link, &mut chunk[..want])?.min(want);
+        bytes += n;
         for &byte in &chunk[..n] {
             if let Some(result) = parser.push(byte) {
-                return result.map_err(Error::from);
+                return result.map_err(|defect| defect.error(link.request).into());
             }
         }
     }
@@ -321,10 +456,16 @@ pub(crate) fn receive<T: Transport, C: Clock, P: Parser>(
 /// never reported as a malformed reply. The data of an error reply stays in
 /// `out` only when it has the expected length; otherwise `out` is zeroed so
 /// no partial reply is left behind.
-pub(crate) fn check<P: Exchange>(status: Status, id: Id, out: &mut [u8]) -> Result<(), Error> {
+pub(crate) fn check<P: Exchange>(
+    status: Status,
+    id: Id,
+    out: &mut [u8],
+    request: Request,
+) -> Result<(), Error> {
     let len = out.len();
     if status.id != id.get() {
         return Err(ProtocolError::WrongId {
+            request,
             expected: id,
             got: status.id,
         }
@@ -337,11 +478,13 @@ pub(crate) fn check<P: Exchange>(status: Status, id: Id, out: &mut [u8]) -> Resu
         return Err(StatusError {
             id,
             report: P::report(status.error),
+            request,
         }
         .into());
     }
     if status.len != len {
         return Err(ProtocolError::WrongLength {
+            request,
             expected: len,
             got: status.len,
         }
@@ -358,21 +501,21 @@ pub(crate) trait Receive: Exchange {
         link: &mut Link<'_, T, C>,
         out: &mut [u8],
         deadline: u64,
-        id: Option<Id>,
     ) -> Result<Status, Error>;
 }
 
 /// Collects the replies to one broadcast read instruction (Sync Read, Bulk
-/// Read): one status packet per `(id, size)` entry, in entry order, as the
-/// e-Manual says they come back.
+/// Read): one status packet per `(id, addr, size)` entry, in entry order, as
+/// the e-Manual says they come back.
 ///
 /// `on_reply` is called exactly once per entry with that actuator's `size`
 /// data bytes, or its own error; each reply gets a full timeout. A reply
 /// from an ID later in the list means the IDs before it are not answering:
-/// they get a timeout and the reply goes to its own ID. A late reply from an
-/// ID that already timed out is discarded. `scratch` holds one reply and
-/// must be at least as long as the largest `size`. Returns `Err` only when
-/// the transport itself fails.
+/// they get [`TransportError::Skipped`] and the reply goes to its own ID. A
+/// late reply from an ID that already timed out is discarded. `scratch`
+/// holds one reply and must be at least as long as the largest `size`.
+/// Each error's request is `link.request` narrowed to its entry. Returns
+/// `Err` only when the transport itself fails.
 pub(crate) fn collect<P, T, C, I, F>(
     link: &mut Link<'_, T, C>,
     entries: I,
@@ -383,25 +526,33 @@ where
     P: Receive,
     T: Transport,
     C: Clock,
-    I: Iterator<Item = (Id, usize)> + Clone,
+    I: Iterator<Item = (Id, u16, usize)> + Clone,
     F: FnMut(Id, Result<&[u8], Error>),
 {
+    let base = link.request;
     let all = entries.clone();
     let mut held = None;
     let mut pending = entries;
     let mut done = 0;
-    while let Some((id, size)) = pending.next() {
+    while let Some((id, addr, size)) = pending.next() {
+        let request = Request {
+            id: Some(id),
+            addr: Some(addr),
+            len: Some(Request::len_of(size)),
+            ..base
+        };
+        link.request = request;
         let already_handled = |raw: u8| {
             all.clone()
                 .take(done)
-                .any(|(earlier, _)| earlier != id && earlier.get() == raw)
+                .any(|(earlier, _, _)| earlier != id && earlier.get() == raw)
         };
         let received = match held.take() {
             Some(status) => Ok(status),
             None => {
                 let deadline = link.deadline();
                 loop {
-                    match P::receive_status(link, scratch, deadline, Some(id)) {
+                    match P::receive_status(link, scratch, deadline) {
                         Ok(status) if already_handled(status.id) => {}
                         other => break other,
                     }
@@ -412,26 +563,37 @@ where
         match received {
             Ok(status)
                 if status.id != id.get()
-                    && pending.clone().any(|(later, _)| later.get() == status.id) =>
+                    && pending
+                        .clone()
+                        .any(|(later, _, _)| later.get() == status.id) =>
             {
                 held = Some(status);
-                on_reply(id, Err(TransportError::Timeout { id: Some(id) }.into()));
+                let answered = Id::new(status.id).unwrap_or(id);
+                on_reply(
+                    id,
+                    Err(TransportError::Skipped { request, answered }.into()),
+                );
             }
             Ok(status) => match scratch.get_mut(..size) {
-                Some(out) => on_reply(id, check::<P>(status, id, out).map(|()| &*out)),
+                Some(out) => on_reply(id, check::<P>(status, id, out, request).map(|()| &*out)),
                 None => on_reply(
                     id,
                     Err(crate::error::ValidationError::DataLength {
                         expected: size,
                         got: scratch.len(),
+                        request,
                     }
                     .into()),
                 ),
             },
-            Err(err @ Error::Transport(TransportError::Io(_))) => return Err(err),
+            Err(Error::Transport(err)) if !err.is_timeout() => {
+                link.request = base;
+                return Err(err.into());
+            }
             Err(err) => on_reply(id, Err(err)),
         }
     }
+    link.request = base;
     Ok(())
 }
 
@@ -450,14 +612,17 @@ pub(crate) struct Writer<'t, T: Write> {
     transport: &'t mut T,
     buf: [u8; CHUNK],
     len: usize,
+    /// What is being sent, for errors.
+    request: Request,
 }
 
 impl<'t, T: Write> Writer<'t, T> {
-    pub(crate) fn new(transport: &'t mut T) -> Self {
+    pub(crate) fn new(transport: &'t mut T, request: Request) -> Self {
         Self {
             transport,
             buf: [0; CHUNK],
             len: 0,
+            request,
         }
     }
 
@@ -474,13 +639,17 @@ impl<'t, T: Write> Writer<'t, T> {
     /// Writes out what is queued and flushes the transport.
     pub(crate) fn finish(mut self) -> Result<(), Error> {
         self.write_buf()?;
-        self.transport.flush().map_err(|e| io_error(e, None))
+        let request = self.request;
+        self.transport
+            .flush()
+            .map_err(|e| io_error(e, request, Direction::Flush))
     }
 
     fn write_buf(&mut self) -> Result<(), Error> {
+        let request = self.request;
         self.transport
             .write_all(&self.buf[..self.len])
-            .map_err(|e| io_error(e, None))?;
+            .map_err(|e| io_error(e, request, Direction::Write))?;
         self.len = 0;
         Ok(())
     }
@@ -491,6 +660,7 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::error::Instruction;
     use crate::transport::{MockTime, MockTransport};
 
     /// Accepts any `n` bytes as a packet with ID 1.
@@ -501,7 +671,7 @@ mod tests {
             self.0
         }
 
-        fn push(&mut self, _: u8) -> Option<Result<Status, ProtocolError>> {
+        fn push(&mut self, _: u8) -> Option<Result<Status, Defect>> {
             self.0 -= 1;
             (self.0 == 0).then_some(Ok(Status {
                 id: 1,
@@ -525,6 +695,7 @@ mod tests {
                     transport: line,
                     clock: &mut clock,
                     timeout: Duration::from_millis(1),
+                    request: Request::NONE,
                 },
                 id(1),
             )
@@ -555,12 +726,60 @@ mod tests {
             transport: &mut line,
             clock: &mut clock,
             timeout: Duration::from_millis(1),
+            request: Request::NONE,
         };
         let deadline = link.deadline();
         assert_eq!(
-            receive(&mut link, &mut Take(3), deadline, Some(id(4))),
-            Err(TransportError::Timeout { id: Some(id(4)) }.into())
+            receive(&mut link, &mut Take(3), deadline),
+            Err(TransportError::NoReply {
+                request: Request::NONE,
+                timeout_us: 1_000,
+            }
+            .into())
         );
+    }
+
+    #[test]
+    fn receive_counts_the_bytes_of_a_cut_reply() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        line.stale(&[1, 2]);
+        let mut clock = time.ticker(100);
+        let request = Request::NONE.instruction(Instruction::Read).id(id(4));
+        let mut link = Link {
+            transport: &mut line,
+            clock: &mut clock,
+            timeout: Duration::from_millis(1),
+            request,
+        };
+        let deadline = link.deadline();
+        assert_eq!(
+            receive(&mut link, &mut Take(3), deadline),
+            Err(TransportError::PartialReply {
+                request,
+                timeout_us: 1_000,
+                bytes: 2,
+            }
+            .into())
+        );
+    }
+
+    #[test]
+    fn late_bytes_counts_what_arrives_in_one_more_timeout() {
+        let time = MockTime::new();
+        let mut line = MockTransport::new(&time);
+        line.reply_at(500, &[1, 2, 3]);
+        line.write_all(&[0]).unwrap();
+        line.flush().unwrap();
+        let mut clock = time.ticker(100);
+        let mut link = Link {
+            transport: &mut line,
+            clock: &mut clock,
+            timeout: Duration::from_millis(1),
+            request: Request::NONE,
+        };
+        assert_eq!(late_bytes(&mut link), Ok(3));
+        assert_eq!(late_bytes(&mut link), Ok(0));
     }
 
     #[test]
@@ -573,9 +792,10 @@ mod tests {
             transport: &mut line,
             clock: &mut clock,
             timeout: Duration::from_millis(1),
+            request: Request::NONE,
         };
         let deadline = link.deadline();
-        assert!(receive(&mut link, &mut Take(3), deadline, None).is_ok());
+        assert!(receive(&mut link, &mut Take(3), deadline).is_ok());
         assert_eq!(line.unread(), 2);
     }
 
@@ -583,14 +803,23 @@ mod tests {
     fn transport_errors_are_mapped() {
         let time = MockTime::new();
         let mut clock = time.ticker(1);
+        let request = Request::NONE.instruction(Instruction::Read).id(id(2));
         for (kind, expected) in [
             (
                 ErrorKind::TimedOut,
-                Error::from(TransportError::Timeout { id: Some(id(2)) }),
+                Error::from(TransportError::PortTimeout {
+                    request,
+                    direction: Direction::ReadReady,
+                }),
             ),
             (
                 ErrorKind::BrokenPipe,
-                TransportError::Io(ErrorKind::BrokenPipe).into(),
+                TransportError::Io {
+                    request,
+                    direction: Direction::ReadReady,
+                    kind: ErrorKind::BrokenPipe,
+                }
+                .into(),
             ),
         ] {
             let mut line = MockTransport::new(&time);
@@ -599,12 +828,10 @@ mod tests {
                 transport: &mut line,
                 clock: &mut clock,
                 timeout: Duration::from_millis(1),
+                request,
             };
             let deadline = link.deadline();
-            assert_eq!(
-                receive(&mut link, &mut Take(1), deadline, Some(id(2))),
-                Err(expected)
-            );
+            assert_eq!(receive(&mut link, &mut Take(1), deadline), Err(expected));
         }
     }
 
@@ -618,11 +845,15 @@ mod tests {
             transport: &mut line,
             clock: &mut clock,
             timeout: Duration::from_millis(1),
+            request: Request::NONE,
         };
-        let eof = Error::from(TransportError::Io(END_OF_STREAM));
+        let eof = Error::from(TransportError::EndOfStream {
+            request: Request::NONE,
+        });
         assert_eq!(drain(&mut link), Err(eof));
         let deadline = link.deadline();
-        assert_eq!(receive(&mut link, &mut Take(1), deadline, None), Err(eof));
+        assert_eq!(receive(&mut link, &mut Take(1), deadline), Err(eof));
+        assert!(!matches!(eof, Error::Transport(err) if err.is_timeout()));
     }
 
     #[test]
@@ -635,6 +866,7 @@ mod tests {
             transport: &mut line,
             clock: &mut clock,
             timeout: Duration::from_millis(1),
+            request: Request::NONE,
         };
         drain(&mut link).unwrap();
         assert_eq!(line.unread(), 0);
@@ -644,7 +876,7 @@ mod tests {
     fn writer_streams_in_chunks_and_flushes() {
         let time = MockTime::new();
         let mut line = MockTransport::new(&time);
-        let mut w = Writer::new(&mut line);
+        let mut w = Writer::new(&mut line, Request::NONE);
         for b in 0..100u8 {
             w.put(b).unwrap();
         }
@@ -658,11 +890,28 @@ mod tests {
         let time = MockTime::new();
         let mut line = MockTransport::new(&time);
         line.fail_with(ErrorKind::BrokenPipe);
-        let mut w = Writer::new(&mut line);
+        let request = Request::NONE.instruction(Instruction::Write).id(id(3));
+        let mut w = Writer::new(&mut line, request);
         w.put(1).unwrap();
         assert_eq!(
             w.finish(),
-            Err(TransportError::Io(ErrorKind::BrokenPipe).into())
+            Err(TransportError::Io {
+                request,
+                direction: Direction::Write,
+                kind: ErrorKind::BrokenPipe,
+            }
+            .into())
+        );
+        let mut line = MockTransport::new(&time);
+        line.fail_with(ErrorKind::TimedOut);
+        let w = Writer::new(&mut line, request);
+        assert_eq!(
+            w.finish(),
+            Err(TransportError::PortTimeout {
+                request,
+                direction: Direction::Flush,
+            }
+            .into())
         );
     }
 
@@ -673,11 +922,22 @@ mod tests {
         use crate::protocol::{Exchange, P1, P2, p2};
 
         fn p2_reply(error: u8) -> std::vec::Vec<u8> {
-            let mut buf = [0u8; 64];
-            let mut w: &mut [u8] = &mut buf;
-            p2::send(&mut w, 1, 0x55, [error].into_iter()).unwrap();
-            let n = 64 - w.len();
-            buf[..n].to_vec()
+            let time = MockTime::new();
+            let mut clock = time.ticker(1);
+            let mut line = MockTransport::new(&time);
+            p2::send(
+                &mut Link {
+                    transport: &mut line,
+                    clock: &mut clock,
+                    timeout: Duration::from_millis(1),
+                    request: Request::NONE,
+                },
+                1,
+                0x55,
+                [error].into_iter(),
+            )
+            .unwrap();
+            line.sent().to_vec()
         }
 
         fn p2_ping_error(error: u8) -> Result<Pong, Error> {
@@ -690,6 +950,7 @@ mod tests {
                     transport: &mut line,
                     clock: &mut clock,
                     timeout: Duration::from_millis(1),
+                    request: Request::NONE,
                 },
                 id(1),
                 0,
@@ -780,15 +1041,21 @@ mod tests {
                 flags.iter().collect::<std::vec::Vec<_>>(),
                 [P1Flag::Overheating, P1Flag::Overload]
             );
-            let fault = StatusError { id: id(1), report };
+            let fault = StatusError {
+                id: id(1),
+                report,
+                request: Request::NONE,
+            };
             assert!(fault.is_hardware_fault());
             assert_eq!(
                 std::string::ToString::to_string(&fault),
-                "actuator 1 reported overheating, overload"
+                "actuator 1 reported overheating (temperature above its Temperature Limit), \
+                 an overload (load above its maximum torque)"
             );
             let range = StatusError {
                 id: id(1),
                 report: StatusReport::P1(P1Flags(1 << 3)),
+                request: Request::NONE,
             };
             assert!(!range.is_hardware_fault());
         }
@@ -812,6 +1079,7 @@ mod tests {
                     transport: &mut line,
                     clock: &mut clock,
                     timeout: Duration::from_millis(1),
+                    request: Request::NONE,
                 },
                 id(2),
                 132,
@@ -832,6 +1100,7 @@ mod tests {
                     transport: &mut line,
                     clock: &mut clock,
                     timeout: Duration::from_micros(1_000),
+                    request: Request::NONE,
                 },
                 id(1),
                 132,
@@ -843,7 +1112,15 @@ mod tests {
         fn silent_actuator_times_out() {
             assert_eq!(
                 read_with_reply_at(u64::MAX),
-                Err(TransportError::Timeout { id: Some(id(1)) }.into())
+                Err(TransportError::NoReply {
+                    request: Request::NONE
+                        .instruction(Instruction::Read)
+                        .id(id(1))
+                        .addr(132)
+                        .len(4),
+                    timeout_us: 1_000,
+                }
+                .into())
             );
         }
 
@@ -856,7 +1133,15 @@ mod tests {
         fn reply_after_the_deadline_is_too_late() {
             assert_eq!(
                 read_with_reply_at(5_000),
-                Err(TransportError::Timeout { id: Some(id(1)) }.into())
+                Err(TransportError::NoReply {
+                    request: Request::NONE
+                        .instruction(Instruction::Read)
+                        .id(id(1))
+                        .addr(132)
+                        .len(4),
+                    timeout_us: 1_000,
+                }
+                .into())
             );
         }
     }
@@ -983,6 +1268,7 @@ mod tests {
                     transport: &mut line,
                     clock: &mut clock,
                     timeout: Duration::from_micros(500),
+                    request: Request::NONE,
                 };
                 if rng.next() & 1 == 0 {
                     let _ = P2::read(&mut link, id(1), 132, &mut out);

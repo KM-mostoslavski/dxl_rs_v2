@@ -2,7 +2,7 @@
 
 use crate::Transport;
 use crate::actuator::{Actuator, Describe, TorqueState};
-use crate::error::{Error, StatusError, StatusReport};
+use crate::error::{Error, Instruction, StatusError, StatusReport};
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, Protocol};
 
@@ -10,7 +10,7 @@ use super::wire::Wire;
 
 /// Whether `err` is a reply that reports a hardware fault.
 pub(crate) fn is_hardware_fault(err: &Error) -> bool {
-    matches!(err, Error::Status(status) if status.is_hardware_fault())
+    err.is_hardware_fault()
 }
 
 /// Whether `result` carries a reply that reports a hardware fault.
@@ -65,12 +65,14 @@ pub(crate) fn check_clear<P: Protocol, T: Transport, C: Clock>(
                         alert: true,
                         code: None,
                     },
+                    request: reg.request().instruction(Instruction::Read).id(id),
                 }
                 .into())
             }
         }),
         None => wire.ping(id).map(drop),
     };
+    let result = super::diagnose::diagnosed(wire, kind, result);
     observe(state, &result);
     if result.is_ok() {
         *state = state.clear();
@@ -80,12 +82,42 @@ pub(crate) fn check_clear<P: Protocol, T: Transport, C: Clock>(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use crate::bus::testing::*;
-    use crate::error::{P1Flag, P1Flags, P2Code, ProtocolError, TransportError};
+    use crate::error::{
+        Celsius, FaultError, P1Flag, P1Flags, P2Code, ProtocolError, Request, TemperatureError,
+        TransportError,
+    };
+    use crate::protocol::ProtocolVersion;
+    use crate::units::HardwareErrors;
 
     fn status(report: StatusReport) -> Result<(), Error> {
-        Err(StatusError { id: id(1), report }.into())
+        Err(StatusError {
+            id: id(1),
+            report,
+            request: Request::NONE,
+        }
+        .into())
+    }
+
+    fn timeout() -> Error {
+        TransportError::NoReply {
+            request: Request::NONE,
+            timeout_us: 10_000,
+        }
+        .into()
+    }
+
+    fn malformed() -> Error {
+        ProtocolError::LengthTooShort {
+            request: Request::NONE,
+            protocol: ProtocolVersion::P2,
+            length: 2,
+            min: 3,
+        }
+        .into()
     }
 
     fn p2(alert: bool, code: Option<P2Code>) -> Result<(), Error> {
@@ -125,8 +157,8 @@ mod tests {
             Ok(()),
             p2(false, Some(P2Code::DataRange)),
             p1(P1Flag::AngleLimit),
-            Err(TransportError::Timeout { id: Some(id(1)) }.into()),
-            Err(ProtocolError::Malformed.into()),
+            Err(timeout()),
+            Err(malformed()),
         ];
         for start in ALL {
             for result in &others {
@@ -147,6 +179,24 @@ mod tests {
     }
 
     #[test]
+    fn measured_fault_faults_every_state() {
+        let fault: Result<(), Error> = Err(FaultError::Overload {
+            id: id(1),
+            faults: HardwareErrors::from_raw(0x20),
+            request: Request::NONE,
+        }
+        .into());
+        for start in ALL {
+            let mut state = start;
+            observe(&mut state, &fault);
+            assert_eq!(state, TorqueState::Faulted, "from {start:?}");
+            let mut state = start;
+            after_torque_write(&mut state, TorqueState::On, &fault);
+            assert_eq!(state, TorqueState::Faulted, "from {start:?}");
+        }
+    }
+
+    #[test]
     fn torque_write_hardware_fault_faults() {
         for start in ALL {
             let mut state = start;
@@ -158,8 +208,8 @@ mod tests {
     #[test]
     fn torque_write_other_error_disables_and_keeps_a_fault() {
         let errors: [Result<(), Error>; 3] = [
-            Err(TransportError::Timeout { id: Some(id(1)) }.into()),
-            Err(ProtocolError::Malformed.into()),
+            Err(timeout()),
+            Err(malformed()),
             p2(false, Some(P2Code::Access)),
         ];
         for error in &errors {
@@ -186,11 +236,34 @@ mod tests {
         use crate::transport::MockTime;
 
         #[cfg(feature = "x-series")]
+        fn hw_status_request() -> Request {
+            Request::NONE
+                .instruction(crate::error::Instruction::Read)
+                .id(id(1))
+                .register("Hardware Error Status")
+                .addr(70)
+                .len(1)
+        }
+
+        #[cfg(feature = "x-series")]
+        fn overload(request: Request) -> Error {
+            FaultError::Overload {
+                id: id(1),
+                faults: HardwareErrors::from_raw(0x20),
+                request,
+            }
+            .into()
+        }
+
+        #[cfg(feature = "x-series")]
         fn faulted_xm430(time: &MockTime) -> TestBus<'_, P2> {
             let mut bus = test_bus(time);
             xm430_p2(line(&mut bus), 1, 1, 0, 4095, 3);
             bus.declare([(id(1), ModelNumber(XM430))]).unwrap();
-            line(&mut bus).reply(&p2_status(1, 0x80, &[]));
+            script(
+                &mut bus,
+                &[p2_status(1, 0x80, &[]), p2_status(1, 0x80, &[0x20])],
+            );
             let _ = bus.actuator(id(1)).unwrap().enable_torque();
             assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Faulted));
             bus
@@ -213,17 +286,13 @@ mod tests {
         fn alert_reply_keeps_the_fault() {
             let time = MockTime::new();
             let mut bus = faulted_xm430(&time);
-            line(&mut bus).reply(&p2_status(1, 0x80, &[0x20]));
+            script(
+                &mut bus,
+                &[p2_status(1, 0x80, &[0x20]), p2_status(1, 0x80, &[0x20])],
+            );
             assert_eq!(
                 bus.actuator(id(1)).unwrap().clear_fault(),
-                Err(StatusError {
-                    id: id(1),
-                    report: StatusReport::P2 {
-                        alert: true,
-                        code: None
-                    }
-                }
-                .into())
+                Err(overload(hw_status_request()))
             );
             assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Faulted));
         }
@@ -233,17 +302,13 @@ mod tests {
         fn non_zero_hardware_error_status_keeps_the_fault() {
             let time = MockTime::new();
             let mut bus = faulted_xm430(&time);
-            line(&mut bus).reply(&p2_status(1, 0, &[0x20]));
+            script(
+                &mut bus,
+                &[p2_status(1, 0, &[0x20]), p2_status(1, 0, &[0x20])],
+            );
             assert_eq!(
                 bus.actuator(id(1)).unwrap().clear_fault(),
-                Err(StatusError {
-                    id: id(1),
-                    report: StatusReport::P2 {
-                        alert: true,
-                        code: None
-                    }
-                }
-                .into())
+                Err(overload(hw_status_request()))
             );
             assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Faulted));
         }
@@ -253,10 +318,14 @@ mod tests {
         fn failed_check_keeps_the_fault() {
             let time = MockTime::new();
             let mut bus = faulted_xm430(&time);
-            assert!(matches!(
+            assert_eq!(
                 bus.actuator(id(1)).unwrap().clear_fault(),
-                Err(Error::Transport(TransportError::Timeout { .. }))
-            ));
+                Err(TransportError::NoReply {
+                    request: hw_status_request(),
+                    timeout_us: 10_000,
+                }
+                .into())
+            );
             assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Faulted));
         }
 
@@ -302,11 +371,32 @@ mod tests {
         fn p1_ping_with_overheating_keeps_the_fault() {
             let time = MockTime::new();
             let mut bus = faulted_ax12(&time);
-            line(&mut bus).reply(&p1_status(1, 0x04, &[]));
-            assert!(matches!(
-                bus.actuator(id(1)).unwrap().clear_fault(),
-                Err(Error::Status(_))
-            ));
+            script(
+                &mut bus,
+                &[
+                    p1_status(1, 0x04, &[]),
+                    p1_status(1, 0x04, &[75]),
+                    p1_status(1, 0x04, &[70]),
+                ],
+            );
+            let err = bus.actuator(id(1)).unwrap().clear_fault().unwrap_err();
+            assert_eq!(
+                err,
+                Error::Fault(FaultError::Temperature(TemperatureError::AboveLimit {
+                    id: id(1),
+                    measured: Celsius(75),
+                    limit: Celsius(70),
+                    faults: HardwareErrors::from_raw(0x04),
+                    request: Request::NONE
+                        .instruction(crate::error::Instruction::Ping)
+                        .id(id(1)),
+                }))
+            );
+            assert_eq!(
+                std::string::ToString::to_string(&err),
+                "actuator 1 measures 75 °C, above its Temperature Limit 70 °C; \
+                 let it cool and reduce its load in reply to Ping from actuator 1"
+            );
             assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Faulted));
         }
     }

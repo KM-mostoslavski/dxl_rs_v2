@@ -1,7 +1,7 @@
 //! [`RegisterScale`]: how one register of one model maps raw values to an
 //! SI quantity.
 
-use crate::error::ValidationError;
+use crate::error::{Request, ValidationError};
 
 use super::position::round_half_away;
 
@@ -141,6 +141,7 @@ impl RegisterScale {
         let does_not_fit = ValidationError::DoesNotFit {
             raw: signed,
             size: self.size,
+            request: Request::NONE,
         };
         let bits = self.bits() as i64;
         match self.sign {
@@ -188,7 +189,7 @@ impl RegisterScale {
     ///   register.
     pub(crate) fn raw_of_si(&self, si: f32) -> Result<u32, ValidationError> {
         if !si.is_finite() {
-            return Err(ValidationError::NotFinite);
+            return Err(ValidationError::NOT_FINITE);
         }
         self.raw_of(round_half_away(si * self.raw_per_si))
     }
@@ -227,12 +228,17 @@ pub(crate) mod tests {
             scale.raw_of(0x1_0000),
             Err(ValidationError::DoesNotFit {
                 raw: 0x1_0000,
-                size: 2
+                size: 2,
+                request: Request::NONE,
             })
         );
         assert_eq!(
             scale.raw_of(-1),
-            Err(ValidationError::DoesNotFit { raw: -1, size: 2 })
+            Err(ValidationError::DoesNotFit {
+                raw: -1,
+                size: 2,
+                request: Request::NONE,
+            })
         );
     }
 
@@ -246,13 +252,18 @@ pub(crate) mod tests {
         assert_eq!(AX_SPEED.raw_of(1023), Ok(1023));
         assert_eq!(
             AX_SPEED.raw_of(1024),
-            Err(ValidationError::DoesNotFit { raw: 1024, size: 2 })
+            Err(ValidationError::DoesNotFit {
+                raw: 1024,
+                size: 2,
+                request: Request::NONE,
+            })
         );
         assert_eq!(
             AX_SPEED.raw_of(-1024),
             Err(ValidationError::DoesNotFit {
                 raw: -1024,
-                size: 2
+                size: 2,
+                request: Request::NONE,
             })
         );
     }
@@ -276,7 +287,8 @@ pub(crate) mod tests {
             MX64_CURRENT.raw_of(32_768),
             Err(ValidationError::DoesNotFit {
                 raw: 32_768,
-                size: 2
+                size: 2,
+                request: Request::NONE,
             })
         );
         assert_eq!(MX64_VELOCITY.signed_of(0xFFFF_FFFF), -1);
@@ -292,7 +304,10 @@ pub(crate) mod tests {
     #[test]
     fn non_finite_si_is_refused() {
         for si in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            assert_eq!(MX64_VELOCITY.raw_of_si(si), Err(ValidationError::NotFinite));
+            assert_eq!(
+                MX64_VELOCITY.raw_of_si(si),
+                Err(ValidationError::NOT_FINITE)
+            );
         }
     }
 

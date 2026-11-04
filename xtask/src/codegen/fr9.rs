@@ -145,7 +145,7 @@ const fn role(
 
 /// Every role. Moving Speed serves two: in wheel mode it is the goal
 /// velocity, in every other mode a speed limit.
-pub(crate) const ROLES: [RoleDef; 22] = [
+pub(crate) const ROLES: [RoleDef; 25] = [
     role(
         "PresentTemperature",
         "present_temperature",
@@ -300,6 +300,27 @@ pub(crate) const ROLES: [RoleDef; 22] = [
             &[],
         )
     },
+    role(
+        "MinVoltageLimit",
+        "min_voltage_limit",
+        "HasMinVoltageLimit",
+        Quantity::Voltage,
+        &[("Min Voltage Limit", ALL)],
+    ),
+    role(
+        "MaxVoltageLimit",
+        "max_voltage_limit",
+        "HasMaxVoltageLimit",
+        Quantity::Voltage,
+        &[("Max Voltage Limit", ALL)],
+    ),
+    role(
+        "TemperatureLimit",
+        "temperature_limit",
+        "HasTemperatureLimit",
+        Quantity::Temperature,
+        &[("Temperature Limit", ALL)],
+    ),
 ];
 
 /// How a register carries its sign, from `sign_type`.
@@ -917,7 +938,7 @@ mod tests {
 
     #[test]
     fn role_list_matches_core() {
-        assert_eq!(ROLES.len(), 22);
+        assert_eq!(ROLES.len(), 25);
         let fields: Vec<&str> = ROLES.iter().map(|r| r.field).collect();
         let mut sorted = fields.clone();
         sorted.sort_unstable();

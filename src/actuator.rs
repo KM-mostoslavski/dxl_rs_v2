@@ -14,8 +14,9 @@ mod roles;
 pub use roles::{
     HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
     HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasLedBlue,
-    HasLedGreen, HasLedRed, HasMoving, HasPGain, HasPresentCurrent, HasPresentLoad,
-    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
+    HasLedGreen, HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain,
+    HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
+    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
     HasTorqueCtrlModeEnable, RoleRegister,
 };
 #[allow(
@@ -965,6 +966,7 @@ mod tests {
     /// and area.
     const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {
         Register {
+            name: "Test",
             addr,
             size,
             access,
@@ -1294,6 +1296,7 @@ mod tests {
         /// 1 (<https://emanual.robotis.com/docs/en/dxl/mx/mx-64/>).
         const MX64_P1_TORQUE: ModeSource = ModeSource::TorqueControl {
             register: Register {
+                name: "Torque Ctrl Mode Enable",
                 addr: 70,
                 size: 1,
                 access: Access::RW,
@@ -1539,7 +1542,10 @@ mod tests {
                 .starts_with("actuator 7 is in Velocity mode")
             );
             assert_eq!(
-                msg(ValidationError::InvalidSlopeStep(9)),
+                msg(ValidationError::InvalidSlopeStep {
+                    step: 9,
+                    request: crate::error::Request::NONE,
+                }),
                 "compliance slope step 9 is outside 1..=7"
             );
         }
@@ -1818,8 +1824,16 @@ mod tests {
             }
         }
 
+        /// The model's mode source, with the register name the tests'
+        /// `reg` gives, so only address, size, access and area compare.
         fn mode_of<D: Describe>(d: &D) -> ModeSource {
-            d.data().mode
+            let mut mode = d.data().mode;
+            if let ModeSource::Register { register, .. }
+            | ModeSource::TorqueControl { register, .. } = &mut mode
+            {
+                register.name = "Test";
+            }
+            mode
         }
 
         #[test]

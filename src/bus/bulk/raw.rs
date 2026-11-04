@@ -11,7 +11,7 @@
 use core::mem;
 
 use crate::actuator::{Actuator, Describe};
-use crate::error::{Error, SetupError, ValidationError};
+use crate::error::{Error, Instruction, Request, SetupError, ValidationError};
 use crate::protocol::{Clock, P2, Protocol, ProtocolVersion};
 use crate::{Id, Transport};
 
@@ -111,6 +111,10 @@ where
         let len = u16::try_from(len).map_err(|_| ValidationError::PacketTooLarge {
             len,
             max: usize::from(u16::MAX),
+            request: Request::NONE
+                .instruction(Instruction::BulkRead)
+                .id(id)
+                .addr(target.addr),
         })?;
         let (Some(slot), Some(stage)) = (u8::try_from(index).ok(), stages.get_mut(at)) else {
             return Err(lost(kinds));
@@ -160,7 +164,7 @@ where
         target.out = scratch;
     }
     sent?;
-    first.into_result()
+    first.into_diagnosed(wire, kinds)
 }
 
 /// Checks every target of a raw Bulk Write, then sends it.
@@ -336,6 +340,16 @@ mod tests {
 
     use super::*;
 
+    /// The Bulk Read entry of `n` at `addr`, `len` bytes.
+    #[cfg(any(feature = "x-series", feature = "mx"))]
+    fn bulk_read(n: u8, addr: u16, len: u16) -> Request {
+        Request::NONE
+            .instruction(Instruction::BulkRead)
+            .id(crate::bus::testing::id(n))
+            .addr(addr)
+            .len(len)
+    }
+
     /// The instruction order of `count` targets whose longest is `last`.
     fn order(count: usize, last: usize) -> impl Iterator<Item = usize> {
         (0..count)
@@ -363,7 +377,7 @@ mod tests {
     mod p2 {
         use super::*;
         use crate::bus::testing::*;
-        use crate::error::{Error, StatusError, StatusReport, TransportError};
+        use crate::error::{Error, TransportError};
         use crate::protocol::P2;
         use crate::protocol::vectors::p2 as v;
         use crate::transport::MockTime;
@@ -450,9 +464,11 @@ mod tests {
         fn bulk_read_raw_reports_the_fault_first_and_marks_it() {
             let time = MockTime::new();
             let mut bus = xm430s(&time, &[1, 2, 3], ON);
+            let next = line(&mut bus).flushes() + 1;
             line(&mut bus)
                 .reply(&p2_status(1, 0, &[36]))
-                .reply(&p2_status(3, 0x80, &[37, 0]));
+                .reply(&p2_status(3, 0x80, &[37, 0]))
+                .reply_to(next + 1, &p2_status(3, 0x80, &[0x20]));
             let (mut a, mut b, mut c) = ([0; 1], [0; 1], [0; 2]);
             let mut targets = [
                 RawRead::new(id(1), 146, &mut a),
@@ -461,12 +477,10 @@ mod tests {
             ];
             assert_eq!(
                 bus.bulk_read_raw(&mut targets),
-                Err(StatusError {
+                Err(crate::error::FaultError::Overload {
                     id: id(3),
-                    report: StatusReport::P2 {
-                        alert: true,
-                        code: None
-                    }
+                    faults: crate::units::HardwareErrors::from_raw(0x20),
+                    request: bulk_read(3, 144, 2),
                 }
                 .into())
             );
@@ -481,7 +495,11 @@ mod tests {
                     RawRead::new(id(1), 146, &mut a),
                     RawRead::new(id(2), 146, &mut b),
                 ]),
-                Err(TransportError::Timeout { id: Some(id(1)) }.into())
+                Err(TransportError::Skipped {
+                    request: bulk_read(1, 146, 1),
+                    answered: id(2),
+                }
+                .into())
             );
             assert_eq!(b, [37]);
         }
@@ -508,7 +526,11 @@ mod tests {
                 bus.bulk_read_raw(&mut [RawRead::new(id(1), 0, &mut huge)]),
                 Err(ValidationError::PacketTooLarge {
                     len: usize::from(u16::MAX) + 1,
-                    max: usize::from(u16::MAX)
+                    max: usize::from(u16::MAX),
+                    request: crate::error::Request::NONE
+                        .instruction(crate::error::Instruction::BulkRead)
+                        .id(id(1))
+                        .addr(0),
                 }
                 .into())
             );
@@ -669,7 +691,11 @@ mod tests {
             );
             assert_eq!(
                 bus.bulk_read_raw(&mut [RawRead::new(id(1), 256, &mut a)]),
-                Err(ValidationError::AddressOutOfRange { addr: 256 }.into())
+                Err(ValidationError::AddressOutOfRange {
+                    addr: 256,
+                    request: bulk_read(1, 256, 2),
+                }
+                .into())
             );
             assert_quiet(&bus, mark);
         }

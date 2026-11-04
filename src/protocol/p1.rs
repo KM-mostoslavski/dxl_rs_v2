@@ -8,12 +8,12 @@
 use core::iter;
 
 use super::{
-    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Receive, Status, Transport,
-    Writer, check, collect, drain, receive, repeated_id, sealed,
+    Clock, Defect, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Receive, Status,
+    Transport, Writer, check, collect, drain, receive, repeated_id, sealed,
 };
 use crate::Id;
 use crate::error::{
-    Error, P1Flags, ProtocolError, StatusError, StatusReport, TransportError, ValidationError,
+    Error, Instruction, P1Flags, Request, StatusError, StatusReport, ValidationError,
 };
 
 /// Dynamixel Protocol 1.0.
@@ -46,8 +46,8 @@ const MAX_LEN: usize = u8::MAX as usize;
 const MAX_STATUS_DATA: usize = MAX_LEN - 2;
 
 /// Encodes and sends one instruction packet.
-fn send<T: embedded_io::Write, I>(
-    transport: &mut T,
+fn send<T: Transport, C: Clock, I>(
+    link: &mut Link<'_, T, C>,
     id: u8,
     instruction: u8,
     params: I,
@@ -55,11 +55,17 @@ fn send<T: embedded_io::Write, I>(
 where
     I: Iterator<Item = u8> + Clone,
 {
+    let request = link.request;
     let len = params.clone().count() + 2;
     let Ok(len_field) = u8::try_from(len) else {
-        return Err(ValidationError::PacketTooLarge { len, max: MAX_LEN }.into());
+        return Err(ValidationError::PacketTooLarge {
+            len,
+            max: MAX_LEN,
+            request,
+        }
+        .into());
     };
-    let mut w = Writer::new(transport);
+    let mut w = Writer::new(link.transport, request);
     w.put(0xFF)?;
     w.put(0xFF)?;
     let mut sum = 0u8;
@@ -91,8 +97,8 @@ pub(crate) struct StatusParser<'o> {
     remaining: usize,
     error: u8,
     count: usize,
-    /// A header with an impossible `LEN` was seen and skipped.
-    malformed: bool,
+    /// The last header with an impossible `LEN` that was skipped.
+    malformed: Option<Defect>,
 }
 
 impl<'o> StatusParser<'o> {
@@ -105,7 +111,7 @@ impl<'o> StatusParser<'o> {
             remaining: 0,
             error: 0,
             count: 0,
-            malformed: false,
+            malformed: None,
         }
     }
 
@@ -124,11 +130,11 @@ impl Parser for StatusParser<'_> {
         }
     }
 
-    fn on_deadline(&self) -> Option<ProtocolError> {
-        self.malformed.then_some(ProtocolError::Malformed)
+    fn on_deadline(&self) -> Option<Defect> {
+        self.malformed
     }
 
-    fn push(&mut self, byte: u8) -> Option<Result<Status, ProtocolError>> {
+    fn push(&mut self, byte: u8) -> Option<Result<Status, Defect>> {
         match self.state {
             State::Hunt(matched) if matched < 2 => {
                 self.state = State::Hunt(if byte == 0xFF { matched + 1 } else { 0 });
@@ -142,7 +148,11 @@ impl Parser for StatusParser<'_> {
             }
             State::Len => {
                 if byte < 2 {
-                    self.malformed = true;
+                    self.malformed = Some(Defect::TooShort {
+                        protocol: ProtocolVersion::P1,
+                        length: u16::from(byte),
+                        min: 2,
+                    });
                     self.restart();
                     return None;
                 }
@@ -179,7 +189,11 @@ impl Parser for StatusParser<'_> {
                         len: self.count,
                     })
                 } else {
-                    Err(ProtocolError::Checksum { id: self.id })
+                    Err(Defect::Checksum {
+                        packet_id: self.id,
+                        computed: !self.sum,
+                        received: byte,
+                    })
                 };
                 self.restart();
                 return Some(result);
@@ -190,8 +204,24 @@ impl Parser for StatusParser<'_> {
 }
 
 /// Protocol 1 addresses are one byte.
-fn short_addr(addr: u16) -> Result<u8, Error> {
-    u8::try_from(addr).map_err(|_| ValidationError::AddressOutOfRange { addr }.into())
+fn short_addr(addr: u16, request: Request) -> Result<u8, Error> {
+    u8::try_from(addr).map_err(|_| ValidationError::AddressOutOfRange { addr, request }.into())
+}
+
+/// `PacketTooLarge` for a reply of `len` data bytes, if no status packet
+/// can carry it.
+fn check_reply_len(len: usize, request: Request) -> Result<u8, Error> {
+    u8::try_from(len)
+        .ok()
+        .filter(|_| len <= MAX_STATUS_DATA)
+        .ok_or(
+            ValidationError::PacketTooLarge {
+                len,
+                max: MAX_STATUS_DATA,
+                request,
+            }
+            .into(),
+        )
 }
 
 /// Sends an instruction to `id` and parses its status packet into `out`,
@@ -212,20 +242,23 @@ where
     I: Iterator<Item = u8> + Clone,
 {
     drain(link)?;
-    send(link.transport, id.get(), instruction, params)?;
+    send(link, id.get(), instruction, params)?;
     let deadline = link.deadline();
     let status = loop {
-        let status = receive(link, &mut StatusParser::new(out), deadline, Some(id))?;
+        let status = receive(link, &mut StatusParser::new(out), deadline)?;
         if status.id == id.get() {
             break status;
         }
     };
-    check::<P1>(status, id, out)
+    check::<P1>(status, id, out, link.request)
 }
 
 impl Exchange for P1 {
     fn ping<T: Transport, C: Clock>(link: &mut Link<'_, T, C>, id: Id) -> Result<Pong, Error> {
-        unicast(link, id, PING, iter::empty(), &mut [])?;
+        let request = Request::NONE.instruction(Instruction::Ping).id(id);
+        link.with(request, |link| {
+            unicast(link, id, PING, iter::empty(), &mut [])
+        })?;
         Ok(Pong {
             id,
             model_number: None,
@@ -240,18 +273,16 @@ impl Exchange for P1 {
         addr: u16,
         out: &mut [u8],
     ) -> Result<(), Error> {
-        let addr = short_addr(addr)?;
-        let Some(len) = u8::try_from(out.len())
-            .ok()
-            .filter(|_| out.len() <= MAX_STATUS_DATA)
-        else {
-            return Err(ValidationError::PacketTooLarge {
-                len: out.len(),
-                max: MAX_STATUS_DATA,
-            }
-            .into());
-        };
-        unicast(link, id, READ, [addr, len].into_iter(), out)
+        let request = Request::NONE
+            .instruction(Instruction::Read)
+            .id(id)
+            .addr(addr)
+            .len(Request::len_of(out.len()));
+        link.with(request, |link| {
+            let addr = short_addr(addr, link.request)?;
+            let len = check_reply_len(out.len(), link.request)?;
+            unicast(link, id, READ, [addr, len].into_iter(), out)
+        })
     }
 
     fn write<T: Transport, C: Clock>(
@@ -260,8 +291,15 @@ impl Exchange for P1 {
         addr: u16,
         data: &[u8],
     ) -> Result<(), Error> {
-        let params = iter::once(short_addr(addr)?).chain(data.iter().copied());
-        unicast(link, id, WRITE, params, &mut [])
+        let request = Request::NONE
+            .instruction(Instruction::Write)
+            .id(id)
+            .addr(addr)
+            .len(Request::len_of(data.len()));
+        link.with(request, |link| {
+            let params = iter::once(short_addr(addr, link.request)?).chain(data.iter().copied());
+            unicast(link, id, WRITE, params, &mut [])
+        })
     }
 
     fn sync_write<'d, T: Transport, C: Clock, I>(
@@ -273,26 +311,35 @@ impl Exchange for P1 {
     where
         I: Iterator<Item = (Id, &'d [u8])> + Clone,
     {
-        let addr = short_addr(addr)?;
-        let Ok(size_byte) = u8::try_from(size) else {
-            return Err(ValidationError::PacketTooLarge {
-                len: usize::from(size),
-                max: MAX_LEN,
+        let request = Request::NONE
+            .instruction(Instruction::SyncWrite)
+            .addr(addr)
+            .len(size);
+        link.with(request, |link| {
+            let request = link.request;
+            let addr = short_addr(addr, request)?;
+            let Ok(size_byte) = u8::try_from(size) else {
+                return Err(ValidationError::PacketTooLarge {
+                    len: usize::from(size),
+                    max: MAX_LEN,
+                    request,
+                }
+                .into());
+            };
+            if let Some((id, data)) = entries.clone().find(|(_, d)| d.len() != usize::from(size)) {
+                return Err(ValidationError::DataLength {
+                    expected: usize::from(size),
+                    got: data.len(),
+                    request: request.id(id),
+                }
+                .into());
             }
-            .into());
-        };
-        if let Some((_, data)) = entries.clone().find(|(_, d)| d.len() != usize::from(size)) {
-            return Err(ValidationError::DataLength {
-                expected: usize::from(size),
-                got: data.len(),
-            }
-            .into());
-        }
-        let params = [addr, size_byte]
-            .into_iter()
-            .chain(entries.flat_map(|(id, data)| iter::once(id.get()).chain(data.iter().copied())));
-        drain(link)?;
-        send(link.transport, BROADCAST, SYNC_WRITE, params)
+            let params = [addr, size_byte].into_iter().chain(
+                entries.flat_map(|(id, data)| iter::once(id.get()).chain(data.iter().copied())),
+            );
+            drain(link)?;
+            send(link, BROADCAST, SYNC_WRITE, params)
+        })
     }
 
     fn scan<T: Transport, C: Clock, F>(
@@ -305,13 +352,13 @@ impl Exchange for P1 {
         for id in (0..=Id::MAX).filter_map(|raw| Id::new(raw).ok()) {
             match Self::ping(link, id) {
                 Ok(pong) => on_reply(Ok(pong)),
-                Err(Error::Status(StatusError { id, report })) => on_reply(Ok(Pong {
+                Err(Error::Status(StatusError { id, report, .. })) => on_reply(Ok(Pong {
                     id,
                     model_number: None,
                     firmware: None,
                     fault: Some(report),
                 })),
-                Err(Error::Transport(TransportError::Timeout { .. })) => {}
+                Err(Error::Transport(err)) if err.is_timeout() => {}
                 Err(err @ Error::Transport(_)) => return Err(err),
                 Err(err) => on_reply(Err(err)),
             }
@@ -331,26 +378,25 @@ impl Exchange for P1 {
         I: Iterator<Item = Id> + Clone,
         F: FnMut(Id, Result<&[u8], Error>),
     {
-        short_addr(addr)?;
+        let request = Request::NONE
+            .instruction(Instruction::Read)
+            .addr(addr)
+            .len(size);
+        short_addr(addr, link.request.filled(request))?;
         let size = usize::from(size);
-        if size > MAX_STATUS_DATA {
-            return Err(ValidationError::PacketTooLarge {
-                len: size,
-                max: MAX_STATUS_DATA,
-            }
-            .into());
-        }
+        check_reply_len(size, link.request.filled(request))?;
         let Some(buf) = scratch.get_mut(..size) else {
             return Err(ValidationError::DataLength {
                 expected: size,
                 got: scratch.len(),
+                request: link.request.filled(request),
             }
             .into());
         };
         for id in ids {
             match Self::read(link, id, addr, buf) {
                 Ok(()) => on_reply(id, Ok(&*buf)),
-                Err(err @ Error::Transport(TransportError::Io(_))) => return Err(err),
+                Err(Error::Transport(err)) if !err.is_timeout() => return Err(err.into()),
                 Err(err) => on_reply(id, Err(err)),
             }
         }
@@ -370,39 +416,37 @@ impl Exchange for P1 {
         if let Some(id) = repeated_id(entries.clone().map(|(id, _, _)| id)) {
             return Err(ValidationError::DuplicateId { id }.into());
         }
-        for (_, addr, size) in entries.clone() {
-            short_addr(addr)?;
-            let size = usize::from(size);
-            if size > MAX_STATUS_DATA {
-                return Err(ValidationError::PacketTooLarge {
-                    len: size,
-                    max: MAX_STATUS_DATA,
+        link.with(Request::NONE.instruction(Instruction::BulkRead), |link| {
+            for (id, addr, size) in entries.clone() {
+                let request = link.request.id(id).addr(addr).len(size);
+                short_addr(addr, request)?;
+                let size = usize::from(size);
+                check_reply_len(size, request)?;
+                if scratch.len() < size {
+                    return Err(ValidationError::DataLength {
+                        expected: size,
+                        got: scratch.len(),
+                        request,
+                    }
+                    .into());
                 }
-                .into());
             }
-            if scratch.len() < size {
-                return Err(ValidationError::DataLength {
-                    expected: size,
-                    got: scratch.len(),
-                }
-                .into());
-            }
-        }
-        let params = iter::once(0x00).chain(entries.clone().flat_map(|(id, addr, size)| {
-            [
-                u8::try_from(size).unwrap_or(u8::MAX),
-                id.get(),
-                u8::try_from(addr).unwrap_or(u8::MAX),
-            ]
-        }));
-        drain(link)?;
-        send(link.transport, BROADCAST, BULK_READ, params)?;
-        collect::<Self, T, C, _, F>(
-            link,
-            entries.map(|(id, _, size)| (id, usize::from(size))),
-            scratch,
-            on_reply,
-        )
+            let params = iter::once(0x00).chain(entries.clone().flat_map(|(id, addr, size)| {
+                [
+                    u8::try_from(size).unwrap_or(u8::MAX),
+                    id.get(),
+                    u8::try_from(addr).unwrap_or(u8::MAX),
+                ]
+            }));
+            drain(link)?;
+            send(link, BROADCAST, BULK_READ, params)?;
+            collect::<Self, T, C, _, F>(
+                link,
+                entries.map(|(id, addr, size)| (id, addr, usize::from(size))),
+                scratch,
+                on_reply,
+            )
+        })
     }
 
     fn report(error: u8) -> StatusReport {
@@ -415,9 +459,8 @@ impl Receive for P1 {
         link: &mut Link<'_, T, C>,
         out: &mut [u8],
         deadline: u64,
-        id: Option<Id>,
     ) -> Result<Status, Error> {
-        receive(link, &mut StatusParser::new(out), deadline, id)
+        receive(link, &mut StatusParser::new(out), deadline)
     }
 }
 
@@ -430,23 +473,69 @@ mod tests {
     use std::vec::Vec;
 
     use super::*;
-    use crate::error::{P1Flag, StatusError};
+    use crate::error::{Direction, P1Flag, ProtocolError, StatusError, TransportError};
     use crate::protocol::vectors::p1 as v;
     use crate::transport::{MockTime, MockTransport};
+
+    macro_rules! link {
+        ($line:expr, $clock:expr) => {
+            Link {
+                transport: &mut $line,
+                clock: &mut $clock,
+                timeout: Duration::from_millis(10),
+                request: Request::NONE,
+            }
+        };
+    }
 
     fn id(raw: u8) -> Id {
         Id::new(raw).unwrap()
     }
 
     fn packet(id: u8, instruction: u8, params: &[u8]) -> Vec<u8> {
-        let mut buf = [0u8; 300];
-        let mut w: &mut [u8] = &mut buf;
-        send(&mut w, id, instruction, params.iter().copied()).unwrap();
-        let n = 300 - w.len();
-        buf[..n].to_vec()
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let mut line = MockTransport::new(&time);
+        send(
+            &mut link!(line, clock),
+            id,
+            instruction,
+            params.iter().copied(),
+        )
+        .unwrap();
+        line.sent().to_vec()
     }
 
-    fn parse(bytes: &[u8], out: &mut [u8]) -> Option<Result<Status, ProtocolError>> {
+    /// The request of a Read of `len` bytes at `addr` from `raw`.
+    fn read_req(raw: u8, addr: u16, len: u16) -> Request {
+        Request::NONE
+            .instruction(Instruction::Read)
+            .id(id(raw))
+            .addr(addr)
+            .len(len)
+    }
+
+    fn ping_req(raw: u8) -> Request {
+        Request::NONE.instruction(Instruction::Ping).id(id(raw))
+    }
+
+    fn bulk_req(raw: u8, addr: u16, len: u16) -> Request {
+        Request::NONE
+            .instruction(Instruction::BulkRead)
+            .id(id(raw))
+            .addr(addr)
+            .len(len)
+    }
+
+    fn no_reply(request: Request) -> Error {
+        TransportError::NoReply {
+            request,
+            timeout_us: 10_000,
+        }
+        .into()
+    }
+
+    fn parse(bytes: &[u8], out: &mut [u8]) -> Option<Result<Status, Defect>> {
         let mut parser = StatusParser::new(out);
         let mut last = None;
         for &b in bytes {
@@ -455,16 +544,6 @@ mod tests {
             }
         }
         last
-    }
-
-    macro_rules! link {
-        ($line:expr, $clock:expr) => {
-            Link {
-                transport: &mut $line,
-                clock: &mut $clock,
-                timeout: Duration::from_millis(10),
-            }
-        };
     }
 
     #[test]
@@ -508,7 +587,7 @@ mod tests {
                     );
                     if pos != 3 && bad[2] != 0xFF {
                         assert!(
-                            matches!(result, Some(Err(ProtocolError::Checksum { .. }))),
+                            matches!(result, Some(Err(Defect::Checksum { .. }))),
                             "{bad:02X?} (pos {pos}) gave {result:?}"
                         );
                     }
@@ -543,7 +622,13 @@ mod tests {
         line.reply(&[0xFF, 0xFF, 0x01, 0x00]);
         assert_eq!(
             P1::ping(&mut link!(line, clock), id(1)),
-            Err(ProtocolError::Malformed.into())
+            Err(ProtocolError::LengthTooShort {
+                request: ping_req(1),
+                protocol: ProtocolVersion::P1,
+                length: 0,
+                min: 2,
+            }
+            .into())
         );
     }
 
@@ -563,7 +648,7 @@ mod tests {
         line.reply(&late_from_2);
         assert_eq!(
             P1::ping(&mut link!(line, clock), id(1)),
-            Err(TransportError::Timeout { id: Some(id(1)) }.into())
+            Err(no_reply(ping_req(1)))
         );
     }
 
@@ -638,14 +723,19 @@ mod tests {
         let mut out = [0; 1];
         assert_eq!(
             P1::read(&mut link!(line, clock), id(1), 256, &mut out),
-            Err(ValidationError::AddressOutOfRange { addr: 256 }.into())
+            Err(ValidationError::AddressOutOfRange {
+                addr: 256,
+                request: read_req(1, 256, 1),
+            }
+            .into())
         );
         let mut huge = [0; MAX_STATUS_DATA + 1];
         assert_eq!(
             P1::read(&mut link!(line, clock), id(1), 0, &mut huge),
             Err(ValidationError::PacketTooLarge {
                 len: MAX_STATUS_DATA + 1,
-                max: MAX_STATUS_DATA
+                max: MAX_STATUS_DATA,
+                request: read_req(1, 0, MAX_STATUS_DATA as u16 + 1),
             }
             .into())
         );
@@ -659,10 +749,19 @@ mod tests {
             Err(Error::Validation(ValidationError::PacketTooLarge { .. }))
         ));
         let short = [(id(1), &[0u8][..])];
-        assert!(matches!(
+        assert_eq!(
             P1::sync_write(&mut link!(line, clock), 0, 2, short.into_iter()),
-            Err(Error::Validation(ValidationError::DataLength { .. }))
-        ));
+            Err(ValidationError::DataLength {
+                expected: 2,
+                got: 1,
+                request: Request::NONE
+                    .instruction(Instruction::SyncWrite)
+                    .id(id(1))
+                    .addr(0)
+                    .len(2),
+            }
+            .into())
+        );
         assert!(line.sent().is_empty());
     }
 
@@ -690,7 +789,13 @@ mod tests {
             [
                 Ok(pong(1, None)),
                 Ok(pong(3, Some(StatusReport::P1(P1Flags(0x20))))),
-                Err(ProtocolError::Checksum { id: 5 }.into()),
+                Err(ProtocolError::Checksum {
+                    request: ping_req(5),
+                    packet_id: 5,
+                    computed: 0xF8,
+                    received: 0x07,
+                }
+                .into()),
                 Ok(pong(200, None)),
             ]
         );
@@ -707,7 +812,12 @@ mod tests {
         let mut calls = 0;
         assert_eq!(
             P1::scan(&mut link!(line, clock), |_| calls += 1),
-            Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+            Err(TransportError::Io {
+                request: ping_req(0),
+                direction: Direction::ReadReady,
+                kind: embedded_io::ErrorKind::BrokenPipe,
+            }
+            .into())
         );
         assert_eq!(calls, 0);
     }
@@ -744,13 +854,14 @@ mod tests {
             got,
             [
                 (1, Ok(std::vec![0x20])),
-                (2, Err(TransportError::Timeout { id: Some(id(2)) }.into())),
+                (2, Err(no_reply(read_req(2, 43, 1)))),
                 (3, Ok(std::vec![0x30])),
                 (
                     4,
                     Err(StatusError {
                         id: id(4),
-                        report: StatusReport::P1(P1Flags(0x20))
+                        report: StatusReport::P1(P1Flags(0x20)),
+                        request: read_req(4, 43, 1),
                     }
                     .into())
                 ),
@@ -771,6 +882,12 @@ mod tests {
         let ids = [id(1)];
         let mut small = [0; 1];
         let mut calls = 0;
+        let many = |addr, len| {
+            Request::NONE
+                .instruction(Instruction::Read)
+                .addr(addr)
+                .len(len)
+        };
         for (addr, size, expected) in [
             (
                 43,
@@ -778,15 +895,24 @@ mod tests {
                 ValidationError::DataLength {
                     expected: 2,
                     got: 1,
+                    request: many(43, 2),
                 },
             ),
-            (256, 1, ValidationError::AddressOutOfRange { addr: 256 }),
+            (
+                256,
+                1,
+                ValidationError::AddressOutOfRange {
+                    addr: 256,
+                    request: many(256, 1),
+                },
+            ),
             (
                 0,
                 MAX_STATUS_DATA as u16 + 1,
                 ValidationError::PacketTooLarge {
                     len: MAX_STATUS_DATA + 1,
                     max: MAX_STATUS_DATA,
+                    request: many(0, MAX_STATUS_DATA as u16 + 1),
                 },
             ),
         ] {
@@ -813,7 +939,12 @@ mod tests {
                 &mut small,
                 |_, _| calls += 1
             ),
-            Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+            Err(TransportError::Io {
+                request: read_req(1, 43, 1),
+                direction: Direction::ReadReady,
+                kind: embedded_io::ErrorKind::BrokenPipe,
+            }
+            .into())
         );
         assert_eq!(calls, 0);
     }
@@ -861,7 +992,14 @@ mod tests {
         assert_eq!(
             got,
             [
-                (1, Err(TransportError::Timeout { id: Some(id(1)) }.into())),
+                (
+                    1,
+                    Err(TransportError::Skipped {
+                        request: bulk_req(1, 30, 2),
+                        answered: id(2),
+                    }
+                    .into())
+                ),
                 (2, Ok(std::vec![0x00, 0x80]))
             ]
         );
@@ -877,13 +1015,18 @@ mod tests {
         );
         assert_eq!(
             bulk_read_with(&mut line, &[(1, 256, 2)]),
-            Err(ValidationError::AddressOutOfRange { addr: 256 }.into())
+            Err(ValidationError::AddressOutOfRange {
+                addr: 256,
+                request: bulk_req(1, 256, 2),
+            }
+            .into())
         );
         assert_eq!(
             bulk_read_with(&mut line, &[(1, 30, 4)]),
             Err(ValidationError::DataLength {
                 expected: 4,
-                got: 2
+                got: 2,
+                request: bulk_req(1, 30, 4),
             }
             .into())
         );
@@ -891,7 +1034,8 @@ mod tests {
             bulk_read_with(&mut line, &[(1, 30, 300)]),
             Err(ValidationError::PacketTooLarge {
                 len: 300,
-                max: MAX_STATUS_DATA
+                max: MAX_STATUS_DATA,
+                request: bulk_req(1, 30, 300),
             }
             .into())
         );
@@ -899,7 +1043,12 @@ mod tests {
         line.fail_with(embedded_io::ErrorKind::BrokenPipe);
         assert_eq!(
             bulk_read_with(&mut line, &[(1, 30, 2)]),
-            Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+            Err(TransportError::Io {
+                request: Request::NONE.instruction(Instruction::BulkRead),
+                direction: Direction::ReadReady,
+                kind: embedded_io::ErrorKind::BrokenPipe,
+            }
+            .into())
         );
     }
 }

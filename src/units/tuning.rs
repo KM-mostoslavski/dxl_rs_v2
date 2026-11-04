@@ -1,7 +1,7 @@
 //! [`Gain`], [`ComplianceMargin`] and [`ComplianceSlope`]: tuning values,
 //! model-specific (Tier 2).
 
-use crate::error::ValidationError;
+use crate::error::{Request, ValidationError};
 
 use super::position::{Position, PositionScale};
 
@@ -22,6 +22,7 @@ impl Gain {
             Err(ValidationError::DoesNotFit {
                 raw: value as i64,
                 size,
+                request: Request::NONE,
             })
         } else {
             Ok(Self(value))
@@ -94,7 +95,10 @@ impl ComplianceSlope {
         if step >= 1 && step <= 7 {
             Ok(Self(1 << step))
         } else {
-            Err(ValidationError::InvalidSlopeStep(step))
+            Err(ValidationError::InvalidSlopeStep {
+                step,
+                request: Request::NONE,
+            })
         }
     }
 
@@ -127,7 +131,11 @@ mod tests {
         assert_eq!(Gain::new(255, 1).map(Gain::raw), Ok(255));
         assert_eq!(
             Gain::new(256, 1),
-            Err(ValidationError::DoesNotFit { raw: 256, size: 1 })
+            Err(ValidationError::DoesNotFit {
+                raw: 256,
+                size: 1,
+                request: Request::NONE,
+            })
         );
         assert_eq!(Gain::new(16_383, 2).map(Gain::raw), Ok(16_383));
         assert_eq!(Gain::from_raw(7).raw(), 7);
@@ -173,11 +181,17 @@ mod tests {
         }
         assert_eq!(
             ComplianceSlope::new(0),
-            Err(ValidationError::InvalidSlopeStep(0))
+            Err(ValidationError::InvalidSlopeStep {
+                step: 0,
+                request: Request::NONE,
+            })
         );
         assert_eq!(
             ComplianceSlope::new(8),
-            Err(ValidationError::InvalidSlopeStep(8))
+            Err(ValidationError::InvalidSlopeStep {
+                step: 8,
+                request: Request::NONE,
+            })
         );
     }
 }

@@ -35,7 +35,7 @@ where
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_out(stages.len(), out.len())?;
     group::stage_reads::<F>(kinds, stages)?;
-    group::read_each::<P, T, C, F, AnyProtocol, _>(
+    let sent = group::read_each::<P, T, C, F, AnyProtocol, _>(
         wire,
         kinds,
         states,
@@ -46,7 +46,13 @@ where
                 *slot = result.and_then(|raw| field::decode::<F>(kind, raw));
             }
         },
-    )
+    );
+    for slot in out.iter_mut().take(stages.len()) {
+        if let Err(err) = slot {
+            *err = group::diagnose_among(wire, kinds, *err);
+        }
+    }
+    sent
 }
 
 /// Reads with one result per target (`partial-reads` feature).
@@ -119,7 +125,10 @@ bus.declare([(a, ModelNumber(1020)), (b, ModelNumber(1020))])?;
 let mut out = [Ok(dxl_rs_v2::Position::ZERO); 2];
 bus.read_positions_partial([a, b], &mut out)?;
 assert!(out[0].is_ok());
-assert_eq!(out[1], Err(TransportError::Timeout { id: Some(b) }.into()));
+assert!(matches!(
+    out[1],
+    Err(Error::Transport(TransportError::NoReply { request, .. })) if request.id == Some(b)
+));
 # Ok::<(), Error>(())
 ```
 "#
@@ -193,14 +202,41 @@ assert_eq!(out[1], Err(TransportError::Timeout { id: Some(b) }.into()));
 #[cfg(test)]
 mod tests {
     use crate::bus::testing::*;
-    use crate::error::{Error, SetupError};
+    use crate::error::{Error, Instruction, Request, SetupError};
     use crate::transport::MockTime;
 
     const SENTINEL: Result<i32, Error> = Ok(-7);
 
+    /// A read of Present Position at `addr` (`len` bytes) from `n` with
+    /// `instruction`.
     #[cfg(any(feature = "x-series", feature = "ax"))]
+    fn present_request(instruction: Instruction, n: u8, addr: u16, len: u16) -> Request {
+        Request::NONE
+            .instruction(instruction)
+            .id(id(n))
+            .register("Present Position")
+            .addr(addr)
+            .len(len)
+    }
+
+    /// No reply from `n` to the XM430 Sync Read of Present Position.
+    #[cfg(feature = "x-series")]
     fn timeout(n: u8) -> Result<i32, Error> {
-        Err(crate::TransportError::Timeout { id: Some(id(n)) }.into())
+        Err(crate::TransportError::NoReply {
+            request: present_request(Instruction::SyncRead, n, 132, 4),
+            timeout_us: 10_000,
+        }
+        .into())
+    }
+
+    /// `n`'s turn of the XM430 Sync Read answered by `answered` instead.
+    #[cfg(feature = "x-series")]
+    fn skipped(n: u8, answered: u8) -> Result<i32, Error> {
+        Err(crate::TransportError::Skipped {
+            request: present_request(Instruction::SyncRead, n, 132, 4),
+            answered: id(answered),
+        }
+        .into())
     }
 
     #[test]
@@ -231,10 +267,11 @@ mod tests {
         use crate::bus::group::{self, OnFailedGroup, Stage};
         use crate::bus::slots::Slots;
         use crate::bus::wire::{ReadMany, Wire};
-        use crate::error::{StatusError, StatusReport, TransportError, ValidationError};
+        use crate::error::{Direction, FaultError, TransportError, ValidationError};
         use crate::field::{PresentPosition, Raw};
         use crate::models::ActuatorKind;
         use crate::protocol::{Clock, P2, Protocol};
+        use crate::units::HardwareErrors;
         use crate::units::Position;
         use crate::{Id, TorqueState};
 
@@ -251,13 +288,21 @@ mod tests {
             p2_status(n, 0, &raw.to_le_bytes())
         }
 
-        fn alert(n: u8) -> Result<i32, Error> {
-            Err(StatusError {
+        /// The overload `n` reports in reply to `request`, measured.
+        fn overload(n: u8, request: Request) -> Result<i32, Error> {
+            Err(FaultError::Overload {
                 id: id(n),
-                report: StatusReport::P2 {
-                    alert: true,
-                    code: None,
-                },
+                faults: HardwareErrors::from_raw(0x20),
+                request,
+            }
+            .into())
+        }
+
+        fn broken(direction: Direction, request: Request) -> Result<i32, Error> {
+            Err(TransportError::Io {
+                request,
+                direction,
+                kind: embedded_io::ErrorKind::BrokenPipe,
             }
             .into())
         }
@@ -274,7 +319,7 @@ mod tests {
                 bus.read_positions_raw_partial([id(3), id(2), id(1)], &mut out),
                 Ok(())
             );
-            assert_eq!(out, [Ok(300), timeout(2), Ok(100), SENTINEL]);
+            assert_eq!(out, [Ok(300), skipped(2, 1), Ok(100), SENTINEL]);
             assert_eq!(sent(&bus), p2_sync_read(132, 4, &[3, 2, 1]));
             assert_eq!(bus.torque_states(), [OFF; 3]);
         }
@@ -286,10 +331,18 @@ mod tests {
             line(&mut bus)
                 .reply_to(1, &present(1, 10))
                 .reply_to(1, &p2_status(2, 0x80, &20i32.to_le_bytes()))
-                .reply_to(1, &present(3, 30));
+                .reply_to(1, &present(3, 30))
+                .reply_to(2, &p2_status(2, 0x80, &[0x20]));
             let mut out = [SENTINEL; 3];
             bus.read_positions_raw_partial(bus.ids(), &mut out).unwrap();
-            assert_eq!(out, [Ok(10), alert(2), Ok(30)]);
+            assert_eq!(
+                out,
+                [
+                    Ok(10),
+                    overload(2, present_request(Instruction::SyncRead, 2, 132, 4)),
+                    Ok(30)
+                ]
+            );
             assert_eq!(bus.torque_states(), [OFF, FAULTED, OFF]);
             assert_done(&bus);
         }
@@ -301,8 +354,14 @@ mod tests {
             line(&mut bus).fail_with(embedded_io::ErrorKind::BrokenPipe);
             let mut out = [SENTINEL; 3];
             assert_eq!(bus.read_positions_raw_partial(bus.ids(), &mut out), Ok(()));
-            let io: Result<i32, Error> =
-                Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into());
+            let io = broken(
+                Direction::ReadReady,
+                Request::NONE
+                    .instruction(Instruction::SyncRead)
+                    .register("Present Position")
+                    .addr(132)
+                    .len(4),
+            );
             assert_eq!(out, [io; 3]);
             assert_eq!(bus.torque_states(), [OFF; 3]);
         }
@@ -320,7 +379,7 @@ mod tests {
                 out,
                 [
                     Ok(scale.to_position(3072)),
-                    Err(TransportError::Timeout { id: Some(id(3)) }.into())
+                    timeout(3).map(|_| Position::ZERO)
                 ]
             );
         }
@@ -334,14 +393,26 @@ mod tests {
             hold(&mut bus, XM430, 3, (0, 4095), BOUNDED, ON);
             line(&mut bus)
                 .reply_to(1, &present(3, 33))
-                .reply_to(2, &p2_status(2, 0x80, &700u16.to_le_bytes()));
+                .reply_to(2, &p2_status(2, 0x80, &700u16.to_le_bytes()))
+                .reply_to(3, &p2_status(2, 0x80, &[0x20]));
             let mut out = [SENTINEL; 3];
             bus.read_positions_raw_partial(bus.ids(), &mut out).unwrap();
             assert_eq!(
                 sent(&bus),
-                concat(&[p2_sync_read(132, 4, &[1, 3]), p2_sync_read(37, 2, &[2])])
+                concat(&[
+                    p2_sync_read(132, 4, &[1, 3]),
+                    p2_sync_read(37, 2, &[2]),
+                    p2_read(2, 50, 1),
+                ])
             );
-            assert_eq!(out, [timeout(1), alert(2), Ok(33)]);
+            assert_eq!(
+                out,
+                [
+                    skipped(1, 3),
+                    overload(2, present_request(Instruction::SyncRead, 2, 37, 2)),
+                    Ok(33)
+                ]
+            );
             assert_eq!(bus.torque_states(), [ON, FAULTED, ON]);
         }
 
@@ -353,7 +424,12 @@ mod tests {
             let mut out = [SENTINEL; 2];
             assert_eq!(
                 bus.read_positions_raw_partial(bus.ids(), &mut out),
-                Err(ValidationError::BufferLength { targets: 3, got: 2 }.into())
+                Err(ValidationError::BufferLength {
+                    targets: 3,
+                    got: 2,
+                    request: Request::NONE,
+                }
+                .into())
             );
             assert_eq!(
                 bus.read_positions_raw_partial([id(1), id(9)], &mut out),
@@ -394,7 +470,12 @@ mod tests {
                 if let Some(first) = ids.next() {
                     on_reply(first, Ok(&[0x80, 0]));
                 }
-                Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into())
+                Err(TransportError::Io {
+                    request: Request::NONE,
+                    direction: Direction::Read,
+                    kind: embedded_io::ErrorKind::BrokenPipe,
+                }
+                .into())
             }
         }
 
@@ -423,7 +504,7 @@ mod tests {
                 },
             )
             .unwrap();
-            let io = Err(TransportError::Io(embedded_io::ErrorKind::BrokenPipe).into());
+            let io = broken(Direction::Read, Request::NONE);
             assert_eq!(got, [Some(Ok(0x80)), Some(Ok(2)), Some(io)]);
             assert_eq!(
                 group::read_stages::<P2, _, _, Raw<PresentPosition>, XlLayoutBreaks>(
@@ -438,8 +519,9 @@ mod tests {
     #[cfg(feature = "ax")]
     mod ax {
         use super::*;
-        use crate::error::StatusError;
+        use crate::error::FaultError;
         use crate::protocol::P1;
+        use crate::units::HardwareErrors;
 
         #[test]
         fn p1_slots_are_independent() {
@@ -453,11 +535,20 @@ mod tests {
                 .reply_to(3, &p1_status(3, 0x20, &300u16.to_le_bytes()));
             let mut out = [SENTINEL; 3];
             bus.read_positions_raw_partial(bus.ids(), &mut out).unwrap();
-            assert_eq!(out[..2], [Ok(100), timeout(2)]);
-            assert!(
-                matches!(out[2], Err(Error::Status(StatusError { id, .. })) if id.get() == 3),
-                "{:?}",
-                out[2]
+            let timeout = Err(crate::TransportError::NoReply {
+                request: present_request(Instruction::Read, 2, 36, 2),
+                timeout_us: 10_000,
+            }
+            .into());
+            assert_eq!(out[..2], [Ok(100), timeout]);
+            assert_eq!(
+                out[2],
+                Err(FaultError::Overload {
+                    id: id(3),
+                    faults: HardwareErrors::from_raw(0x20),
+                    request: present_request(Instruction::Read, 3, 36, 2),
+                }
+                .into())
             );
             assert_eq!(bus.torque_states(), [ON, ON, FAULTED]);
             assert_eq!(

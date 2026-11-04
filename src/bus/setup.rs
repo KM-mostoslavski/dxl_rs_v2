@@ -2,11 +2,14 @@
 //! hold them with torque off (research R-6, R-9).
 
 use crate::actuator::{Describe, LimitMode, ModelNumber};
-use crate::error::{Error, SetupError, StatusError, TransportError, ValidationError};
+use crate::error::{
+    Error, Instruction, Request, SetupError, StatusError, Step, TransportError, ValidationError,
+};
 use crate::models::{self, ActuatorKind};
 use crate::protocol::{Clock, Pong, Protocol};
-use crate::{Id, Transport};
+use crate::{Id, IdSet, Transport};
 
+use super::diagnose::diagnose_unknown;
 use super::field;
 use super::slots::Slots;
 use super::wire::Wire;
@@ -30,6 +33,7 @@ where
 {
     slots.clear();
     let result = declare_all::<P, T, C, S, I, N>(wire, slots, list);
+    wire.set_context(Request::NONE);
     if result.is_err() {
         slots.clear();
     }
@@ -49,28 +53,39 @@ where
     I: IntoIterator<Item = (Id, ModelNumber)>,
 {
     let mut entries = heapless::Vec::<(Id, ModelNumber), N>::new();
+    let mut ids = IdSet::new();
+    let mut overflow = false;
     for (id, model) in list {
-        if entries.iter().any(|&(held, _)| held == id) {
+        if !ids.insert(id) {
             return Err(ValidationError::DuplicateId { id }.into());
         }
-        entries
-            .push((id, model))
-            .map_err(|_| SetupError::TooManyActuators { capacity: N })?;
+        overflow |= entries.push((id, model)).is_err();
+    }
+    if overflow {
+        return Err(SetupError::TooManyActuators {
+            capacity: N,
+            ids,
+            declared: true,
+        }
+        .into());
     }
     entries.sort_unstable_by_key(|&(id, _)| id);
     for &(id, model) in &entries {
         ActuatorKind::new(P::VERSION, model, 0, id).map(drop)?;
     }
     for &(id, declared) in &entries {
+        wire.set_context(Request::NONE.step(Step::Ping));
         let pong = match wire.ping(id) {
-            Err(Error::Transport(TransportError::Timeout { .. })) => {
-                return Err(SetupError::Missing { id }.into());
+            Err(Error::Transport(TransportError::NoReply { timeout_us, .. })) => {
+                return Err(SetupError::Missing { id, timeout_us }.into());
             }
-            result => result?,
+            Err(err) => return Err(diagnose_unknown(wire, id, Some(declared.get()), err)),
+            Ok(pong) => pong,
         };
         let found = match pong.model_number {
             Some(number) => number,
-            None => read_model_number(wire, id)?,
+            None => read_model_number(wire, id)
+                .map_err(|err| diagnose_unknown(wire, id, Some(declared.get()), err))?,
         };
         if found != declared.get() {
             return Err(SetupError::WrongModel {
@@ -104,6 +119,7 @@ where
 {
     slots.clear();
     let result = autoscan_all::<P, T, C, S, N>(wire, slots);
+    wire.set_context(Request::NONE);
     if result.is_err() {
         slots.clear();
     }
@@ -121,20 +137,42 @@ where
     S: Slots,
 {
     let mut pongs = heapless::Vec::<Pong, N>::new();
+    let mut answered = IdSet::new();
     let mut failure = None;
+    wire.set_context(Request::NONE.step(Step::Scan));
     wire.scan(|reply| {
+        if let Ok(pong) = &reply {
+            answered.insert(pong.id);
+        }
         if failure.is_none() {
             failure = collect::<N>(&mut pongs, reply).err();
         }
     })?;
-    if let Some(err) = failure {
-        return Err(err);
+    match failure {
+        Some(Error::Setup(SetupError::TooManyActuators { capacity, .. })) => {
+            return Err(SetupError::TooManyActuators {
+                capacity,
+                ids: answered,
+                declared: false,
+            }
+            .into());
+        }
+        Some(err @ Error::Status(StatusError { id, .. })) => {
+            let model = pongs
+                .iter()
+                .find(|pong| pong.id == id)
+                .and_then(|pong| pong.model_number);
+            return Err(diagnose_unknown(wire, id, model, err));
+        }
+        Some(err) => return Err(err),
+        None => {}
     }
     pongs.sort_unstable_by_key(|pong| pong.id);
     for pong in &pongs {
         let model = match pong.model_number {
             Some(number) => number,
-            None => read_model_number(wire, pong.id)?,
+            None => read_model_number(wire, pong.id)
+                .map_err(|err| diagnose_unknown(wire, pong.id, None, err))?,
         };
         init_one(wire, slots, pong.id, ModelNumber(model), pong.firmware)?;
     }
@@ -149,14 +187,29 @@ fn collect<const N: usize>(
     let pong = reply?;
     let id = pong.id;
     if let Some(report) = pong.fault {
-        return Err(StatusError { id, report }.into());
+        let request = Request::NONE
+            .instruction(Instruction::Ping)
+            .id(id)
+            .step(Step::Scan);
+        let _ = pongs.push(pong);
+        return Err(StatusError {
+            id,
+            report,
+            request,
+        }
+        .into());
     }
     if pongs.iter().any(|held| held.id == id) {
         return Err(ValidationError::DuplicateId { id }.into());
     }
-    pongs
-        .push(pong)
-        .map_err(|_| SetupError::TooManyActuators { capacity: N }.into())
+    pongs.push(pong).map_err(|_| {
+        SetupError::TooManyActuators {
+            capacity: N,
+            ids: IdSet::new(),
+            declared: false,
+        }
+        .into()
+    })
 }
 
 /// Reads Model Number, which every table has at the same place.
@@ -164,6 +217,7 @@ fn read_model_number<P: Protocol, T: Transport, C: Clock>(
     wire: &mut Wire<'_, P, T, C>,
     id: Id,
 ) -> Result<u16, Error> {
+    wire.set_context(Request::NONE.step(Step::ModelNumber));
     let raw = wire.read_value(id, models::MODEL_NUMBER)?;
     Ok(u16::try_from(raw).unwrap_or(u16::MAX))
 }
@@ -196,25 +250,40 @@ where
     C: Clock,
     S: Slots,
 {
+    let step = |wire: &mut Wire<'_, P, T, C>, step| wire.set_context(Request::NONE.step(step));
     let firmware = match (firmware, ActuatorKind::firmware_register(P::VERSION, model)) {
         (Some(firmware), _) => firmware,
-        (None, Some(reg)) => u8::try_from(wire.read_value(id, reg)?).unwrap_or(u8::MAX),
+        (None, Some(reg)) => {
+            step(wire, Step::Firmware);
+            let read = wire.read_value(id, reg);
+            let read = read.map_err(|err| diagnose_unknown(wire, id, Some(model.get()), err));
+            u8::try_from(read?).unwrap_or(u8::MAX)
+        }
         (None, None) => 0,
     };
     let mut kind = ActuatorKind::new(P::VERSION, model, firmware, id)?;
     kind.cache_mut().record_firmware(firmware);
     let data = kind.data();
-    let min = wire.read_value(id, data.limits.min())?;
-    let max = wire.read_value(id, data.limits.max())?;
+    step(wire, Step::PositionLimits);
+    let min = wire.read_value(id, data.limits.min());
+    let min = super::diagnose::diagnosed(wire, &kind, min)?;
+    let max = wire.read_value(id, data.limits.max());
+    let max = super::diagnose::diagnosed(wire, &kind, max)?;
     let limits = kind.cache_mut().record_limits(min, max)?;
     let mode = match data.mode.register() {
         Some(reg) => {
+            step(wire, Step::OperatingMode);
             let mut value = [0];
-            wire.read(id, reg, &mut value)?;
+            let read = wire.read(id, reg, &mut value);
+            super::diagnose::diagnosed(wire, &kind, read)?;
             let [value] = value;
             data.mode
                 .limit_mode(value, limits)
-                .ok_or(SetupError::UnknownOperatingMode { id, value })?
+                .ok_or(SetupError::UnknownOperatingMode {
+                    id,
+                    value,
+                    register: reg.name,
+                })?
         }
         None => LimitMode::from_angle_limits(limits),
     };
@@ -223,7 +292,11 @@ where
         .and_then(|role| data.role(role))
         .and_then(|goal| goal.bounded_by())
     {
-        Some(reg) => Some(wire.read_value(id, reg)?.cast_unsigned()),
+        Some(reg) => {
+            step(wire, Step::GoalBound);
+            let read = wire.read_value(id, reg);
+            Some(super::diagnose::diagnosed(wire, &kind, read)?.cast_unsigned())
+        }
         None => None,
     };
     slots.push(kind, bound)?;
@@ -232,13 +305,44 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
+    use std::format;
+    use std::string::ToString;
+
     use super::*;
     use crate::bus::testing::*;
+    use crate::error::{Decivolts, FaultError, Instruction, VoltageError};
     use crate::protocol::{P1, P2, ProtocolVersion};
     use crate::transport::MockTime;
+    use crate::units::HardwareErrors;
 
     fn model(n: u16) -> ModelNumber {
         ModelNumber(n)
+    }
+
+    /// A Read of `register` at `addr` (`len` bytes) from actuator `n` during
+    /// `step`.
+    fn read(n: u8, register: &'static str, addr: u16, len: u16, step: Step) -> Request {
+        Request::NONE
+            .instruction(Instruction::Read)
+            .id(id(n))
+            .register(register)
+            .addr(addr)
+            .len(len)
+            .step(step)
+    }
+
+    fn no_reply(request: Request) -> Error {
+        TransportError::NoReply {
+            request,
+            timeout_us: 10_000,
+        }
+        .into()
+    }
+
+    fn ids(list: &[u8]) -> IdSet {
+        list.iter().map(|&n| id(n)).collect()
     }
 
     #[test]
@@ -281,7 +385,12 @@ mod tests {
         let list = [1, 2, 3].map(|n| (id(n), model(XM430)));
         assert_eq!(
             bus.declare(list),
-            Err(SetupError::TooManyActuators { capacity: 2 }.into())
+            Err(SetupError::TooManyActuators {
+                capacity: 2,
+                ids: ids(&[1, 2, 3]),
+                declared: true,
+            }
+            .into())
         );
         assert_quiet(&bus, mark);
     }
@@ -311,7 +420,6 @@ mod tests {
     mod x_series {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
-        use crate::error::{StatusError, StatusReport};
 
         fn xm430_bus(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
             let mut bus = test_bus(time);
@@ -357,7 +465,42 @@ mod tests {
             let mut bus = test_bus::<P2, 32>(&time);
             assert_eq!(
                 bus.declare([(id(5), model(XM430))]),
-                Err(SetupError::Missing { id: id(5) }.into())
+                Err(SetupError::Missing {
+                    id: id(5),
+                    timeout_us: 10_000,
+                }
+                .into())
+            );
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn late_ping_reply_is_late_not_missing() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            let pong = p2_pong(5, XM430, XM430_FW);
+            line(&mut bus).reply_at(15_000, &pong);
+            let err = bus.declare([(id(5), model(XM430))]).unwrap_err();
+            assert_eq!(
+                err,
+                TransportError::LateReply {
+                    request: Request::NONE
+                        .instruction(Instruction::Ping)
+                        .id(id(5))
+                        .step(Step::Ping),
+                    timeout_us: 10_000,
+                    bytes: pong.len(),
+                }
+                .into()
+            );
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "the reply to Ping from actuator 5, during setup, pinging a declared actuator \
+                     came late: nothing within the 10 ms timeout, then {} bytes; set the USB \
+                     adapter's latency timer to 1 ms (FTDI default: 16 ms) or raise the bus timeout",
+                    pong.len()
+                )
             );
             assert!(bus.actuators().is_empty());
         }
@@ -386,10 +529,16 @@ mod tests {
             line(&mut bus)
                 .reply_to(1, &p2_pong(1, XM430, XM430_FW))
                 .reply_to(2, &p2_status(1, 0, &1000i32.to_le_bytes()));
-            assert!(matches!(
+            assert_eq!(
                 bus.declare([(id(1), model(XM430))]),
-                Err(Error::Transport(TransportError::Timeout { .. }))
-            ));
+                Err(no_reply(read(
+                    1,
+                    "Max Position Limit",
+                    48,
+                    4,
+                    Step::PositionLimits
+                )))
+            );
             assert!(bus.actuators().is_empty());
             assert!(bus.torque_states().is_empty());
         }
@@ -415,17 +564,36 @@ mod tests {
         fn fault_at_setup_fails_setup() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
-            line(&mut bus).reply_to(1, &p2_status(1, 0x80, &[0xFC, 0x03, XM430_FW]));
+            line(&mut bus)
+                .reply_to(1, &p2_status(1, 0x80, &[0xFC, 0x03, XM430_FW]))
+                .reply_to(2, &p2_status(1, 0x80, &[0x01]))
+                .reply_to(3, &p2_status(1, 0x80, &150u16.to_le_bytes()))
+                .reply_to(4, &p2_status(1, 0x80, &95u16.to_le_bytes()))
+                .reply_to(5, &p2_status(1, 0x80, &140u16.to_le_bytes()));
+            let err = bus.declare([(id(1), model(XM430))]).unwrap_err();
             assert_eq!(
-                bus.declare([(id(1), model(XM430))]),
-                Err(StatusError {
+                err,
+                Error::Fault(FaultError::Voltage(VoltageError::AboveMax {
                     id: id(1),
-                    report: StatusReport::P2 {
-                        alert: true,
-                        code: None
-                    }
-                }
-                .into())
+                    measured: Decivolts(150),
+                    min: Decivolts(95),
+                    max: Decivolts(140),
+                    faults: HardwareErrors::from_raw(0x01),
+                    request: Request::NONE
+                        .instruction(Instruction::Ping)
+                        .id(id(1))
+                        .step(Step::Ping),
+                }))
+            );
+            assert_eq!(
+                sent(&bus),
+                concat(&[
+                    p2_instruction(1, PING, &[]),
+                    p2_read(1, 70, 1),
+                    p2_read(1, 144, 2),
+                    p2_read(1, 34, 2),
+                    p2_read(1, 32, 2),
+                ])
             );
             assert!(bus.actuators().is_empty());
         }
@@ -442,7 +610,11 @@ mod tests {
             assert_eq!(held[0].id(), id(2));
             assert_eq!(
                 bus.declare([(id(3), model(XM430))]),
-                Err(SetupError::Missing { id: id(3) }.into())
+                Err(SetupError::Missing {
+                    id: id(3),
+                    timeout_us: 10_000,
+                }
+                .into())
             );
             assert!(bus.actuators().is_empty());
         }
@@ -503,7 +675,8 @@ mod tests {
                 bus.declare([(id(1), model(XM430))]),
                 Err(SetupError::UnknownOperatingMode {
                     id: id(1),
-                    value: 2
+                    value: 2,
+                    register: "Operating Mode",
                 }
                 .into())
             );
@@ -518,10 +691,16 @@ mod tests {
                 .reply_to(1, &p2_pong(1, XM430, XM430_FW))
                 .reply_to(2, &p2_status(1, 0, &0i32.to_le_bytes()))
                 .reply_to(3, &p2_status(1, 0, &4095i32.to_le_bytes()));
-            assert!(matches!(
+            assert_eq!(
                 bus.declare([(id(1), model(XM430))]),
-                Err(Error::Transport(TransportError::Timeout { .. }))
-            ));
+                Err(no_reply(read(
+                    1,
+                    "Operating Mode",
+                    11,
+                    1,
+                    Step::OperatingMode
+                )))
+            );
             assert_eq!(sent(&bus), xm430_p2_sent(1));
             assert!(bus.actuators().is_empty());
         }
@@ -533,10 +712,15 @@ mod tests {
             line(&mut bus)
                 .reply_to(1, &p1_status(1, 0, &[]))
                 .reply_to(2, &p1_status(1, 0x20, &XM430.to_le_bytes()));
-            assert!(matches!(
+            assert_eq!(
                 bus.declare([(id(1), model(XM430))]),
-                Err(Error::Status(_))
-            ));
+                Err(FaultError::Overload {
+                    id: id(1),
+                    faults: HardwareErrors::from_raw(0x20),
+                    request: read(1, "Model Number", 0, 2, Step::ModelNumber),
+                }
+                .into())
+            );
             assert!(bus.actuators().is_empty());
         }
     }
@@ -545,6 +729,56 @@ mod tests {
     mod ax {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
+
+        #[test]
+        fn p1_scan_voltage_fault_is_measured_below_min() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            line(&mut bus)
+                .reply_to(2, &p1_status(1, 0x01, &[]))
+                .reply_to(254, &p1_status(1, 0x01, &AX12.to_le_bytes()))
+                .reply_to(255, &p1_status(1, 0x01, &[97]))
+                .reply_to(256, &p1_status(1, 0x01, &[105]))
+                .reply_to(257, &p1_status(1, 0x01, &[130]));
+            let err = bus.autoscan().unwrap_err();
+            assert!(matches!(
+                err,
+                Error::Fault(FaultError::Voltage(VoltageError::BelowMin {
+                    measured: Decivolts(97),
+                    min: Decivolts(105),
+                    max: Decivolts(130),
+                    ..
+                }))
+            ));
+            assert_eq!(
+                err,
+                Error::Fault(FaultError::Voltage(VoltageError::BelowMin {
+                    id: id(1),
+                    measured: Decivolts(97),
+                    min: Decivolts(105),
+                    max: Decivolts(130),
+                    faults: HardwareErrors::from_raw(0x01),
+                    request: Request::NONE
+                        .instruction(Instruction::Ping)
+                        .id(id(1))
+                        .step(Step::Scan),
+                }))
+            );
+            assert_eq!(
+                err.to_string(),
+                "actuator 1 measures 9.7 V input, below its Min Voltage Limit 10.5 V \
+                 (limits 10.5 V to 13.0 V); check the supply and the voltage drop along the \
+                 wiring in reply to Ping from actuator 1, during setup, scanning for actuators"
+            );
+            assert_eq!(format!("{err:?}"), err.to_string());
+            assert!(sent(&bus).ends_with(&concat(&[
+                p1_read(1, 0, 2),
+                p1_read(1, 42, 1),
+                p1_read(1, 12, 1),
+                p1_read(1, 13, 1),
+            ])));
+            assert!(bus.actuators().is_empty());
+        }
 
         #[test]
         fn declare_ax12_reads_model_and_angle_limits_without_mode() {
@@ -666,7 +900,8 @@ mod tests {
                 bus.declare([(id(1), model(MX64))]),
                 Err(SetupError::UnknownOperatingMode {
                     id: id(1),
-                    value: 2
+                    value: 2,
+                    register: "Torque Ctrl Mode Enable",
                 }
                 .into())
             );
@@ -682,7 +917,7 @@ mod tests {
                 .reply_to(2, &p1_status(1, 0, &MX64.to_le_bytes()));
             assert_eq!(
                 bus.declare([(id(1), model(MX64))]),
-                Err(crate::TransportError::Timeout { id: Some(id(1)) }.into())
+                Err(no_reply(read(1, "Firmware Version", 2, 1, Step::Firmware)))
             );
             assert!(bus.actuators().is_empty());
         }
@@ -703,7 +938,7 @@ mod tests {
         extern crate std;
 
         use super::*;
-        use crate::error::{ProtocolError, StatusError, StatusReport};
+        use crate::error::ProtocolError;
 
         fn p1_sweep() -> std::vec::Vec<u8> {
             concat(
@@ -778,18 +1013,22 @@ mod tests {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
             let [lo, hi] = XM430.to_le_bytes();
-            line(&mut bus).reply_to(1, &p2_status(3, 0x80, &[lo, hi, XM430_FW]));
+            line(&mut bus)
+                .reply_to(1, &p2_status(3, 0x80, &[lo, hi, XM430_FW]))
+                .reply_to(2, &p2_status(3, 0x80, &[0x10]));
             assert_eq!(
                 bus.autoscan(),
-                Err(StatusError {
+                Err(FaultError::ElectricalShock {
                     id: id(3),
-                    report: StatusReport::P2 {
-                        alert: true,
-                        code: None
-                    }
+                    faults: HardwareErrors::from_raw(0x10),
+                    request: Request::NONE
+                        .instruction(Instruction::Ping)
+                        .id(id(3))
+                        .step(Step::Scan),
                 }
                 .into())
             );
+            assert_eq!(sent(&bus), concat(&[broadcast_ping(), p2_read(3, 70, 1)]));
             assert!(bus.actuators().is_empty());
         }
 
@@ -802,7 +1041,12 @@ mod tests {
             }
             assert_eq!(
                 bus.autoscan(),
-                Err(SetupError::TooManyActuators { capacity: 2 }.into())
+                Err(SetupError::TooManyActuators {
+                    capacity: 2,
+                    ids: ids(&[1, 2, 3]),
+                    declared: false,
+                }
+                .into())
             );
             assert_eq!(sent(&bus), broadcast_ping());
             assert!(bus.actuators().is_empty());
@@ -921,7 +1165,8 @@ mod tests {
                     bus.autoscan(),
                     Err(SetupError::UnknownOperatingMode {
                         id: id(1),
-                        value: 2
+                        value: 2,
+                        register: "Operating Mode",
                     }
                     .into())
                 );

@@ -30,8 +30,9 @@ pub use bus::{DynBus, SerialBus};
 /// call [`Transport`] without a version-matched dependency of their own.
 pub use embedded_io;
 pub use error::{
-    Error, P1Flag, P1Flags, P2Code, ProtocolError, SetupError, StatusError, StatusReport,
-    TransportError, ValidationError,
+    Celsius, Decivolts, Direction, Error, FaultError, Instruction, P1Flag, P1Flags, P2Code,
+    ProtocolError, Request, SetupError, StatusError, StatusReport, Step, TemperatureError,
+    TransportError, ValidationError, VoltageError,
 };
 pub use id::Id;
 pub use models::ActuatorKind;

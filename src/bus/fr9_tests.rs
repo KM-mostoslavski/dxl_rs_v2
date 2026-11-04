@@ -13,6 +13,23 @@
 extern crate std;
 
 /// Whether `a` and `b` agree to 1e-4 relative.
+/// `instruction` of `register` at `addr` (`len` bytes) on actuator `n`.
+#[cfg(any(feature = "ax", feature = "rx", feature = "mx"))]
+fn on(
+    instruction: crate::error::Instruction,
+    n: u8,
+    register: &'static str,
+    addr: u16,
+    len: u16,
+) -> crate::error::Request {
+    crate::error::Request::NONE
+        .instruction(instruction)
+        .id(crate::bus::testing::id(n))
+        .register(register)
+        .addr(addr)
+        .len(len)
+}
+
 #[cfg(any(feature = "ax", feature = "rx", feature = "mx"))]
 #[track_caller]
 fn close(a: f32, b: f32) {
@@ -176,7 +193,10 @@ mod ax12a {
         );
         assert_eq!(
             ax.set_speed_limit(SpeedLimit::Limited(Velocity::from_rad_per_s(f32::NAN))),
-            Err(ValidationError::NotFinite.into())
+            Err(ValidationError::NotFinite {
+                request: on(crate::error::Instruction::Write, 1, "Moving Speed", 32, 2),
+            }
+            .into())
         );
         assert_eq!(ax.torque_state(), TorqueState::Off);
         assert_eq!(
@@ -576,7 +596,11 @@ mod rx28 {
         close(out[0].unwrap().volts(), 12.0);
         assert_eq!(
             out[1],
-            Err(crate::TransportError::Timeout { id: Some(id(2)) }.into())
+            Err(crate::TransportError::NoReply {
+                request: on(crate::error::Instruction::Read, 2, "Present Voltage", 42, 1),
+                timeout_us: 10_000,
+            }
+            .into())
         );
     }
 }
@@ -661,7 +685,12 @@ mod mx64_p1 {
         );
         assert_eq!(
             mx.set_goal_current(Current::from_amps(10.0)),
-            Err(ValidationError::DoesNotFit { raw: 2222, size: 2 }.into())
+            Err(ValidationError::DoesNotFit {
+                raw: 2222,
+                size: 2,
+                request: on(crate::error::Instruction::Write, 1, "Goal Torque", 71, 2),
+            }
+            .into())
         );
         close(torque.current(100).amps(), 0.45);
         assert_eq!(
@@ -707,7 +736,12 @@ mod mx64_p1 {
         assert_eq!(mx.goal_velocity().unwrap(), wheel.velocity(1124));
         assert_eq!(
             mx.set_goal_velocity(Velocity::from_rad_per_s(100.0)),
-            Err(ValidationError::DoesNotFit { raw: 8377, size: 2 }.into())
+            Err(ValidationError::DoesNotFit {
+                raw: 8377,
+                size: 2,
+                request: on(crate::error::Instruction::Write, 1, "Moving Speed", 32, 2),
+            }
+            .into())
         );
         assert_eq!(
             sent_since(&bus, mark),
@@ -911,7 +945,12 @@ mod mx64_p2 {
             .reply_to(4, &p2_status(1, 0, &[1]));
         assert_eq!(
             bus.declare([(id(1), ModelNumber(MX64))]),
-            Err(TransportError::Timeout { id: Some(id(1)) }.into())
+            Err(TransportError::NoReply {
+                request: on(crate::error::Instruction::Read, 1, "Velocity Limit", 44, 4)
+                    .step(crate::error::Step::GoalBound),
+                timeout_us: 10_000,
+            }
+            .into())
         );
         assert!(bus.actuators().is_empty());
     }
@@ -1181,6 +1220,13 @@ mod mx64_p2 {
             Err(StatusError {
                 id: id(1),
                 report: StatusReport::P2 { alert: true, code },
+                request: on(
+                    crate::error::Instruction::Read,
+                    1,
+                    "Hardware Error Status",
+                    70,
+                    1,
+                ),
             }
             .into())
         };
@@ -1204,15 +1250,42 @@ mod mx64_p2 {
             ])
         );
 
-        script(
-            &mut bus,
-            &[p2_status(1, 0x80, &[0x24]), p2_status(2, 0, &[0])],
-        );
+        let next = line(&mut bus).flushes() + 1;
+        line(&mut bus)
+            .reply_to(
+                next,
+                &concat(&[p2_status(1, 0x80, &[0x24]), p2_status(2, 0, &[0])]),
+            )
+            .reply_to(next + 1, &p2_status(1, 0x80, &[0x24]))
+            .reply_to(next + 2, &p2_status(1, 0x80, &[75]))
+            .reply_to(next + 3, &p2_status(1, 0x80, &[80]));
         let mut out = [HardwareErrors::from_raw(0); 2];
+        let err = bus
+            .sync_read(field::HardwareErrorStatus, [id(1), id(2)], &mut out)
+            .unwrap_err();
         assert_eq!(
-            bus.sync_read(field::HardwareErrorStatus, [id(1), id(2)], &mut out)
-                .map_err(|e| matches!(e, Error::Status(_))),
-            Err(true)
+            err,
+            Error::Fault(crate::error::FaultError::Temperature(
+                crate::error::TemperatureError::WithinLimit {
+                    id: id(1),
+                    measured: crate::error::Celsius(75),
+                    limit: crate::error::Celsius(80),
+                    faults: HardwareErrors::from_raw(0x24),
+                    request: on(
+                        crate::error::Instruction::SyncRead,
+                        1,
+                        "Hardware Error Status",
+                        70,
+                        1
+                    ),
+                }
+            ))
+        );
+        assert_eq!(
+            std::string::ToString::to_string(&err),
+            "actuator 1 reported overheating, but measures 75 °C, at or below its Temperature \
+             Limit 80 °C: it has cooled since; it also reports an overload in reply to Sync Read \
+             of Hardware Error Status (address 70, 1 byte) from actuator 1"
         );
     }
 
@@ -1313,16 +1386,30 @@ mod mx64_p2 {
     fn bulk_read_is_strict_and_marks_faults() {
         let time = MockTime::new();
         let mut bus = mx64s(&time, &[1, 2], 3, true);
+        let next = line(&mut bus).flushes() + 1;
         line(&mut bus)
             .reply(&p2_status(1, 0, &[36]))
-            .reply(&p2_status(2, 0x80, &[37]));
+            .reply(&p2_status(2, 0x80, &[37]))
+            .reply_to(next + 1, &p2_status(2, 0x80, &[0x20]));
         let mut a = [Temperature::default(); 1];
         let mut b = [Temperature::default(); 1];
         let result = bus.bulk_read((
             bulk::read(field::PresentTemperature, [id(1)], &mut a),
             bulk::read(field::PresentTemperature, [id(2)], &mut b),
         ));
-        assert!(matches!(result, Err(Error::Status(_))));
+        assert_eq!(
+            result,
+            Err(crate::error::FaultError::Overload {
+                id: id(2),
+                faults: HardwareErrors::from_raw(0x20),
+                request: crate::error::Request::NONE
+                    .instruction(crate::error::Instruction::BulkRead)
+                    .id(id(2))
+                    .addr(146)
+                    .len(1),
+            }
+            .into())
+        );
         assert_eq!(a[0], Temperature::default());
         assert_eq!(bus.torque_states(), [ON, FAULTED]);
     }
@@ -1346,7 +1433,12 @@ mod mx64_p2 {
                 [id(1), id(2)],
                 &mut a
             )),
-            Err(ValidationError::BufferLength { targets: 2, got: 1 }.into())
+            Err(ValidationError::BufferLength {
+                targets: 2,
+                got: 1,
+                request: crate::error::Request::NONE,
+            }
+            .into())
         );
         assert_eq!(
             bus.bulk_read(bulk::read(Raw(field::PresentVoltage), [id(9)], &mut a)),
@@ -1373,7 +1465,12 @@ mod mx64_p2 {
         );
         assert_eq!(
             bus.bulk_write(bulk::write(field::Led, [id(1), id(2)], &[true])),
-            Err(ValidationError::BufferLength { targets: 2, got: 1 }.into())
+            Err(ValidationError::BufferLength {
+                targets: 2,
+                got: 1,
+                request: crate::error::Request::NONE,
+            }
+            .into())
         );
         let mut none: [i32; 0] = [];
         assert_eq!(

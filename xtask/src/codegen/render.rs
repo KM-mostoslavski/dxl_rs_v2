@@ -124,10 +124,11 @@ fn area(area: Area) -> &'static str {
     }
 }
 
-/// `super::reg(addr, size, Access::.., Area::..)` for one row.
+/// `super::reg("name", addr, size, Access::.., Area::..)` for one row.
 pub(crate) fn reg_call(row: &Row) -> String {
     format!(
-        "super::reg({}, {}, {}, {})",
+        "super::reg({:?}, {}, {}, {}, {})",
+        row.data_name,
         row.address,
         row.size,
         access(row.access),
@@ -639,14 +640,14 @@ fn render_module(resolved: &Resolved, has_tests: bool) -> String {
     }
     out.push_str(
         "\n/// Builds one register row. Private to `models`; model files call `super::reg`.\n\
-         const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {\n\
-         \x20   Register { addr, size, access, area }\n}\n",
+         const fn reg(name: &'static str, addr: u16, size: u8, access: Access, area: Area) -> Register {\n\
+         \x20   Register { name, addr, size, access, area }\n}\n",
     );
     let (mn_access, mn_area) = resolved.model_number.unwrap_or((Access::R, Area::Eeprom));
     let _ = writeln!(
         out,
         "\n/// Model Number location, the same in every table (codegen checks it). Read on P1 Setup.\n\
-         pub(crate) const MODEL_NUMBER: Register = reg(0, 2, {}, {});",
+         pub(crate) const MODEL_NUMBER: Register = reg(\"Model Number\", 0, 2, {}, {});",
         access(mn_access),
         area(mn_area)
     );
@@ -748,10 +749,10 @@ mod tests {
         assert!(xm.contains("pub struct Xm {\n    cache: Cache,\n}"));
         assert!(xm.contains("Self { cache: Cache::new(id) }"));
         assert!(xm.contains(
-            "pub(crate) const GOAL_POSITION: Register = super::reg(116, 4, Access::RW, Area::Ram);"
+            "pub(crate) const GOAL_POSITION: Register = super::reg(\"Goal Position\", 116, 4, Access::RW, Area::Ram);"
         ));
         assert!(xm.contains(
-            "pub(crate) const OPERATING_MODE: Register = super::reg(11, 1, Access::RW, Area::Eeprom);"
+            "pub(crate) const OPERATING_MODE: Register = super::reg(\"Operating Mode\", 11, 1, Access::RW, Area::Eeprom);"
         ));
         assert!(xm.contains("pub(crate) const DATA: ModelData = ModelData {"));
         for part in [
@@ -889,7 +890,7 @@ mod tests {
             "/// Realtime Tick: 1 ms per raw step in every mode.\n/// From firmware v40 on.\n"
         ));
         assert!(mx.contains(
-            "pub(crate) const TORQUE_CTRL_MODE_ENABLE: Register = super::reg(70, 1, Access::RW, Area::Ram);"
+            "pub(crate) const TORQUE_CTRL_MODE_ENABLE: Register = super::reg(\"Torque Ctrl Mode Enable\", 70, 1, Access::RW, Area::Ram);"
         ));
         assert!(!uses(mx)[0].contains("ModeValues"));
         let module = compact(file(&files, "models.rs"));
@@ -955,7 +956,7 @@ mod tests {
             Table::xm().with_row(896, 1, "Hybrid Save", "RW", "Hybrid"),
         );
         assert!(file(&files, "models/xm.rs").contains(
-            "pub(crate) const HYBRID_SAVE: Register = super::reg(896, 1, Access::RW, Area::Hybrid);"
+            "pub(crate) const HYBRID_SAVE: Register = super::reg(\"Hybrid Save\", 896, 1, Access::RW, Area::Hybrid);"
         ));
     }
 
@@ -968,9 +969,9 @@ mod tests {
         let module = file(&files, "models.rs");
         let c = compact(module);
         assert!(module.contains(
-            "const fn reg(addr: u16, size: u8, access: Access, area: Area) -> Register {"
+            "const fn reg(name: &'static str, addr: u16, size: u8, access: Access, area: Area) -> Register {"
         ));
-        assert!(module.contains("Register { addr, size, access, area }"));
+        assert!(module.contains("Register { name, addr, size, access, area }"));
         assert!(c.contains("#![allow(dead_code,unused_variables,clippy::approx_constant,reason="));
         assert!(
             c.contains("implDescribeforActuatorKind{fndata(&self)->&'staticModelData{match*self{")
@@ -1031,7 +1032,7 @@ mod tests {
         assert!(c.contains("(ProtocolVersion::P2,1190)=>Some(Fw52::FIRMWARE_VERSION),"));
         assert!(!c.contains("(ProtocolVersion::P2,1020)=>Some("));
         assert!(module.contains(
-            "pub(crate) const MODEL_NUMBER: Register = reg(0, 2, Access::R, Area::Eeprom);"
+            "pub(crate) const MODEL_NUMBER: Register = reg(\"Model Number\", 0, 2, Access::R, Area::Eeprom);"
         ));
         assert_eq!(
             uses(module),

@@ -1,6 +1,6 @@
 //! Register locations inside a control table.
 
-use crate::error::ValidationError;
+use crate::error::{Request, ValidationError};
 
 /// Whether a register can be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +56,8 @@ pub enum Area {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code, reason = "fields read by bus-1")]
 pub struct Register {
+    /// The register's name, as the control table writes it, for errors.
+    pub(crate) name: &'static str,
     /// Control-table address.
     pub(crate) addr: u16,
     /// Width in bytes: 1, 2 or 4 for every register the core code encodes.
@@ -81,6 +83,7 @@ impl Register {
         let does_not_fit = ValidationError::DoesNotFit {
             raw: raw.into(),
             size: self.size,
+            request: self.request(),
         };
         let fits = match self.size {
             1 => u8::try_from(raw).is_ok(),
@@ -112,6 +115,7 @@ impl Register {
             return Err(ValidationError::DataLength {
                 expected,
                 got: bytes.len(),
+                request: self.request(),
             });
         }
         match *bytes {
@@ -123,7 +127,34 @@ impl Register {
                     value.saturating_mul(256).saturating_add(i64::from(byte))
                 }),
                 size: self.size,
+                request: self.request(),
             }),
+        }
+    }
+
+    /// The first `size` bytes of `buf`, to read the register into.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::DoesNotFit`] if the register is wider than 4
+    /// bytes.
+    pub(crate) fn buf(self, buf: &mut [u8; 4]) -> Result<&mut [u8], ValidationError> {
+        buf.get_mut(..usize::from(self.size))
+            .ok_or(ValidationError::DoesNotFit {
+                raw: 0,
+                size: self.size,
+                request: self.request(),
+            })
+    }
+
+    /// The register as a request: its name (unless it has none), address
+    /// and size.
+    pub(crate) const fn request(self) -> Request {
+        let request = Request::NONE.addr(self.addr).len(self.size as u16);
+        if self.name.is_empty() {
+            request
+        } else {
+            request.register(self.name)
         }
     }
 }
@@ -133,11 +164,13 @@ mod tests {
     extern crate std;
 
     use proptest::prelude::*;
+    use std::string::ToString;
 
     use super::*;
 
     /// XM430-W350 Goal Position(116) (e-Manual).
     const GOAL_POSITION: Register = Register {
+        name: "Goal Position",
         addr: 116,
         size: 4,
         access: Access::RW,
@@ -146,6 +179,7 @@ mod tests {
 
     /// XM430-W350 Torque Enable(64).
     const TORQUE_ENABLE: Register = Register {
+        name: "Torque Enable",
         addr: 64,
         size: 1,
         access: Access::RW,
@@ -154,6 +188,7 @@ mod tests {
 
     /// XM430-W350 Present Position(132).
     const PRESENT_POSITION: Register = Register {
+        name: "Present Position",
         addr: 132,
         size: 4,
         access: Access::R,
@@ -162,6 +197,7 @@ mod tests {
 
     /// XM430-W350 Present Temperature(146).
     const PRESENT_TEMPERATURE: Register = Register {
+        name: "Present Temperature",
         addr: 146,
         size: 1,
         access: Access::R,
@@ -170,6 +206,7 @@ mod tests {
 
     /// XM430-W350 PWM Limit(36).
     const PWM_LIMIT: Register = Register {
+        name: "PWM Limit",
         addr: 36,
         size: 2,
         access: Access::RW,
@@ -178,6 +215,7 @@ mod tests {
 
     /// AX-12A Goal Position(30).
     const AX_GOAL_POSITION: Register = Register {
+        name: "Goal Position",
         addr: 30,
         size: 2,
         access: Access::RW,
@@ -187,6 +225,7 @@ mod tests {
     /// A register `size` bytes wide; `encode` and `decode` read only the size.
     const fn sized(size: u8) -> Register {
         Register {
+            name: "Test",
             addr: 0,
             size,
             access: Access::RW,
@@ -197,14 +236,42 @@ mod tests {
     #[test]
     fn literal_keeps_every_field() {
         let Register {
+            name,
             addr,
             size,
             access,
             area,
         } = GOAL_POSITION;
-        assert_eq!((addr, size, access, area), (116, 4, Access::RW, Area::Ram));
+        assert_eq!(
+            (name, addr, size, access, area),
+            ("Goal Position", 116, 4, Access::RW, Area::Ram)
+        );
         assert_ne!(GOAL_POSITION, PRESENT_POSITION);
         assert_eq!(sized(4).size, 4);
+    }
+
+    #[test]
+    fn errors_name_the_register() {
+        assert_eq!(
+            GOAL_POSITION.request(),
+            Request::NONE.register("Goal Position").addr(116).len(4)
+        );
+        let mut out = [0; 4];
+        assert_eq!(
+            crate::Error::from(TORQUE_ENABLE.encode(256, &mut out).unwrap_err()).to_string(),
+            "value 256 does not fit a 1-byte register (in Torque Enable (address 64, 1 byte))"
+        );
+        let nameless = Register {
+            name: "",
+            ..sized(2)
+        };
+        assert_eq!(nameless.request(), Request::NONE.addr(0).len(2));
+        let mut buf = [0; 4];
+        assert_eq!(sized(2).buf(&mut buf).map(|b| b.len()), Ok(2));
+        assert!(matches!(
+            sized(8).buf(&mut buf),
+            Err(ValidationError::DoesNotFit { size: 8, .. })
+        ));
     }
 
     #[test]
@@ -214,10 +281,11 @@ mod tests {
         assert_ne!(Area::Hybrid, Area::Ram);
     }
 
-    fn does_not_fit(raw: i32, size: u8) -> Result<&'static [u8], ValidationError> {
+    fn does_not_fit(reg: Register, raw: i32) -> Result<&'static [u8], ValidationError> {
         Err(ValidationError::DoesNotFit {
             raw: raw.into(),
-            size,
+            size: reg.size,
+            request: reg.request(),
         })
     }
 
@@ -233,16 +301,28 @@ mod tests {
     #[test]
     fn refuses_values_that_do_not_fit() {
         let mut out = [0; 4];
-        assert_eq!(sized(2).encode(70_000, &mut out), does_not_fit(70_000, 2));
+        assert_eq!(
+            sized(2).encode(70_000, &mut out),
+            does_not_fit(sized(2), 70_000)
+        );
         for raw in [-1, 256, i32::MIN, i32::MAX] {
-            assert_eq!(TORQUE_ENABLE.encode(raw, &mut out), does_not_fit(raw, 1));
+            assert_eq!(
+                TORQUE_ENABLE.encode(raw, &mut out),
+                does_not_fit(TORQUE_ENABLE, raw)
+            );
         }
         for raw in [-1, 65_536] {
-            assert_eq!(AX_GOAL_POSITION.encode(raw, &mut out), does_not_fit(raw, 2));
+            assert_eq!(
+                AX_GOAL_POSITION.encode(raw, &mut out),
+                does_not_fit(AX_GOAL_POSITION, raw)
+            );
         }
         for size in [0, 3, 5, 8] {
             for raw in [0, 1, -1] {
-                assert_eq!(sized(size).encode(raw, &mut out), does_not_fit(raw, size));
+                assert_eq!(
+                    sized(size).encode(raw, &mut out),
+                    does_not_fit(sized(size), raw)
+                );
             }
         }
     }
@@ -283,14 +363,16 @@ mod tests {
             PRESENT_POSITION.decode(&[0; 2]),
             Err(ValidationError::DataLength {
                 expected: 4,
-                got: 2
+                got: 2,
+                request: PRESENT_POSITION.request(),
             })
         );
         assert_eq!(
             PWM_LIMIT.decode(&[0; 3]),
             Err(ValidationError::DataLength {
                 expected: 2,
-                got: 3
+                got: 3,
+                request: PWM_LIMIT.request(),
             })
         );
     }
@@ -301,7 +383,8 @@ mod tests {
             sized(3).decode(&[0x01, 0x02, 0x03]),
             Err(ValidationError::DoesNotFit {
                 raw: 0x03_0201,
-                size: 3
+                size: 3,
+                request: sized(3).request(),
             })
         );
         assert!(matches!(
@@ -310,7 +393,11 @@ mod tests {
         ));
         assert!(matches!(
             sized(0).decode(&[]),
-            Err(ValidationError::DoesNotFit { raw: 0, size: 0 })
+            Err(ValidationError::DoesNotFit {
+                raw: 0,
+                size: 0,
+                ..
+            })
         ));
     }
 

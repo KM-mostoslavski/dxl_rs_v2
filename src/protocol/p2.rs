@@ -7,12 +7,12 @@
 use core::iter;
 
 use super::{
-    Clock, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Receive, Status, Transport,
-    Writer, check, collect, crc, drain, receive, repeated_id, sealed,
+    Clock, Defect, Exchange, Link, Parser, Pong, Protocol, ProtocolVersion, Receive, Status,
+    Transport, Writer, check, collect, crc, drain, receive, repeated_id, sealed,
 };
 use crate::Id;
 use crate::error::{
-    Error, P2Code, ProtocolError, StatusError, StatusReport, TransportError, ValidationError,
+    Error, Instruction, P2Code, ProtocolError, Request, StatusError, StatusReport, ValidationError,
 };
 
 /// Dynamixel Protocol 2.0.
@@ -73,8 +73,8 @@ impl Stuffing {
 }
 
 /// Encodes and sends one instruction packet, stuffing and CRC included.
-pub(super) fn send<T: embedded_io::Write, I>(
-    transport: &mut T,
+pub(super) fn send<T: Transport, C: Clock, I>(
+    link: &mut Link<'_, T, C>,
     id: u8,
     instruction: u8,
     params: I,
@@ -82,6 +82,7 @@ pub(super) fn send<T: embedded_io::Write, I>(
 where
     I: Iterator<Item = u8> + Clone,
 {
+    let request = link.request;
     let mut stuffing = Stuffing::default();
     let body: usize = iter::once(instruction)
         .chain(params.clone())
@@ -89,10 +90,15 @@ where
         .sum();
     let len = body + 2;
     let Ok(len_field) = u16::try_from(len) else {
-        return Err(ValidationError::PacketTooLarge { len, max: MAX_LEN }.into());
+        return Err(ValidationError::PacketTooLarge {
+            len,
+            max: MAX_LEN,
+            request,
+        }
+        .into());
     };
 
-    let mut w = Writer::new(transport);
+    let mut w = Writer::new(link.transport, request);
     let mut crc = 0;
     let [len_l, len_h] = len_field.to_le_bytes();
     let mut stuffing = Stuffing::default();
@@ -145,8 +151,8 @@ pub(crate) struct StatusParser<'o> {
     received_crc_l: u8,
     stuffing: Stuffing,
     drop_next: bool,
-    /// A header with an impossible `LEN` was seen and skipped.
-    malformed: bool,
+    /// The last header with an impossible `LEN` that was skipped.
+    malformed: Option<Defect>,
 }
 
 impl<'o> StatusParser<'o> {
@@ -163,7 +169,7 @@ impl<'o> StatusParser<'o> {
             received_crc_l: 0,
             stuffing: Stuffing::default(),
             drop_next: false,
-            malformed: false,
+            malformed: None,
         }
     }
 
@@ -183,7 +189,7 @@ impl<'o> StatusParser<'o> {
         self.drop_next = false;
     }
 
-    fn fail(&mut self, err: ProtocolError) -> Option<Result<Status, ProtocolError>> {
+    fn fail(&mut self, err: Defect) -> Option<Result<Status, Defect>> {
         self.restart();
         Some(Err(err))
     }
@@ -211,11 +217,11 @@ impl Parser for StatusParser<'_> {
         }
     }
 
-    fn on_deadline(&self) -> Option<ProtocolError> {
-        self.malformed.then_some(ProtocolError::Malformed)
+    fn on_deadline(&self) -> Option<Defect> {
+        self.malformed
     }
 
-    fn push(&mut self, byte: u8) -> Option<Result<Status, ProtocolError>> {
+    fn push(&mut self, byte: u8) -> Option<Result<Status, Defect>> {
         if !matches!(
             self.state,
             State::Hunt(_) | State::Id | State::LenL | State::LenH
@@ -255,7 +261,11 @@ impl Parser for StatusParser<'_> {
             State::LenH => {
                 self.remaining = usize::from(u16::from_le_bytes([self.len_l, byte]));
                 if self.remaining < 3 {
-                    self.malformed = true;
+                    self.malformed = Some(Defect::TooShort {
+                        protocol: ProtocolVersion::P2,
+                        length: u16::from_le_bytes([self.len_l, byte]),
+                        min: 3,
+                    });
                     self.restart();
                 } else {
                     self.state = State::Instruction;
@@ -266,7 +276,19 @@ impl Parser for StatusParser<'_> {
                 if byte != STATUS {
                     self.state = State::Skip;
                 } else if self.remaining < 3 || self.remaining > self.longest_body() {
-                    self.malformed = true;
+                    let length = u16::try_from(self.remaining + 1).unwrap_or(u16::MAX);
+                    self.malformed = Some(if self.remaining < 3 {
+                        Defect::TooShort {
+                            protocol: ProtocolVersion::P2,
+                            length,
+                            min: 3,
+                        }
+                    } else {
+                        Defect::TooLong {
+                            length,
+                            max: u16::try_from(self.longest_body() + 1).unwrap_or(u16::MAX),
+                        }
+                    });
                     self.restart();
                 } else {
                     self.state = State::Error;
@@ -299,7 +321,11 @@ impl Parser for StatusParser<'_> {
             State::CrcH => {
                 let received = u16::from_le_bytes([self.received_crc_l, byte]);
                 if received != self.crc {
-                    return self.fail(ProtocolError::Crc { id: self.id });
+                    return self.fail(Defect::Crc {
+                        packet_id: self.id,
+                        computed: self.crc,
+                        received,
+                    });
                 }
                 let status = Status {
                     id: self.id,
@@ -344,15 +370,15 @@ where
     I: Iterator<Item = u8> + Clone,
 {
     drain(link)?;
-    send(link.transport, id.get(), instruction, params)?;
+    send(link, id.get(), instruction, params)?;
     let deadline = link.deadline();
     let status = loop {
-        let status = receive(link, &mut StatusParser::new(out), deadline, Some(id))?;
+        let status = receive(link, &mut StatusParser::new(out), deadline)?;
         if status.id == id.get() {
             break status;
         }
     };
-    check::<P2>(status, id, out)
+    check::<P2>(status, id, out, link.request)
 }
 
 fn pong(id: Id, data: [u8; 3], fault: Option<StatusReport>) -> Pong {
@@ -367,22 +393,56 @@ fn pong(id: Id, data: [u8; 3], fault: Option<StatusReport>) -> Pong {
 /// Turns one reply to a broadcast Ping into a [`Pong`], or into the error
 /// that says why it cannot be one. A set error byte wins over a wrong
 /// length, as in [`check`].
-fn scan_reply(status: Status, data: [u8; 3]) -> Result<Pong, Error> {
+fn scan_reply(status: Status, data: [u8; 3], request: Request) -> Result<Pong, Error> {
     let Ok(id) = Id::new(status.id) else {
-        return Err(ProtocolError::Malformed.into());
+        return Err(ProtocolError::InvalidReplyId {
+            request,
+            got: status.id,
+        }
+        .into());
     };
+    let request = request.id(id);
     let fault = (status.error != 0).then(|| P2::report(status.error));
     match (status.len, fault) {
         (3, fault) => Ok(pong(id, data, fault)),
-        (_, Some(report)) => Err(StatusError { id, report }.into()),
-        (got, None) => Err(ProtocolError::WrongLength { expected: 3, got }.into()),
+        (_, Some(report)) => Err(StatusError {
+            id,
+            report,
+            request,
+        }
+        .into()),
+        (got, None) => Err(ProtocolError::WrongLength {
+            request,
+            expected: 3,
+            got,
+        }
+        .into()),
     }
+}
+
+/// `PacketTooLarge` for a reply of `len` data bytes, if no status packet
+/// can carry it.
+fn check_reply_len(len: usize, request: Request) -> Result<u16, Error> {
+    u16::try_from(len)
+        .ok()
+        .filter(|_| len <= MAX_STATUS_DATA)
+        .ok_or(
+            ValidationError::PacketTooLarge {
+                len,
+                max: MAX_STATUS_DATA,
+                request,
+            }
+            .into(),
+        )
 }
 
 impl Exchange for P2 {
     fn ping<T: Transport, C: Clock>(link: &mut Link<'_, T, C>, id: Id) -> Result<Pong, Error> {
         let mut data = [0; 3];
-        unicast(link, id, PING, iter::empty(), &mut data)?;
+        let request = Request::NONE.instruction(Instruction::Ping).id(id);
+        link.with(request, |link| {
+            unicast(link, id, PING, iter::empty(), &mut data)
+        })?;
         Ok(pong(id, data, None))
     }
 
@@ -392,17 +452,15 @@ impl Exchange for P2 {
         addr: u16,
         out: &mut [u8],
     ) -> Result<(), Error> {
-        let Some(len) = u16::try_from(out.len())
-            .ok()
-            .filter(|_| out.len() <= MAX_STATUS_DATA)
-        else {
-            return Err(ValidationError::PacketTooLarge {
-                len: out.len(),
-                max: MAX_STATUS_DATA,
-            }
-            .into());
-        };
-        unicast(link, id, READ, addr_len(addr, len).into_iter(), out)
+        let request = Request::NONE
+            .instruction(Instruction::Read)
+            .id(id)
+            .addr(addr)
+            .len(Request::len_of(out.len()));
+        link.with(request, |link| {
+            let len = check_reply_len(out.len(), link.request)?;
+            unicast(link, id, READ, addr_len(addr, len).into_iter(), out)
+        })
     }
 
     fn write<T: Transport, C: Clock>(
@@ -411,8 +469,13 @@ impl Exchange for P2 {
         addr: u16,
         data: &[u8],
     ) -> Result<(), Error> {
+        let request = Request::NONE
+            .instruction(Instruction::Write)
+            .id(id)
+            .addr(addr)
+            .len(Request::len_of(data.len()));
         let params = addr.to_le_bytes().into_iter().chain(data.iter().copied());
-        unicast(link, id, WRITE, params, &mut [])
+        link.with(request, |link| unicast(link, id, WRITE, params, &mut []))
     }
 
     fn sync_write<'d, T: Transport, C: Clock, I>(
@@ -424,18 +487,25 @@ impl Exchange for P2 {
     where
         I: Iterator<Item = (Id, &'d [u8])> + Clone,
     {
-        if let Some((_, data)) = entries.clone().find(|(_, d)| d.len() != usize::from(size)) {
-            return Err(ValidationError::DataLength {
-                expected: usize::from(size),
-                got: data.len(),
+        let request = Request::NONE
+            .instruction(Instruction::SyncWrite)
+            .addr(addr)
+            .len(size);
+        link.with(request, |link| {
+            if let Some((id, data)) = entries.clone().find(|(_, d)| d.len() != usize::from(size)) {
+                return Err(ValidationError::DataLength {
+                    expected: usize::from(size),
+                    got: data.len(),
+                    request: link.request.id(id),
+                }
+                .into());
             }
-            .into());
-        }
-        let params = addr_len(addr, size)
-            .into_iter()
-            .chain(entries.flat_map(|(id, data)| iter::once(id.get()).chain(data.iter().copied())));
-        drain(link)?;
-        send(link.transport, BROADCAST, SYNC_WRITE, params)
+            let params = addr_len(addr, size).into_iter().chain(
+                entries.flat_map(|(id, data)| iter::once(id.get()).chain(data.iter().copied())),
+            );
+            drain(link)?;
+            send(link, BROADCAST, SYNC_WRITE, params)
+        })
     }
 
     fn scan<T: Transport, C: Clock, F>(
@@ -445,18 +515,20 @@ impl Exchange for P2 {
     where
         F: FnMut(Result<Pong, Error>),
     {
-        drain(link)?;
-        send(link.transport, BROADCAST, PING, iter::empty())?;
-        let deadline = link.deadline();
-        loop {
-            let mut data = [0; 3];
-            match receive(link, &mut StatusParser::new(&mut data), deadline, None) {
-                Ok(status) => on_reply(scan_reply(status, data)),
-                Err(Error::Transport(TransportError::Timeout { .. })) => return Ok(()),
-                Err(err @ Error::Transport(_)) => return Err(err),
-                Err(err) => on_reply(Err(err)),
+        link.with(Request::NONE.instruction(Instruction::Ping), |link| {
+            drain(link)?;
+            send(link, BROADCAST, PING, iter::empty())?;
+            let deadline = link.deadline();
+            loop {
+                let mut data = [0; 3];
+                match receive(link, &mut StatusParser::new(&mut data), deadline) {
+                    Ok(status) => on_reply(scan_reply(status, data, link.request)),
+                    Err(Error::Transport(err)) if err.is_timeout() => return Ok(()),
+                    Err(err @ Error::Transport(_)) => return Err(err),
+                    Err(err) => on_reply(Err(err)),
+                }
             }
-        }
+        })
     }
 
     fn read_many<T: Transport, C: Clock, I, F>(
@@ -487,20 +559,26 @@ impl Exchange for P2 {
         if let Some(id) = repeated_id(entries.clone().map(|(id, _, _)| id)) {
             return Err(ValidationError::DuplicateId { id }.into());
         }
-        for (_, _, size) in entries.clone() {
-            check_reply_size(usize::from(size), scratch)?;
-        }
-        let params = entries
-            .clone()
-            .flat_map(|(id, addr, size)| iter::once(id.get()).chain(addr_len(addr, size)));
-        drain(link)?;
-        send(link.transport, BROADCAST, BULK_READ, params)?;
-        collect::<Self, T, C, _, F>(
-            link,
-            entries.map(|(id, _, size)| (id, usize::from(size))),
-            scratch,
-            on_reply,
-        )
+        link.with(Request::NONE.instruction(Instruction::BulkRead), |link| {
+            for (id, addr, size) in entries.clone() {
+                check_reply_size(
+                    usize::from(size),
+                    scratch,
+                    link.request.id(id).addr(addr).len(size),
+                )?;
+            }
+            let params = entries
+                .clone()
+                .flat_map(|(id, addr, size)| iter::once(id.get()).chain(addr_len(addr, size)));
+            drain(link)?;
+            send(link, BROADCAST, BULK_READ, params)?;
+            collect::<Self, T, C, _, F>(
+                link,
+                entries.map(|(id, addr, size)| (id, addr, usize::from(size))),
+                scratch,
+                on_reply,
+            )
+        })
     }
 
     fn report(error: u8) -> StatusReport {
@@ -516,26 +594,20 @@ impl Receive for P2 {
         link: &mut Link<'_, T, C>,
         out: &mut [u8],
         deadline: u64,
-        id: Option<Id>,
     ) -> Result<Status, Error> {
-        receive(link, &mut StatusParser::new(out), deadline, id)
+        receive(link, &mut StatusParser::new(out), deadline)
     }
 }
 
 /// Checks that a reply of `size` data bytes fits a status packet and
 /// `scratch`.
-fn check_reply_size(size: usize, scratch: &[u8]) -> Result<(), Error> {
-    if size > MAX_STATUS_DATA {
-        return Err(ValidationError::PacketTooLarge {
-            len: size,
-            max: MAX_STATUS_DATA,
-        }
-        .into());
-    }
+fn check_reply_size(size: usize, scratch: &[u8], request: Request) -> Result<(), Error> {
+    check_reply_len(size, request)?;
     if scratch.len() < size {
         return Err(ValidationError::DataLength {
             expected: size,
             got: scratch.len(),
+            request,
         }
         .into());
     }
@@ -564,14 +636,25 @@ impl P2 {
         I: Iterator<Item = Id> + Clone,
         F: FnMut(Id, Result<&[u8], Error>),
     {
-        let size_usize = usize::from(size);
-        check_reply_size(size_usize, scratch)?;
-        let params = addr_len(addr, size)
-            .into_iter()
-            .chain(ids.clone().map(Id::get));
-        drain(link)?;
-        send(link.transport, BROADCAST, SYNC_READ, params)?;
-        collect::<Self, T, C, _, F>(link, ids.map(|id| (id, size_usize)), scratch, on_reply)
+        let request = Request::NONE
+            .instruction(Instruction::SyncRead)
+            .addr(addr)
+            .len(size);
+        link.with(request, |link| {
+            let size_usize = usize::from(size);
+            check_reply_size(size_usize, scratch, link.request)?;
+            let params = addr_len(addr, size)
+                .into_iter()
+                .chain(ids.clone().map(Id::get));
+            drain(link)?;
+            send(link, BROADCAST, SYNC_READ, params)?;
+            collect::<Self, T, C, _, F>(
+                link,
+                ids.map(|id| (id, addr, size_usize)),
+                scratch,
+                on_reply,
+            )
+        })
     }
 
     /// Writes each `(id, addr, data)` entry with one Bulk Write instruction
@@ -593,24 +676,27 @@ impl P2 {
         if let Some(id) = repeated_id(entries.clone().map(|(id, _, _)| id)) {
             return Err(ValidationError::DuplicateId { id }.into());
         }
-        if let Some((_, _, data)) = entries
-            .clone()
-            .find(|(_, _, data)| u16::try_from(data.len()).is_err())
-        {
-            return Err(ValidationError::PacketTooLarge {
-                len: data.len(),
-                max: MAX_LEN,
+        link.with(Request::NONE.instruction(Instruction::BulkWrite), |link| {
+            if let Some((id, addr, data)) = entries
+                .clone()
+                .find(|(_, _, data)| u16::try_from(data.len()).is_err())
+            {
+                return Err(ValidationError::PacketTooLarge {
+                    len: data.len(),
+                    max: MAX_LEN,
+                    request: link.request.id(id).addr(addr),
+                }
+                .into());
             }
-            .into());
-        }
-        let params = entries.flat_map(|(id, addr, data)| {
-            let len = u16::try_from(data.len()).unwrap_or(u16::MAX);
-            iter::once(id.get())
-                .chain(addr_len(addr, len))
-                .chain(data.iter().copied())
-        });
-        drain(link)?;
-        send(link.transport, BROADCAST, BULK_WRITE, params)
+            let params = entries.flat_map(|(id, addr, data)| {
+                let len = u16::try_from(data.len()).unwrap_or(u16::MAX);
+                iter::once(id.get())
+                    .chain(addr_len(addr, len))
+                    .chain(data.iter().copied())
+            });
+            drain(link)?;
+            send(link, BROADCAST, BULK_WRITE, params)
+        })
     }
 
     /// Reboots `id` (e-Manual `#reboot-0x08`) and waits for its status
@@ -619,7 +705,10 @@ impl P2 {
         link: &mut Link<'_, T, C>,
         id: Id,
     ) -> Result<(), Error> {
-        unicast(link, id, REBOOT, iter::empty(), &mut [])
+        let request = Request::NONE.instruction(Instruction::Reboot).id(id);
+        link.with(request, |link| {
+            unicast(link, id, REBOOT, iter::empty(), &mut [])
+        })
     }
 }
 
@@ -634,34 +723,12 @@ mod tests {
     use std::vec::Vec;
 
     use super::*;
-    use crate::error::StatusError;
+    use crate::error::{Direction, StatusError, TransportError};
     use crate::protocol::vectors::p2 as v;
     use crate::transport::{MockTime, MockTransport};
 
     fn id(raw: u8) -> Id {
         Id::new(raw).unwrap()
-    }
-
-    /// Encodes a packet into a vector (also builds status packets: a status
-    /// packet is instruction 0x55 with the error byte as first parameter).
-    pub(crate) fn packet(id: u8, instruction: u8, params: &[u8]) -> Vec<u8> {
-        let mut buf = [0u8; 512];
-        let mut w: &mut [u8] = &mut buf;
-        send(&mut w, id, instruction, params.iter().copied()).unwrap();
-        let n = 512 - w.len();
-        buf[..n].to_vec()
-    }
-
-    /// Feeds `bytes` to a parser; returns the last result, if any.
-    fn parse(bytes: &[u8], out: &mut [u8]) -> Option<Result<Status, ProtocolError>> {
-        let mut parser = StatusParser::new(out);
-        let mut last = None;
-        for &b in bytes {
-            if let Some(r) = parser.push(b) {
-                last = Some(r);
-            }
-        }
-        last
     }
 
     macro_rules! link {
@@ -670,8 +737,75 @@ mod tests {
                 transport: &mut $line,
                 clock: &mut $clock,
                 timeout: Duration::from_millis(10),
+                request: Request::NONE,
             }
         };
+    }
+
+    /// The unicast timeout every `link!` uses, in microseconds.
+    const TIMEOUT_US: u32 = 10_000;
+
+    fn req(instruction: Instruction) -> Request {
+        Request::NONE.instruction(instruction)
+    }
+
+    /// The request of a Sync Read of Present Position (132, 4 bytes) for
+    /// target `raw`.
+    fn sync_req(raw: u8) -> Request {
+        req(Instruction::SyncRead).id(id(raw)).addr(132).len(4)
+    }
+
+    fn no_reply(request: Request) -> Error {
+        TransportError::NoReply {
+            request,
+            timeout_us: TIMEOUT_US,
+        }
+        .into()
+    }
+
+    fn skipped(request: Request, answered: u8) -> Error {
+        TransportError::Skipped {
+            request,
+            answered: id(answered),
+        }
+        .into()
+    }
+
+    fn broken_pipe(request: Request) -> Error {
+        TransportError::Io {
+            request,
+            direction: Direction::ReadReady,
+            kind: ErrorKind::BrokenPipe,
+        }
+        .into()
+    }
+
+    /// Encodes a packet into a vector (also builds status packets: a status
+    /// packet is instruction 0x55 with the error byte as first parameter).
+    pub(crate) fn packet(id: u8, instruction: u8, params: &[u8]) -> Vec<u8> {
+        let time = MockTime::new();
+        let mut clock = time.ticker(1);
+        let mut line = MockTransport::new(&time);
+        send(
+            &mut link!(line, clock),
+            id,
+            instruction,
+            params.iter().copied(),
+        )
+        .unwrap();
+        line.sent().to_vec()
+    }
+
+    /// Feeds `bytes` to a parser; returns the last result, if any.
+    fn parse(bytes: &[u8], out: &mut [u8]) -> Option<Result<Status, Defect>> {
+        let mut parser = StatusParser::new(out);
+        let mut last = None;
+        for &b in bytes {
+            if let Some(r) = parser.push(b) {
+                last = Some(r);
+            }
+        }
+        last
     }
 
     #[test]
@@ -760,7 +894,7 @@ mod tests {
                     );
                     if !(5..=7).contains(&pos) {
                         assert!(
-                            matches!(result, Some(Err(ProtocolError::Crc { .. }))),
+                            matches!(result, Some(Err(Defect::Crc { .. }))),
                             "{bad:02X?} (pos {pos}) gave {result:?}"
                         );
                     }
@@ -791,14 +925,80 @@ mod tests {
     }
 
     #[test]
-    fn only_impossible_lengths_report_malformed_at_the_deadline() {
+    fn only_impossible_lengths_report_a_short_length_at_the_deadline() {
         let time = MockTime::new();
         let mut clock = time.ticker(1);
         let mut line = MockTransport::new(&time);
         line.reply(&[0xFF, 0xFF, 0xFD, 0x00, 0x01, 0x02, 0x00]);
         assert_eq!(
             P2::ping(&mut link!(line, clock), id(1)),
-            Err(ProtocolError::Malformed.into())
+            Err(ProtocolError::LengthTooShort {
+                request: req(Instruction::Ping).id(id(1)),
+                protocol: ProtocolVersion::P2,
+                length: 2,
+                min: 3,
+            }
+            .into())
+        );
+    }
+
+    #[test]
+    fn short_and_long_length_fields_are_told_apart() {
+        let mut out = [0; 1];
+        let mut parser = StatusParser::new(&mut out);
+        for &b in &[0xFF, 0xFF, 0xFD, 0x00, 0x01, 0x02, 0x00] {
+            assert_eq!(parser.push(b), None);
+        }
+        assert_eq!(
+            parser.on_deadline(),
+            Some(Defect::TooShort {
+                protocol: ProtocolVersion::P2,
+                length: 2,
+                min: 3
+            })
+        );
+        let mut out = [0; 1];
+        let mut parser = StatusParser::new(&mut out);
+        for &b in v::READ_REPLY_1 {
+            assert_eq!(parser.push(b), None);
+        }
+        assert_eq!(
+            parser.on_deadline(),
+            Some(Defect::TooLong { length: 8, max: 6 })
+        );
+    }
+
+    #[test]
+    fn crc_mismatch_names_computed_and_received() {
+        let mut bad = v::READ_REPLY_1.to_vec();
+        let last = bad.len() - 1;
+        bad[last] ^= 0xFF;
+        let computed = crc::update(0, &bad[..last - 1]);
+        let received = u16::from_le_bytes([bad[last - 1], bad[last]]);
+        assert_ne!(computed, received);
+        let mut out = [0; 4];
+        assert_eq!(
+            parse(&bad, &mut out),
+            Some(Err(Defect::Crc {
+                packet_id: 1,
+                computed,
+                received
+            }))
+        );
+        let request = req(Instruction::Read).id(id(1)).addr(132).len(4);
+        assert_eq!(
+            Defect::Crc {
+                packet_id: 1,
+                computed,
+                received
+            }
+            .error(request),
+            ProtocolError::Crc {
+                request,
+                packet_id: 1,
+                computed,
+                received
+            }
         );
     }
 
@@ -838,7 +1038,7 @@ mod tests {
         assert_eq!(
             sync_read_with(&[1, 2], &[v::READ_REPLY_2]),
             [
-                (1, Err(TransportError::Timeout { id: Some(id(1)) }.into())),
+                (1, Err(skipped(sync_req(1), 2))),
                 (2, Ok(std::vec![0x1F, 0x08, 0, 0]))
             ]
         );
@@ -850,7 +1050,7 @@ mod tests {
             sync_read_with(&[1, 3, 2], &[v::READ_REPLY_1, v::READ_REPLY_2]),
             [
                 (1, Ok(std::vec![0xA6, 0, 0, 0])),
-                (3, Err(TransportError::Timeout { id: Some(id(3)) }.into())),
+                (3, Err(skipped(sync_req(3), 2))),
                 (2, Ok(std::vec![0x1F, 0x08, 0, 0]))
             ]
         );
@@ -863,6 +1063,7 @@ mod tests {
             [(
                 1,
                 Err(ProtocolError::WrongId {
+                    request: sync_req(1),
                     expected: id(1),
                     got: 2
                 }
@@ -877,7 +1078,7 @@ mod tests {
         let mut clock = time.ticker(1);
         let mut line = MockTransport::new(&time);
         let mut scratch = [0; 4];
-        assert!(matches!(
+        assert_eq!(
             P2::sync_read(
                 &mut link!(line, clock),
                 0,
@@ -886,8 +1087,13 @@ mod tests {
                 &mut scratch,
                 |_, _| {}
             ),
-            Err(Error::Validation(ValidationError::PacketTooLarge { .. }))
-        ));
+            Err(ValidationError::PacketTooLarge {
+                len: usize::from(u16::MAX),
+                max: MAX_STATUS_DATA,
+                request: req(Instruction::SyncRead).addr(0).len(u16::MAX),
+            }
+            .into())
+        );
         assert!(line.sent().is_empty());
     }
 
@@ -922,9 +1128,10 @@ mod tests {
         let mut line = MockTransport::new(&time);
         line.reply(v::READ_REPLY_2);
         let mut out = [0; 4];
+        let read_req = req(Instruction::Read).id(id(1)).addr(132).len(4);
         assert_eq!(
             P2::read(&mut link!(line, clock), id(1), 132, &mut out),
-            Err(TransportError::Timeout { id: Some(id(1)) }.into())
+            Err(no_reply(read_req))
         );
 
         let mut line = MockTransport::new(&time);
@@ -943,6 +1150,7 @@ mod tests {
         assert_eq!(
             P2::read(&mut link!(line, clock), id(1), 132, &mut out),
             Err(ProtocolError::WrongLength {
+                request: read_req,
                 expected: 4,
                 got: 2
             }
@@ -954,7 +1162,12 @@ mod tests {
         let mut out = [0; 1];
         assert_eq!(
             P2::read(&mut link!(line, clock), id(1), 132, &mut out),
-            Err(ProtocolError::Malformed.into())
+            Err(ProtocolError::LengthTooLong {
+                request: req(Instruction::Read).id(id(1)).addr(132).len(1),
+                length: 8,
+                max: 6,
+            }
+            .into())
         );
     }
 
@@ -973,7 +1186,8 @@ mod tests {
             P2::read(&mut link!(line, clock), id(1), 70, &mut out),
             Err(StatusError {
                 id: id(1),
-                report: alert
+                report: alert,
+                request: req(Instruction::Read).id(id(1)).addr(70).len(1),
             }
             .into())
         );
@@ -999,7 +1213,7 @@ mod tests {
         assert_eq!(
             sync_read_with(&[1, 2], &[&bad, v::READ_REPLY_2]),
             [
-                (1, Err(TransportError::Timeout { id: Some(id(1)) }.into())),
+                (1, Err(skipped(sync_req(1), 2))),
                 (2, Ok(std::vec![0x1F, 0x08, 0, 0]))
             ]
         );
@@ -1026,7 +1240,7 @@ mod tests {
         assert_eq!(
             got,
             [
-                (1, Err(TransportError::Timeout { id: Some(id(1)) }.into())),
+                (1, Err(no_reply(sync_req(1)))),
                 (2, Ok(std::vec![0x1F, 0x08, 0, 0]))
             ]
         );
@@ -1047,7 +1261,8 @@ mod tests {
                 report: StatusReport::P2 {
                     alert: true,
                     code: Some(P2Code::Access)
-                }
+                },
+                request: req(Instruction::Write).id(id(3)).addr(116).len(4),
             }
             .into()
         );
@@ -1063,14 +1278,26 @@ mod tests {
             P2::read(&mut link!(line, clock), id(1), 0, &mut huge),
             Err(ValidationError::PacketTooLarge {
                 len: MAX_STATUS_DATA + 1,
-                max: MAX_STATUS_DATA
+                max: MAX_STATUS_DATA,
+                request: req(Instruction::Read)
+                    .id(id(1))
+                    .addr(0)
+                    .len(Request::len_of(MAX_STATUS_DATA + 1)),
             }
             .into())
         );
         let data = [0u8; MAX_LEN];
         assert!(matches!(
             P2::write(&mut link!(line, clock), id(1), 0, &data),
-            Err(Error::Validation(ValidationError::PacketTooLarge { .. }))
+            Err(Error::Validation(ValidationError::PacketTooLarge {
+                max: MAX_LEN,
+                request: Request {
+                    instruction: Some(Instruction::Write),
+                    addr: Some(0),
+                    ..
+                },
+                ..
+            }))
         ));
         assert!(line.sent().is_empty());
     }
@@ -1092,7 +1319,8 @@ mod tests {
             P2::sync_write(&mut link!(line, clock), 116, 4, short.into_iter()),
             Err(ValidationError::DataLength {
                 expected: 4,
-                got: 2
+                got: 2,
+                request: req(Instruction::SyncWrite).id(id(1)).addr(116).len(4),
             }
             .into())
         );
@@ -1147,7 +1375,7 @@ mod tests {
             got,
             [
                 (1, Ok(std::vec![0xA6, 0, 0, 0])),
-                (2, Err(TransportError::Timeout { id: Some(id(2)) }.into()))
+                (2, Err(no_reply(sync_req(2))))
             ]
         );
     }
@@ -1158,7 +1386,7 @@ mod tests {
         let mut clock = time.ticker(1);
         let mut line = MockTransport::new(&time);
         let mut scratch = [0; 2];
-        assert!(matches!(
+        assert_eq!(
             P2::sync_read(
                 &mut link!(line, clock),
                 132,
@@ -1167,8 +1395,13 @@ mod tests {
                 &mut scratch,
                 |_, _| {}
             ),
-            Err(Error::Validation(ValidationError::DataLength { .. }))
-        ));
+            Err(ValidationError::DataLength {
+                expected: 4,
+                got: 2,
+                request: req(Instruction::SyncRead).addr(132).len(4),
+            }
+            .into())
+        );
         line.fail_with(ErrorKind::BrokenPipe);
         let mut scratch = [0; 4];
         assert_eq!(
@@ -1180,7 +1413,7 @@ mod tests {
                 &mut scratch,
                 |_, _| {}
             ),
-            Err(TransportError::Io(ErrorKind::BrokenPipe).into())
+            Err(broken_pipe(req(Instruction::SyncRead).addr(132).len(4)))
         );
     }
 
@@ -1234,7 +1467,16 @@ mod tests {
         assert_eq!(
             scan_with(&[&corrupted, v::BROADCAST_PING_REPLY_2]),
             [
-                Err(ProtocolError::Crc { id: 1 }.into()),
+                Err(ProtocolError::Crc {
+                    request: req(Instruction::Ping),
+                    packet_id: 1,
+                    computed: crc::update(0, &corrupted[..corrupted.len() - 2]),
+                    received: u16::from_le_bytes([
+                        corrupted[corrupted.len() - 2],
+                        corrupted[corrupted.len() - 1]
+                    ]),
+                }
+                .into()),
                 Ok(pong(id(2), [0x06, 0x04, 0x26], None))
             ]
         );
@@ -1255,16 +1497,28 @@ mod tests {
                     report: StatusReport::P2 {
                         alert: false,
                         code: Some(P2Code::ResultFail)
-                    }
+                    },
+                    request: req(Instruction::Ping).id(id(3)),
                 }
                 .into()),
                 Err(ProtocolError::WrongLength {
+                    request: req(Instruction::Ping).id(id(4)),
                     expected: 3,
                     got: 1
                 }
                 .into()),
-                Err(ProtocolError::Malformed.into()),
-                Err(ProtocolError::Malformed.into()),
+                Err(ProtocolError::InvalidReplyId {
+                    request: req(Instruction::Ping),
+                    got: 253
+                }
+                .into()),
+                Err(ProtocolError::LengthTooShort {
+                    request: req(Instruction::Ping),
+                    protocol: ProtocolVersion::P2,
+                    length: 2,
+                    min: 3
+                }
+                .into()),
             ]
         );
     }
@@ -1277,7 +1531,7 @@ mod tests {
         line.fail_with(ErrorKind::BrokenPipe);
         assert_eq!(
             P2::scan(&mut link!(line, clock), |_| {}),
-            Err(TransportError::Io(ErrorKind::BrokenPipe).into())
+            Err(broken_pipe(req(Instruction::Ping)))
         );
     }
 
@@ -1302,7 +1556,7 @@ mod tests {
             got,
             [
                 (1, Ok(std::vec![0xA6, 0, 0, 0])),
-                (3, Err(TransportError::Timeout { id: Some(id(3)) }.into())),
+                (3, Err(skipped(sync_req(3), 2))),
                 (2, Ok(std::vec![0x1F, 0x08, 0, 0]))
             ]
         );
@@ -1322,7 +1576,7 @@ mod tests {
                 &mut scratch,
                 |_, _| panic!("no reply expected")
             ),
-            Err(TransportError::Io(ErrorKind::BrokenPipe).into())
+            Err(broken_pipe(req(Instruction::SyncRead).addr(132).len(4)))
         );
     }
 
@@ -1366,10 +1620,11 @@ mod tests {
     #[test]
     fn bulk_read_gives_a_silent_actuator_its_timeout() {
         let (_, got) = bulk_read_with(&[(1, 144, 2), (2, 146, 1)], &[v::BULK_READ_REPLY_2]);
+        let bulk = |raw, addr, len| req(Instruction::BulkRead).id(id(raw)).addr(addr).len(len);
         assert_eq!(
             got,
             [
-                (1, Err(TransportError::Timeout { id: Some(id(1)) }.into())),
+                (1, Err(skipped(bulk(1, 144, 2), 2))),
                 (2, Ok(std::vec![0x24]))
             ]
         );
@@ -1379,11 +1634,25 @@ mod tests {
             [(
                 1,
                 Err(ProtocolError::WrongLength {
+                    request: bulk(1, 144, 1),
                     expected: 1,
                     got: 2
                 }
                 .into())
             )]
+        );
+    }
+
+    #[test]
+    fn bulk_read_errors_carry_each_entry_s_address_and_size() {
+        let (_, got) = bulk_read_with(&[(1, 144, 2), (2, 146, 1)], &[]);
+        let bulk = |raw, addr, len| req(Instruction::BulkRead).id(id(raw)).addr(addr).len(len);
+        assert_eq!(
+            got,
+            [
+                (1, Err(no_reply(bulk(1, 144, 2)))),
+                (2, Err(no_reply(bulk(2, 146, 1))))
+            ]
         );
     }
 
@@ -1411,7 +1680,8 @@ mod tests {
             run(&[(1, 132, 4)], &mut scratch),
             Err(ValidationError::DataLength {
                 expected: 4,
-                got: 2
+                got: 2,
+                request: req(Instruction::BulkRead).id(id(1)).addr(132).len(4),
             }
             .into())
         );
@@ -1419,7 +1689,8 @@ mod tests {
             run(&[(1, 0, u16::MAX)], &mut scratch),
             Err(ValidationError::PacketTooLarge {
                 len: usize::from(u16::MAX),
-                max: MAX_STATUS_DATA
+                max: MAX_STATUS_DATA,
+                request: req(Instruction::BulkRead).id(id(1)).addr(0).len(u16::MAX),
             }
             .into())
         );
@@ -1449,7 +1720,8 @@ mod tests {
             P2::bulk_write(&mut link!(line, clock), too_long.into_iter()),
             Err(ValidationError::PacketTooLarge {
                 len: huge.len(),
-                max: MAX_LEN
+                max: MAX_LEN,
+                request: req(Instruction::BulkWrite).id(id(1)).addr(0),
             }
             .into())
         );
@@ -1469,7 +1741,7 @@ mod tests {
         let mut line = MockTransport::new(&time);
         assert_eq!(
             P2::reboot(&mut link!(line, clock), id(1)),
-            Err(TransportError::Timeout { id: Some(id(1)) }.into())
+            Err(no_reply(req(Instruction::Reboot).id(id(1))))
         );
     }
 }

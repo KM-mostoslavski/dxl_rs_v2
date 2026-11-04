@@ -90,7 +90,16 @@ impl<const N: usize> Slots for FixedSlots<'_, N> {
         let index = self.actuators.len();
         self.actuators
             .push(kind)
-            .map_err(|_| SetupError::TooManyActuators { capacity: N })?;
+            .map_err(|kind| SetupError::TooManyActuators {
+                capacity: N,
+                ids: self
+                    .actuators
+                    .iter()
+                    .map(|kind| kind.id())
+                    .chain([kind.id()])
+                    .collect(),
+                declared: false,
+            })?;
         if let Some(state) = self.states.get_mut(index) {
             *state = TorqueState::Off;
         }
@@ -179,7 +188,11 @@ mod tests {
             slots.push(xm430(2), None).unwrap();
             assert_eq!(
                 slots.push(xm430(3), None),
-                Err(SetupError::TooManyActuators { capacity: 2 })
+                Err(SetupError::TooManyActuators {
+                    capacity: 2,
+                    ids: [1, 2, 3].map(crate::bus::testing::id).into_iter().collect(),
+                    declared: false,
+                })
             );
             assert_eq!(slots.kinds().len(), 2);
         }

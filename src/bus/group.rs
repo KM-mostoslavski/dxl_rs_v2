@@ -3,13 +3,15 @@
 //! register layout. One N-free core over slices; `Bus` passes a stack
 //! `[Stage; N]`.
 
-use crate::Id;
 use crate::actuator::{Actuator, TorqueState};
-use crate::error::{Error, SetupError, ValidationError};
+use crate::error::{Error, Request, SetupError, ValidationError};
 use crate::models::ActuatorKind;
+use crate::protocol::{Clock, Protocol};
+use crate::{Id, Transport};
 
 use core::cell::Cell;
 
+use super::diagnose::diagnose;
 use super::field::sealed::Field;
 use super::field::{ReadField, WriteField, encode_write, read_site};
 use super::id_set::IdSet;
@@ -84,6 +86,8 @@ impl Stage {
 fn lost(kinds: &[ActuatorKind]) -> Error {
     SetupError::TooManyActuators {
         capacity: kinds.len(),
+        ids: kinds.iter().map(|kind| kind.id()).collect(),
+        declared: false,
     }
     .into()
 }
@@ -143,7 +147,11 @@ pub(crate) fn check_values(targets: usize, got: usize) -> Result<(), ValidationE
     if got == targets {
         Ok(())
     } else {
-        Err(ValidationError::BufferLength { targets, got })
+        Err(ValidationError::BufferLength {
+            targets,
+            got,
+            request: Request::NONE,
+        })
     }
 }
 
@@ -220,6 +228,17 @@ impl FirstError {
     pub(crate) fn into_result(self) -> Result<(), Error> {
         self.0.map_or(Ok(()), |(_, err)| Err(err))
     }
+
+    /// As [`into_result`](Self::into_result), with a kept hardware fault
+    /// of one of `kinds` measured (see `diagnose`).
+    pub(crate) fn into_diagnosed<P: Protocol, T: Transport, C: Clock>(
+        self,
+        wire: &mut Wire<'_, P, T, C>,
+        kinds: &[ActuatorKind],
+    ) -> Result<(), Error> {
+        self.into_result()
+            .map_err(|err| diagnose_among(wire, kinds, err))
+    }
 }
 
 /// Checks that a read has a slot of `out` for every target; extra slots
@@ -232,7 +251,11 @@ pub(crate) fn check_out(targets: usize, got: usize) -> Result<(), ValidationErro
     if got >= targets {
         Ok(())
     } else {
-        Err(ValidationError::BufferLength { targets, got })
+        Err(ValidationError::BufferLength {
+            targets,
+            got,
+            request: Request::NONE,
+        })
     }
 }
 
@@ -311,11 +334,15 @@ where
             .filter_map(|(_, member)| Some(kinds.get(usize::from(member.get().slot))?.id()));
         let mut cursor = members;
         let mut scratch = [0; 4];
+        let stages_now: &[Stage] = &[cell.get()];
+        let saved = wire.context();
+        wire.set_context(saved.filled(layout_context::<F>(kinds, stages_now, key)));
         let run = R::run(wire, key.0, key.1, ids, &mut scratch, |_, reply| {
             if let Some((target, member)) = cursor.next() {
                 deliver(target, member, reply);
             }
         });
+        wire.set_context(saved);
         match (run, failed) {
             (Ok(()), _) => {}
             (Err(err), OnFailedGroup::Abort) => return Err(err),
@@ -343,6 +370,9 @@ pub(crate) fn read_stages<P, T, C, F, R>(
     stages: &mut [Stage],
 ) -> Result<(), Error>
 where
+    P: Protocol,
+    T: Transport,
+    C: Clock,
     F: Field,
     R: ReadMany<P, T, C>,
 {
@@ -362,13 +392,44 @@ where
             first.note(target, &result);
         },
     )?;
-    first.into_result()
+    first.into_diagnosed(wire, kinds)
+}
+
+/// The register name of layout `key` of field `F`, from its first stage,
+/// as the context of that layout's instruction.
+pub(crate) fn layout_context<F: Field>(
+    kinds: &[ActuatorKind],
+    stages: &[Stage],
+    key: (u16, u8),
+) -> Request {
+    stages
+        .iter()
+        .find(|stage| stage.key() == key)
+        .and_then(|stage| kinds.get(usize::from(stage.slot)))
+        .and_then(|kind| F::site(kind).ok())
+        .map_or(Request::NONE, |site| Request::NONE.register(site.name))
+}
+
+/// `err` measured when it is a hardware fault of one of `kinds`.
+pub(crate) fn diagnose_among<P: Protocol, T: Transport, C: Clock>(
+    wire: &mut Wire<'_, P, T, C>,
+    kinds: &[ActuatorKind],
+    err: Error,
+) -> Error {
+    match err {
+        Error::Status(status) if status.is_hardware_fault() => kinds
+            .iter()
+            .find(|kind| kind.id() == status.id)
+            .map_or(err, |kind| diagnose(wire, kind, err)),
+        other => other,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bus::testing::id;
+    use crate::error::Request;
     use crate::error::{StatusError, StatusReport, TransportError};
 
     #[test]
@@ -399,11 +460,19 @@ mod tests {
         assert_eq!(check_values(2, 2), Ok(()));
         assert_eq!(
             check_values(2, 1),
-            Err(ValidationError::BufferLength { targets: 2, got: 1 })
+            Err(ValidationError::BufferLength {
+                targets: 2,
+                got: 1,
+                request: Request::NONE,
+            })
         );
         assert_eq!(
             check_values(0, 1),
-            Err(ValidationError::BufferLength { targets: 0, got: 1 })
+            Err(ValidationError::BufferLength {
+                targets: 0,
+                got: 1,
+                request: Request::NONE,
+            })
         );
     }
 
@@ -433,7 +502,11 @@ mod tests {
     }
 
     fn timeout() -> Result<(), Error> {
-        Err(TransportError::Timeout { id: Some(id(1)) }.into())
+        Err(TransportError::NoReply {
+            request: Request::NONE.id(id(1)),
+            timeout_us: 10_000,
+        }
+        .into())
     }
 
     fn alert(n: u8) -> Result<(), Error> {
@@ -443,6 +516,7 @@ mod tests {
                 alert: true,
                 code: None,
             },
+            request: Request::NONE,
         }
         .into())
     }
@@ -463,21 +537,37 @@ mod tests {
         first.note(5, &timeout());
         first.note(
             6,
-            &Err::<(), _>(TransportError::Timeout { id: None }.into()),
+            &Err::<(), _>(
+                TransportError::NoReply {
+                    request: Request::NONE,
+                    timeout_us: 10_000,
+                }
+                .into(),
+            ),
         );
         assert_eq!(first.into_result(), timeout());
 
         let mut first = FirstError::default();
         first.note(
             5,
-            &Err::<(), _>(TransportError::Timeout { id: None }.into()),
+            &Err::<(), _>(
+                TransportError::NoReply {
+                    request: Request::NONE,
+                    timeout_us: 10_000,
+                }
+                .into(),
+            ),
         );
         first.note(2, &timeout());
         assert_eq!(first.into_result(), timeout());
         assert_eq!(check_out(2, 3), Ok(()));
         assert_eq!(
             check_out(2, 1),
-            Err(ValidationError::BufferLength { targets: 2, got: 1 })
+            Err(ValidationError::BufferLength {
+                targets: 2,
+                got: 1,
+                request: Request::NONE,
+            })
         );
     }
 
@@ -621,7 +711,15 @@ mod tests {
                     staged,
                     &[Position::from_radians(f32::NAN)]
                 ),
-                Err(ValidationError::NotFinite.into())
+                Err(ValidationError::NotFinite {
+                    request: Request::NONE
+                        .instruction(crate::error::Instruction::Write)
+                        .id(id(1))
+                        .register("Goal Position")
+                        .addr(116)
+                        .len(4),
+                }
+                .into())
             );
         }
 

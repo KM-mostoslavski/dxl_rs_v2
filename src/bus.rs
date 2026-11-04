@@ -78,6 +78,7 @@ assert!((present.radians() - 0.5).abs() < 0.01);
 
 mod actuator_ref;
 pub mod bulk;
+mod diagnose;
 #[cfg(feature = "std")]
 mod dyn_bus;
 pub mod field;
@@ -161,7 +162,10 @@ pub type DefaultClock = NoClock;
 /// is quiet and never runs past one timeout), then waits at most one timeout
 /// for the reply. Worst case per unicast instruction:
 ///
-/// - on a quiet line: `(retries + 1) × timeout`;
+/// - on a quiet line: `(retries + 2) × timeout`: after the last silent
+///   attempt the bus listens one more timeout, to tell a late reply
+///   ([`TransportError::LateReply`](crate::TransportError::LateReply)) from
+///   none;
 /// - on a line that never stops talking: `(retries + 1) × 2 × timeout`.
 ///
 /// [`scan_timeout`](Config::scan_timeout) bounds [`Bus::autoscan`]: one
