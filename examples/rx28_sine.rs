@@ -13,7 +13,41 @@
 
 use std::time::{Duration, Instant};
 
-use dxl_rs_v2::{Actuator, Id, P1, SerialBus};
+use dxl_rs_v2::{
+    Actuator, Error, FaultError, Id, P1, SerialBus, SetupError, TemperatureError, VoltageError,
+};
+
+/// Highest Goal Position in joint mode on the RX-28; goals near either end are clamped.
+const MAX_POSITION: i32 = 1023;
+
+/// One line on what to do about a measured hardware fault, read from the error's fields.
+fn fault_advice(err: &Error) -> Option<String> {
+    match err {
+        Error::Fault(FaultError::Voltage(VoltageError::BelowMin {
+            id, measured, min, ..
+        })) => Some(format!(
+            "id {}: supply sags to {measured}, under the {min} minimum: thicker or shorter \
+             wiring, or feed power at both ends of the chain",
+            id.get()
+        )),
+        Error::Fault(FaultError::Voltage(VoltageError::AboveMax {
+            id, measured, max, ..
+        })) => Some(format!(
+            "id {}: supply at {measured}, over the {max} maximum: lower the supply voltage",
+            id.get()
+        )),
+        Error::Fault(FaultError::Temperature(TemperatureError::AboveLimit {
+            id,
+            measured,
+            limit,
+            ..
+        })) => Some(format!(
+            "id {}: {measured}, over its {limit} limit: let it cool",
+            id.get()
+        )),
+        _ => None,
+    }
+}
 
 fn env_u32(name: &str, default: u32) -> u32 {
     std::env::var(name).map_or(default, |v| v.parse().expect(name))
@@ -34,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut centers = Vec::new();
     for &id in &ids {
-        let mut a = bus.actuator(id).ok_or("not on the bus")?;
+        let mut a = bus.actuator(id).ok_or(SetupError::NotOnBus { id })?;
         let center = a.present_position_raw()?;
         println!("  {} id {:>3}: at {center}", a.name(), id.get());
         centers.push(center);
@@ -49,7 +83,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  id {}: torque off failed: {e}", id.get());
         }
     }
-    result
+    if let Err(e) = &result
+        && let Some(advice) = fault_advice(e)
+    {
+        println!("  {advice}");
+    }
+    result.map_err(Into::into)
 }
 
 fn run(
@@ -59,9 +98,11 @@ fn run(
     amplitude: u32,
     period: Duration,
     cycles: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     for &id in ids {
-        bus.actuator(id).ok_or("not on the bus")?.enable_torque()?;
+        bus.actuator(id)
+            .ok_or(SetupError::NotOnBus { id })?
+            .enable_torque()?;
     }
     let start = Instant::now();
     let total = period * cycles;
@@ -71,19 +112,19 @@ fn run(
         let offset = (f64::from(amplitude) * phase.sin()).round() as i32;
         for (&id, &center) in ids.iter().zip(centers) {
             bus.actuator(id)
-                .ok_or("not on the bus")?
-                .set_goal_position_raw(center + offset)?;
+                .ok_or(SetupError::NotOnBus { id })?
+                .set_goal_position_raw((center + offset).clamp(0, MAX_POSITION))?;
         }
         if elapsed >= total {
             break;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(1));
     }
     std::thread::sleep(Duration::from_millis(300));
     for (&id, &center) in ids.iter().zip(centers) {
         let now = bus
             .actuator(id)
-            .ok_or("not on the bus")?
+            .ok_or(SetupError::NotOnBus { id })?
             .present_position_raw()?;
         println!("  id {:>3}: back at {now} (start {center})", id.get());
     }
