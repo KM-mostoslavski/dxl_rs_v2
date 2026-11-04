@@ -12,6 +12,8 @@ mod serial;
 
 #[cfg(feature = "mock")]
 pub use mock::{Mismatch, MockTime, MockTransport};
+#[cfg(all(test, not(feature = "mock")))]
+pub(crate) use mock::{MockTime, MockTransport};
 #[cfg(feature = "std")]
 pub use serial::SerialTransport;
 

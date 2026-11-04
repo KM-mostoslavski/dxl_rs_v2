@@ -97,9 +97,6 @@ mod tests {
         extern crate std;
         use std::string::ToString;
         let err = Id::new(254).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "invalid actuator id 254: must be in 0..=252"
-        );
+        assert_eq!(err.to_string(), "invalid id 254, must be 0..=252");
     }
 }
