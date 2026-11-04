@@ -259,7 +259,7 @@ mod tests {
         let mut out = [0; 4];
         assert_eq!(
             crate::Error::from(TORQUE_ENABLE.encode(256, &mut out).unwrap_err()).to_string(),
-            "value 256 does not fit a 1-byte register (in Torque Enable (address 64, 1 byte))"
+            "value 256 does not fit a 1-byte register (Torque Enable)"
         );
         let nameless = Register {
             name: "",

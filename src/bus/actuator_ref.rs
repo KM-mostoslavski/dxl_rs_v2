@@ -926,9 +926,7 @@ mod tests {
             );
             assert_eq!(
                 std::string::ToString::to_string(&err),
-                "actuator 1 measures 80 °C, above its Temperature Limit 72 °C; let it cool \
-                 and reduce its load in reply to Read of Present Position (address 132, 4 bytes) \
-                 from actuator 1"
+                "id 1: temperature 80 °C above 72 °C"
             );
             assert_eq!(xm.torque_state(), TorqueState::Faulted);
             assert_eq!(

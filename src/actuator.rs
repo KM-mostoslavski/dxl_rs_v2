@@ -1525,28 +1525,28 @@ mod tests {
                     id: id(7),
                     register: "Present Current"
                 }),
-                "actuator 7 has no Present Current register"
+                "id 7: no Present Current register"
             );
             assert!(
                 msg(ValidationError::NotVelocityMode {
                     id: id(7),
                     mode: LimitMode::Bounded
                 })
-                .starts_with("actuator 7 is in Bounded mode")
+                .starts_with("id 7: no goal velocity in Bounded mode")
             );
             assert!(
                 msg(ValidationError::NotCurrentMode {
                     id: id(7),
                     mode: LimitMode::Velocity
                 })
-                .starts_with("actuator 7 is in Velocity mode")
+                .starts_with("id 7: no goal current in Velocity mode")
             );
             assert_eq!(
                 msg(ValidationError::InvalidSlopeStep {
                     step: 9,
                     request: crate::error::Request::NONE,
                 }),
-                "compliance slope step 9 is outside 1..=7"
+                "slope step 9 outside 1..=7"
             );
         }
 

@@ -73,15 +73,15 @@ impl HardwareErrors {
 
     /// Each fault bit with its name, lowest bit first.
     const NAMES: [(u8, &'static str); 5] = [
-        (Self::INPUT_VOLTAGE, "an input voltage error"),
+        (Self::INPUT_VOLTAGE, "input voltage error"),
         (Self::OVERHEATING, "overheating"),
-        (Self::ENCODER, "a motor encoder malfunction"),
-        (Self::ELECTRICAL_SHOCK, "an electrical shock"),
-        (Self::OVERLOAD, "an overload"),
+        (Self::ENCODER, "encoder error"),
+        (Self::ELECTRICAL_SHOCK, "electrical shock"),
+        (Self::OVERLOAD, "overload"),
     ];
 }
 
-/// The set faults by name, e.g. "an input voltage error, overheating";
+/// The set faults by name, e.g. "input voltage error, overheating";
 /// "no fault" when none is set. Unused bits are left out.
 impl core::fmt::Display for HardwareErrors {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

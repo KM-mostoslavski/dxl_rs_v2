@@ -1283,9 +1283,7 @@ mod mx64_p2 {
         );
         assert_eq!(
             std::string::ToString::to_string(&err),
-            "actuator 1 reported overheating, but measures 75 °C, at or below its Temperature \
-             Limit 80 °C: it has cooled since; it also reports an overload in reply to Sync Read \
-             of Hardware Error Status (address 70, 1 byte) from actuator 1"
+            "id 1: overheated, now 75 °C (limit 80 °C), also overload"
         );
     }
 

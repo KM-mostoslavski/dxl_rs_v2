@@ -1049,8 +1049,7 @@ mod tests {
             assert!(fault.is_hardware_fault());
             assert_eq!(
                 std::string::ToString::to_string(&fault),
-                "actuator 1 reported overheating (temperature above its Temperature Limit), \
-                 an overload (load above its maximum torque)"
+                "id 1: overheating, overload"
             );
             let range = StatusError {
                 id: id(1),

@@ -846,14 +846,14 @@ mod tests {
                     show(bus.torque_states()),
                 ]
             });
-            assert!(steps[2].contains("Ok(") && steps[2].contains("no reply within 10 ms"));
+            assert!(steps[2].contains("Ok(") && steps[2].contains("in 10 ms"));
             assert!(
-                steps[4].starts_with("[Err(actuator 1 reports an overload")
+                steps[4].starts_with("[Err(id 1: overload")
                     && steps[4].ends_with("Ok(100), Ok(-7)]"),
                 "{}",
                 steps[4]
             );
-            assert!(steps[5].contains("actuator 1 is listed more than once"));
+            assert!(steps[5].contains("id 1: listed twice"));
             assert!(steps[6].contains("buffer has 0 slots for 2 targets"));
             assert_eq!(steps[7], show([FAULTED, OFF]));
         }

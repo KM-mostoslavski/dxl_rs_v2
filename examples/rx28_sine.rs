@@ -80,11 +80,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(mut a) = bus.actuator(id)
             && let Err(e) = a.disable_torque()
         {
-            println!("  id {}: torque off failed: {e}", id.get());
+            println!("  torque off failed: {e}");
         }
     }
     if let Err(e) = &result
-        && let Some(advice) = fault_advice(e)
+        && let Some(advice) = fault_advice(e).or_else(|| e.hint().map(String::from))
     {
         println!("  {advice}");
     }

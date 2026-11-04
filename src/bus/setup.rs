@@ -496,9 +496,7 @@ mod tests {
             assert_eq!(
                 err.to_string(),
                 format!(
-                    "the reply to Ping from actuator 5, during setup, pinging a declared actuator \
-                     came late: nothing within the 10 ms timeout, then {} bytes; set the USB \
-                     adapter's latency timer to 1 ms (FTDI default: 16 ms) or raise the bus timeout",
+                    "id 5: late reply to Ping in setup: {} bytes after 10 ms",
                     pong.len()
                 )
             );
@@ -764,12 +762,7 @@ mod tests {
                         .step(Step::Scan),
                 }))
             );
-            assert_eq!(
-                err.to_string(),
-                "actuator 1 measures 9.7 V input, below its Min Voltage Limit 10.5 V \
-                 (limits 10.5 V to 13.0 V); check the supply and the voltage drop along the \
-                 wiring in reply to Ping from actuator 1, during setup, scanning for actuators"
-            );
+            assert_eq!(err.to_string(), "id 1: voltage 9.7 V below 10.5 V");
             assert_eq!(format!("{err:?}"), err.to_string());
             assert!(sent(&bus).ends_with(&concat(&[
                 p1_read(1, 0, 2),

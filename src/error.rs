@@ -1,9 +1,11 @@
 //! Crate errors, split by where they come from.
 //!
-//! Every error says what failed and why in its `Display` text: which
-//! actuator, which instruction and register (a [`Request`]), which setup
-//! step, and the values involved. `Debug` on [`Error`] prints the same text,
-//! so `?` out of `main` reads as a sentence; `{:#?}` prints the fields.
+//! Every error's `Display` text is one short line, `id N: what happened`,
+//! with the values involved: "id 2: voltage 8.5 V below 10.5 V". The fields
+//! carry the rest (a [`Request`]: instruction, actuator, register, address,
+//! length, setup step), [`Error::hint`] says what to check, `Debug` on
+//! [`Error`] prints the same line so `?` out of `main` stays short, and
+//! `{:#?}` prints the fields.
 
 use core::fmt;
 
@@ -12,6 +14,13 @@ use crate::actuator::LimitMode;
 use crate::bus::IdSet;
 use crate::protocol::ProtocolVersion;
 use crate::units::HardwareErrors;
+
+/// What to check when no reply arrives.
+const NO_REPLY: &str = "check power, wiring, the baud rate and the ID, and that the USB \
+     adapter's latency timer is below the timeout (FTDI default: 16 ms)";
+
+/// What to check after a packet was corrupted on the line.
+const LINE_NOISE: &str = "check wiring, connectors, supply noise and the baud rate";
 
 /// Every error this crate returns, by category.
 ///
@@ -126,6 +135,69 @@ impl Error {
         }
     }
 
+    /// What to check or do next, where it is known: kept out of the
+    /// `Display` text so a failing loop prints one short line.
+    ///
+    /// ```
+    /// use dxl_rs_v2::{Error, Id, SetupError};
+    ///
+    /// let err: Error = SetupError::Missing { id: Id::new(5)?, timeout_us: 10_000 }.into();
+    /// assert_eq!(err.to_string(), "id 5: no reply to Ping in 10 ms");
+    /// assert!(err.hint().unwrap().starts_with("check power, wiring"));
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn hint(&self) -> Option<&'static str> {
+        use FaultError as F;
+        use TemperatureError as T;
+        use ValidationError as V;
+        use VoltageError as U;
+        Some(match self {
+            Self::Transport(TransportError::NoReply { .. })
+            | Self::Setup(SetupError::Missing { .. }) => NO_REPLY,
+            Self::Transport(TransportError::LateReply { .. }) => {
+                "set the USB adapter's latency timer to 1 ms (FTDI default: 16 ms) \
+                 or raise the bus timeout"
+            }
+            Self::Transport(TransportError::PartialReply { .. }) => {
+                "a USB adapter latency timer above the timeout, or a noisy line, \
+                 cuts replies short"
+            }
+            Self::Protocol(ProtocolError::Checksum { .. } | ProtocolError::Crc { .. }) => {
+                LINE_NOISE
+            }
+            Self::Status(status) if status.is_corruption() => LINE_NOISE,
+            Self::Status(StatusError {
+                report:
+                    StatusReport::P2 {
+                        code: Some(P2Code::Access),
+                        ..
+                    },
+                ..
+            }) => {
+                "read-only, write-only or undefined address, \
+                 or an EEPROM write while torque is on"
+            }
+            Self::Fault(F::Voltage(U::BelowMin { .. })) => {
+                "check the supply and the voltage drop along the wiring"
+            }
+            Self::Fault(F::Voltage(U::AboveMax { .. })) => "lower the supply voltage",
+            Self::Fault(F::Voltage(U::InsideLimits { .. })) => {
+                "the voltage dipped or spiked briefly"
+            }
+            Self::Fault(F::Temperature(T::AboveLimit { .. })) => "let it cool and reduce its load",
+            Self::Fault(F::Temperature(T::WithinLimit { .. })) => "it has cooled since",
+            Self::Fault(F::Overload { .. }) => "the load stays above what it can hold",
+            Self::Fault(F::ElectricalShock { .. }) => {
+                "an electrical shock, or too little power for its motor"
+            }
+            Self::Validation(V::ActuatorIsOff { .. }) => "enable torque before setting a goal",
+            Self::Validation(V::ActuatorFaulted { .. }) => "clear the fault before enabling torque",
+            Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
+            Self::Validation(V::NoUnit { .. }) => "use the register's raw form",
+            _ => return None,
+        })
+    }
+
     /// Whether the error is a hardware fault, after which the actuator is
     /// treated as faulted and its torque as off: a [`FaultError`], or a
     /// [`StatusError`] whose report is one (before it is measured).
@@ -158,17 +230,6 @@ pub enum Instruction {
     BulkRead,
     /// Bulk Write (0x93), Protocol 2.
     BulkWrite,
-}
-
-impl Instruction {
-    /// Whether the instruction brings data back, so its target is the
-    /// actuator data comes "from".
-    const fn reads(self) -> bool {
-        matches!(
-            self,
-            Self::Ping | Self::Read | Self::SyncRead | Self::BulkRead
-        )
-    }
 }
 
 impl fmt::Display for Instruction {
@@ -214,14 +275,14 @@ pub enum Step {
 impl fmt::Display for Step {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Scan => "setup, scanning for actuators",
-            Self::Ping => "setup, pinging a declared actuator",
-            Self::ModelNumber => "setup, reading the model number",
-            Self::Firmware => "setup, reading the firmware version",
-            Self::PositionLimits => "setup, reading the position limits",
-            Self::OperatingMode => "setup, reading the operating mode",
-            Self::GoalBound => "setup, reading the goal's EEPROM bound",
-            Self::FaultDiagnosis => "the diagnosis of a hardware fault",
+            Self::Scan => "scan",
+            Self::Ping
+            | Self::ModelNumber
+            | Self::Firmware
+            | Self::PositionLimits
+            | Self::OperatingMode
+            | Self::GoalBound => "setup",
+            Self::FaultDiagnosis => "fault diagnosis",
         })
     }
 }
@@ -241,7 +302,7 @@ impl fmt::Display for Step {
 ///     .len(2);
 /// assert_eq!(
 ///     request.to_string(),
-///     "Read of Model Number (address 0, 2 bytes) from actuator 1"
+///     "id 1: Read Model Number"
 /// );
 /// # Ok::<(), dxl_rs_v2::Error>(())
 /// ```
@@ -353,53 +414,74 @@ impl Request {
     }
 }
 
-/// E.g. "Read of Model Number (address 0, 2 bytes) from actuator 1, during
-/// setup, reading the model number"; "the request" when nothing is known.
+/// E.g. "id 1: Read Model Number in setup"; "the request" when nothing is
+/// known. The address and length show only for a raw access, which has no
+/// register name; [`Debug`](fmt::Debug) prints every field.
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_empty() {
             return f.write_str("the request");
         }
+        write!(f, "{}{}", Who(self), Op(self))
+    }
+}
+
+/// "id N: " when the request names its actuator, else nothing.
+struct Who<'a>(&'a Request);
+
+impl fmt::Display for Who<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0.id {
+            Some(id) => write!(f, "id {}: ", id.get()),
+            None => Ok(()),
+        }
+    }
+}
+
+/// The request without its actuator: "Read Model Number in setup",
+/// "Write addr 30 (2 bytes)"; "the request" when that is empty.
+struct Op<'a>(&'a Request);
+
+impl Op<'_> {
+    const fn is_empty(&self) -> bool {
+        let r = self.0;
+        r.instruction.is_none()
+            && r.register.is_none()
+            && r.addr.is_none()
+            && r.len.is_none()
+            && r.step.is_none()
+    }
+}
+
+impl fmt::Display for Op<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty() {
+            return f.write_str("the request");
+        }
+        let r = self.0;
         let mut written = false;
-        if let Some(instruction) = self.instruction {
+        if let Some(instruction) = r.instruction {
             write!(f, "{instruction}")?;
             written = true;
         }
-        if let Some(register) = self.register {
-            if written {
-                f.write_str(" of ")?;
-            }
-            f.write_str(register)?;
+        if let Some(register) = r.register {
+            write!(f, "{}{register}", Sep(written))?;
             written = true;
-        }
-        match (self.addr, self.len) {
-            (Some(addr), Some(len)) => {
-                write!(f, "{}(address {addr}, {})", Sep(written), Bytes(len))?
+        } else {
+            if let Some(addr) = r.addr {
+                write!(f, "{}addr {addr}", Sep(written))?;
+                written = true;
             }
-            (Some(addr), None) => write!(f, "{}(address {addr})", Sep(written))?,
-            (None, Some(len)) => write!(f, "{}({})", Sep(written), Bytes(len))?,
-            (None, None) => {}
+            if let Some(len) = r.len {
+                write!(f, "{}({})", Sep(written), Bytes(len))?;
+                written = true;
+            }
         }
-        written |= self.addr.is_some() || self.len.is_some();
-        if let Some(id) = self.id {
-            let preposition = match self.instruction {
-                Some(instruction) if instruction.reads() => "from",
-                Some(_) => "to",
-                None => "on",
-            };
+        if let Some(step) = r.step {
             if written {
-                f.write_str(" ")?;
+                f.write_str(" in ")?;
             }
-            write!(f, "{preposition} actuator {}", id.get())?;
-            written = true;
-        } else if self.instruction.is_some() && self.instruction != Some(Instruction::Ping) {
-            f.write_str(" (broadcast)")?;
-        }
-        if let Some(step) = self.step {
-            if written {
-                f.write_str(", ")?;
-            }
-            write!(f, "during {step}")?;
+            write!(f, "{step}")?;
         }
         Ok(())
     }
@@ -426,28 +508,16 @@ impl fmt::Display for Bytes {
     }
 }
 
-/// " (in <request>)", or nothing for an empty request.
-struct In<'a>(&'a Request);
+/// " (<request without its actuator>)", or nothing when that is empty.
+struct Ctx<'a>(&'a Request);
 
-impl fmt::Display for In<'_> {
+impl fmt::Display for Ctx<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.is_empty() {
+        let op = Op(self.0);
+        if op.is_empty() {
             Ok(())
         } else {
-            write!(f, " (in {})", self.0)
-        }
-    }
-}
-
-/// " in reply to <request>", or nothing for an empty request.
-struct ReplyTo<'a>(&'a Request);
-
-impl fmt::Display for ReplyTo<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.is_empty() {
-            Ok(())
-        } else {
-            write!(f, " in reply to {}", self.0)
+            write!(f, " ({op})")
         }
     }
 }
@@ -469,28 +539,6 @@ impl fmt::Display for Ms {
             }
             write!(f, "{ms}.{frac:0digits$} ms")
         }
-    }
-}
-
-/// FTDI adapters (the U2D2 included) hold received bytes for up to their
-/// latency timer: 16 ms by default on Linux.
-const FTDI_DEFAULT_LATENCY_US: u32 = 16_000;
-
-/// The likely causes of a missing reply, naming the adapter latency timer
-/// when the timeout is not above the FTDI default.
-struct SilenceHint(u32);
-
-impl fmt::Display for SilenceHint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("; check power, wiring, the baud rate and the ID")?;
-        if self.0 <= FTDI_DEFAULT_LATENCY_US {
-            write!(
-                f,
-                ", and that the USB adapter's latency timer is below {} (FTDI default: 16 ms)",
-                Ms(self.0)
-            )?;
-        }
-        Ok(())
     }
 }
 
@@ -578,13 +626,14 @@ impl fmt::Display for FeatureHint {
 #[non_exhaustive]
 pub enum ValidationError {
     /// The ID is outside `0..=252`; see [`Id::MAX`](crate::Id::MAX).
-    #[error("invalid actuator id {0}: must be in 0..=252")]
+    #[error("invalid id {0}, must be 0..=252")]
     InvalidId(u8),
 
     /// Protocol 1 addresses are one byte; `addr` does not fit.
     #[error(
-        "address {addr} does not fit Protocol 1's one-byte address field{}",
-        In(request)
+        "{}address {addr} above Protocol 1's 255{}",
+        Who(request),
+        Ctx(request)
     )]
     AddressOutOfRange {
         /// The address that was asked for.
@@ -596,8 +645,9 @@ pub enum ValidationError {
     /// The packet's length field cannot describe `len` bytes; `max` is the
     /// protocol's limit.
     #[error(
-        "packet of {len} bytes exceeds the protocol limit of {max}{}",
-        In(request)
+        "{}packet of {len} bytes above the limit {max}{}",
+        Who(request),
+        Ctx(request)
     )]
     PacketTooLarge {
         /// The length that was asked for, in bytes.
@@ -609,7 +659,11 @@ pub enum ValidationError {
     },
 
     /// A data slice does not have the size the instruction declares.
-    #[error("data is {got} bytes, expected {expected}{}", In(request))]
+    #[error(
+        "{}data is {got} bytes, expected {expected}{}",
+        Who(request),
+        Ctx(request)
+    )]
     DataLength {
         /// The size the instruction declares, in bytes.
         expected: usize,
@@ -621,20 +675,14 @@ pub enum ValidationError {
 
     /// A goal was given while the actuator's torque is off. A faulted
     /// actuator counts as off.
-    #[error(
-        "actuator {} has torque off; enable torque before setting a goal",
-        id.get()
-    )]
+    #[error("id {}: torque off", id.get())]
     ActuatorIsOff {
         /// The actuator the goal was for.
         id: Id,
     },
 
     /// Torque was to be enabled on a faulted actuator.
-    #[error(
-        "actuator {} is faulted; clear the fault before enabling torque",
-        id.get()
-    )]
+    #[error("id {}: faulted", id.get())]
     ActuatorFaulted {
         /// The faulted actuator.
         id: Id,
@@ -642,7 +690,7 @@ pub enum ValidationError {
 
     /// A goal tick lies outside the position limits read from the
     /// actuator's EEPROM. Both bounds are allowed.
-    #[error("goal {raw} for actuator {} is outside its limits {min}..={max}", id.get())]
+    #[error("id {}: goal {raw} outside {min}..={max}", id.get())]
     OutOfLimits {
         /// The actuator the goal was for.
         id: Id,
@@ -656,17 +704,14 @@ pub enum ValidationError {
 
     /// A goal was checked before Setup read the actuator's position limits.
     /// Limits are never taken from a control table's defaults.
-    #[error("limits of actuator {} are not known; they are read at setup", id.get())]
+    #[error("id {}: limits unknown", id.get())]
     LimitsUnknown {
         /// The actuator the goal was for.
         id: Id,
     },
 
     /// The actuator reports a minimum position limit above its maximum.
-    #[error(
-        "actuator {} reports a minimum limit {min} above its maximum {max}",
-        id.get()
-    )]
+    #[error("id {}: min limit {min} above max {max}", id.get())]
     InvertedLimits {
         /// The actuator that reported the limits.
         id: Id,
@@ -677,7 +722,7 @@ pub enum ValidationError {
     },
 
     /// A value is NaN or infinite, so no raw value matches it.
-    #[error("value is not a finite number{}", In(request))]
+    #[error("{}value not finite{}", Who(request), Ctx(request))]
     NotFinite {
         /// The refused request.
         request: Request,
@@ -685,7 +730,7 @@ pub enum ValidationError {
 
     /// A value does not fit a register of `size` bytes, or, when `size` is
     /// 0, does not fit an `i32`. Values are never truncated.
-    #[error("value {raw} does not fit {}{}", FitsIn(*size), In(request))]
+    #[error("{}value {raw} does not fit {}{}", Who(request), FitsIn(*size), Ctx(request))]
     DoesNotFit {
         /// The value that does not fit.
         raw: i64,
@@ -696,7 +741,11 @@ pub enum ValidationError {
     },
 
     /// A caller buffer or value slice does not have one slot per target.
-    #[error("buffer has {got} slots for {targets} targets{}", In(request))]
+    #[error(
+        "{}buffer has {got} slots for {targets} targets{}",
+        Who(request),
+        Ctx(request)
+    )]
     BufferLength {
         /// The number of target actuators.
         targets: usize,
@@ -707,7 +756,7 @@ pub enum ValidationError {
     },
 
     /// An actuator ID appears more than once in a target or declared list.
-    #[error("actuator {} is listed more than once", id.get())]
+    #[error("id {}: listed twice", id.get())]
     DuplicateId {
         /// The repeated ID.
         id: Id,
@@ -715,10 +764,7 @@ pub enum ValidationError {
 
     /// The actuator's operating mode ignores Goal Position: velocity,
     /// current, PWM or wheel mode.
-    #[error(
-        "actuator {} is not in a position mode; it ignores goal positions",
-        id.get()
-    )]
+    #[error("id {}: not in a position mode", id.get())]
     NotPositionMode {
         /// The actuator the goal was for.
         id: Id,
@@ -726,10 +772,7 @@ pub enum ValidationError {
 
     /// The actuator's operating mode ignores Goal Velocity: only velocity
     /// mode (Protocol 2) and wheel mode (Protocol 1) use it.
-    #[error(
-        "actuator {} is in {mode:?} mode; only velocity or wheel mode uses a goal velocity",
-        id.get()
-    )]
+    #[error("id {}: no goal velocity in {mode:?} mode", id.get())]
     NotVelocityMode {
         /// The actuator the goal was for.
         id: Id,
@@ -739,10 +782,7 @@ pub enum ValidationError {
 
     /// The actuator's operating mode ignores Goal Current: only current and
     /// current-based position mode use it.
-    #[error(
-        "actuator {} is in {mode:?} mode; only current or current-based position mode uses a goal current",
-        id.get()
-    )]
+    #[error("id {}: no goal current in {mode:?} mode", id.get())]
     NotCurrentMode {
         /// The actuator the goal was for.
         id: Id,
@@ -752,7 +792,7 @@ pub enum ValidationError {
 
     /// The actuator's model has no such register, so a typed call for it
     /// sends nothing.
-    #[error("actuator {} has no {register} register", id.get())]
+    #[error("id {}: no {register} register", id.get())]
     Unsupported {
         /// The actuator the call was for.
         id: Id,
@@ -761,7 +801,7 @@ pub enum ValidationError {
     },
 
     /// A compliance slope step outside the e-Manual's `1..=7`.
-    #[error("compliance slope step {step} is outside 1..=7{}", In(request))]
+    #[error("{}slope step {step} outside 1..=7{}", Who(request), Ctx(request))]
     InvalidSlopeStep {
         /// The step that was asked for.
         step: u8,
@@ -773,10 +813,7 @@ pub enum ValidationError {
     /// its control table gives no unit for that mode, or one that is not
     /// the value's quantity (AX-12A wheel-mode Moving Speed is a share of
     /// output in %, not a velocity). The raw form still works.
-    #[error(
-        "{register} of actuator {} has no typed form in {mode:?} mode; use its raw form",
-        id.get()
-    )]
+    #[error("id {}: {register} has no unit in {mode:?} mode", id.get())]
     NoUnit {
         /// The actuator the call was for.
         id: Id,
@@ -789,7 +826,7 @@ pub enum ValidationError {
     /// The actuator's control table does not list the instruction for the
     /// bus protocol (AX and RX have no Protocol 1 Bulk Read), so nothing is
     /// sent.
-    #[error("actuator {} does not support the {instruction} instruction", id.get())]
+    #[error("id {}: no {instruction} instruction", id.get())]
     UnsupportedInstruction {
         /// The actuator the call was for.
         id: Id,
@@ -879,7 +916,7 @@ pub enum SetupError {
     /// `feature` names the Cargo feature that would add the model, when the
     /// model is known but its family is off; `None` otherwise.
     #[error(
-        "actuator {} reports model number {model_number}, not supported on {protocol}{}",
+        "id {}: model {model_number} not supported on {protocol}{}",
         id.get(),
         FeatureHint(*feature)
     )]
@@ -896,9 +933,9 @@ pub enum SetupError {
 
     /// More actuators answered, or were declared, than the bus can hold.
     #[error(
-        "{} actuators {} ({}), more than the bus capacity of {capacity}",
+        "{} actuators {} ({}), capacity {capacity}",
         ids.len(),
-        if *declared { "were declared" } else { "answered" },
+        if *declared { "declared" } else { "found" },
         IdList(*ids)
     )]
     TooManyActuators {
@@ -911,12 +948,7 @@ pub enum SetupError {
     },
 
     /// A declared actuator sent no byte to its Ping within the timeout.
-    #[error(
-        "declared actuator {} sent nothing within {} of its Ping{}",
-        id.get(),
-        Ms(*timeout_us),
-        SilenceHint(*timeout_us)
-    )]
+    #[error("id {}: no reply to Ping in {}", id.get(), Ms(*timeout_us))]
     Missing {
         /// The declared actuator.
         id: Id,
@@ -925,10 +957,7 @@ pub enum SetupError {
     },
 
     /// A declared actuator reports another model number than declared.
-    #[error(
-        "actuator {} was declared as model number {declared} but reports {found}",
-        id.get()
-    )]
+    #[error("id {}: model {found}, declared {declared}", id.get())]
     WrongModel {
         /// The declared actuator.
         id: Id,
@@ -939,7 +968,7 @@ pub enum SetupError {
     },
 
     /// A target ID that the bus does not hold.
-    #[error("actuator {} is not on this bus", id.get())]
+    #[error("id {}: not on this bus", id.get())]
     NotOnBus {
         /// The ID that was asked for.
         id: Id,
@@ -949,10 +978,7 @@ pub enum SetupError {
     /// none of its model's value lists, or its MX-64 Protocol 1 Torque Ctrl
     /// Mode Enable value is outside 0 and 1; both come from its control
     /// table, and no mode is guessed (decided 2026-10-28).
-    #[error(
-        "actuator {} reports unknown {register} value {value}",
-        id.get()
-    )]
+    #[error("id {}: unknown {register} {value}", id.get())]
     UnknownOperatingMode {
         /// The actuator that reported the value.
         id: Id,
@@ -986,11 +1012,7 @@ impl fmt::Display for IdList {
 pub enum TransportError {
     /// Not one byte arrived before the deadline, and none in one more
     /// timeout after it.
-    #[error(
-        "no reply within {} to {request}{}",
-        Ms(*timeout_us),
-        SilenceHint(*timeout_us)
-    )]
+    #[error("{}no reply to {} in {}", Who(request), Op(request), Ms(*timeout_us))]
     NoReply {
         /// What was waited for.
         request: Request,
@@ -1002,8 +1024,9 @@ pub enum TransportError {
     /// the timeout after it: the reply was late, not missing. A USB
     /// adapter's latency timer above the timeout does this.
     #[error(
-        "the reply to {request} came late: nothing within the {} timeout, then {bytes} bytes; \
-         set the USB adapter's latency timer to 1 ms (FTDI default: 16 ms) or raise the bus timeout",
+        "{}late reply to {}: {bytes} bytes after {}",
+        Who(request),
+        Op(request),
         Ms(*timeout_us)
     )]
     LateReply {
@@ -1018,8 +1041,9 @@ pub enum TransportError {
     /// Part of a status packet arrived, then the line went quiet until the
     /// deadline.
     #[error(
-        "only {bytes} bytes of the reply to {request} arrived within {}; \
-         a USB adapter latency timer above the timeout or a noisy line cuts replies short",
+        "{}partial reply to {}: {bytes} bytes in {}",
+        Who(request),
+        Op(request),
         Ms(*timeout_us)
     )]
     PartialReply {
@@ -1033,11 +1057,7 @@ pub enum TransportError {
 
     /// In the replies to a Sync Read or Bulk Read, the actuator after this
     /// one in the list answered first: this one sent nothing in its turn.
-    #[error(
-        "actuator {} sent nothing in its turn of {request}; actuator {}, later in the list, answered in its place",
-        request.id.map_or(0, Id::get),
-        answered.get()
-    )]
+    #[error("{}skipped its turn in {}, id {} answered", Who(request), Op(request), answered.get())]
     Skipped {
         /// The skipped target's request.
         request: Request,
@@ -1047,7 +1067,7 @@ pub enum TransportError {
 
     /// The transport's own timeout expired (an OS serial port's read or
     /// write timeout), not the bus's.
-    #[error("the serial port's own timeout expired while {direction}, in {request}")]
+    #[error("{}port timeout while {direction}{}", Who(request), Ctx(request))]
     PortTimeout {
         /// What was being sent or waited for.
         request: Request,
@@ -1057,7 +1077,7 @@ pub enum TransportError {
 
     /// A read returned no byte after the port said input was waiting: the
     /// port is gone (a USB adapter unplugged).
-    #[error("the serial port closed (end of stream) while reading, in {request}")]
+    #[error("{}port closed{}", Who(request), Ctx(request))]
     EndOfStream {
         /// What was waited for.
         request: Request,
@@ -1065,7 +1085,11 @@ pub enum TransportError {
 
     /// The transport returned an error other than a timeout.
     /// `embedded-io` gives only the error's kind, not the OS code.
-    #[error("the serial port failed while {direction} ({kind:?}), in {request}")]
+    #[error(
+        "{}port error {kind:?} while {direction}{}",
+        Who(request),
+        Ctx(request)
+    )]
     Io {
         /// What was being sent or waited for.
         request: Request,
@@ -1114,9 +1138,9 @@ impl TransportError {
 pub enum ProtocolError {
     /// A Protocol 1 status packet failed its checksum.
     #[error(
-        "status packet with id byte {packet_id} failed its checksum \
-         (computed {computed:#04X}, received {received:#04X}){}",
-        ReplyTo(request)
+        "{}bad checksum {received:#04X}, expected {computed:#04X}{}",
+        Who(request),
+        Ctx(request)
     )]
     Checksum {
         /// What the reply answered.
@@ -1131,9 +1155,9 @@ pub enum ProtocolError {
 
     /// A Protocol 2 status packet failed its CRC.
     #[error(
-        "status packet with id byte {packet_id} failed its CRC \
-         (computed {computed:#06X}, received {received:#06X}){}",
-        ReplyTo(request)
+        "{}bad CRC {received:#06X}, expected {computed:#06X}{}",
+        Who(request),
+        Ctx(request)
     )]
     Crc {
         /// What the reply answered.
@@ -1147,7 +1171,7 @@ pub enum ProtocolError {
     },
 
     /// A valid status packet came from another actuator than the one asked.
-    #[error("the reply to {request} came from id {got}, not actuator {}", expected.get())]
+    #[error("{}reply from id {got}{}", Who(request), Ctx(request))]
     WrongId {
         /// What was asked.
         request: Request,
@@ -1158,7 +1182,11 @@ pub enum ProtocolError {
     },
 
     /// A valid status packet carried a different amount of data than asked.
-    #[error("the reply to {request} carried {got} data bytes, expected {expected}")]
+    #[error(
+        "{}reply has {got} data bytes, expected {expected}{}",
+        Who(request),
+        Ctx(request)
+    )]
     WrongLength {
         /// What was asked.
         request: Request,
@@ -1172,8 +1200,9 @@ pub enum ProtocolError {
     /// valid packet (Protocol 1: 2, Protocol 2: 3). It was skipped, and no
     /// valid packet followed before the deadline.
     #[error(
-        "{protocol} status packet header with length field {length}, below the minimum {min}{}",
-        ReplyTo(request)
+        "{}{protocol} length field {length} below {min}{}",
+        Who(request),
+        Ctx(request)
     )]
     LengthTooShort {
         /// What the reply answered.
@@ -1190,10 +1219,7 @@ pub enum ProtocolError {
     /// the expected reply can be: a corrupted length that would otherwise
     /// swallow the packets after it. It was skipped, and no valid packet
     /// followed before the deadline.
-    #[error(
-        "Protocol 2 status packet header with length field {length}, above the {max} the reply can have{}",
-        ReplyTo(request)
-    )]
+    #[error("{}length field {length} above {max}{}", Who(request), Ctx(request))]
     LengthTooLong {
         /// What the reply answered.
         request: Request,
@@ -1204,7 +1230,7 @@ pub enum ProtocolError {
     },
 
     /// A reply to a broadcast Ping carries an ID no actuator can have.
-    #[error("a reply to {request} came from id {got}, outside 0..=252")]
+    #[error("{}reply from invalid id {got}{}", Who(request), Ctx(request))]
     InvalidReplyId {
         /// What was asked.
         request: Request,
@@ -1259,7 +1285,7 @@ impl fmt::Display for Also {
         if others.is_empty() {
             Ok(())
         } else {
-            write!(f, "; it also reports {others}")
+            write!(f, ", also {others}")
         }
     }
 }
@@ -1285,12 +1311,7 @@ pub enum FaultError {
     Temperature(#[from] TemperatureError),
 
     /// The load stayed above the maximum output.
-    #[error(
-        "actuator {} reports an overload: the load stays above what it can hold{}{}",
-        id.get(),
-        Also(*faults, HardwareErrors::OVERLOAD),
-        ReplyTo(request)
-    )]
+    #[error("id {}: overload{}", id.get(), Also(*faults, HardwareErrors::OVERLOAD))]
     Overload {
         /// The actuator.
         id: Id,
@@ -1302,12 +1323,7 @@ pub enum FaultError {
 
     /// An electrical shock on the circuit, or too little power for the
     /// motor (Protocol 2 Hardware Error Status bit 4).
-    #[error(
-        "actuator {} reports an electrical shock, or too little power for its motor{}{}",
-        id.get(),
-        Also(*faults, HardwareErrors::ELECTRICAL_SHOCK),
-        ReplyTo(request)
-    )]
+    #[error("id {}: electrical shock{}", id.get(), Also(*faults, HardwareErrors::ELECTRICAL_SHOCK))]
     ElectricalShock {
         /// The actuator.
         id: Id,
@@ -1319,12 +1335,7 @@ pub enum FaultError {
 
     /// The motor encoder malfunctions (Protocol 2 Hardware Error Status
     /// bit 3).
-    #[error(
-        "actuator {} reports a motor encoder malfunction{}{}",
-        id.get(),
-        Also(*faults, HardwareErrors::ENCODER),
-        ReplyTo(request)
-    )]
+    #[error("id {}: encoder error{}", id.get(), Also(*faults, HardwareErrors::ENCODER))]
     Encoder {
         /// The actuator.
         id: Id,
@@ -1337,11 +1348,7 @@ pub enum FaultError {
     /// The fault's quantity cannot be measured: the model's table has no
     /// such register (Y series keeps motor and inverter temperatures
     /// apart).
-    #[error(
-        "actuator {} reports {faults}, but its model has no {register} register to measure it{}",
-        id.get(),
-        ReplyTo(request)
-    )]
+    #[error("id {}: {faults}, no {register} register to measure it", id.get())]
     Unmeasurable {
         /// The actuator.
         id: Id,
@@ -1355,12 +1362,7 @@ pub enum FaultError {
 
     /// A Protocol 2 reply raised the alert bit, but Hardware Error Status
     /// reads no fault (it cleared, or its bits are unused ones).
-    #[error(
-        "actuator {} raised a hardware alert, but its Hardware Error Status reads {:#04X}, no known fault{}",
-        id.get(),
-        faults.raw(),
-        ReplyTo(request)
-    )]
+    #[error("id {}: unknown hardware error {:#04X}", id.get(), faults.raw())]
     Unidentified {
         /// The actuator.
         id: Id,
@@ -1429,8 +1431,11 @@ impl FaultError {
 /// }));
 /// assert_eq!(
 ///     err.to_string(),
-///     "actuator 5 measures 9.7 V input, below its Min Voltage Limit 10.5 V \
-///      (limits 10.5 V to 13.0 V); check the supply and the voltage drop along the wiring"
+///     "id 5: voltage 9.7 V below 10.5 V"
+/// );
+/// assert_eq!(
+///     err.hint(),
+///     Some("check the supply and the voltage drop along the wiring")
 /// );
 /// # Ok::<(), Error>(())
 /// ```
@@ -1439,11 +1444,9 @@ impl FaultError {
 pub enum VoltageError {
     /// The present input voltage is below Min Voltage Limit.
     #[error(
-        "actuator {} measures {measured} input, below its Min Voltage Limit {min} \
-         (limits {min} to {max}); check the supply and the voltage drop along the wiring{}{}",
+        "id {}: voltage {measured} below {min}{}",
         id.get(),
-        Also(*faults, HardwareErrors::INPUT_VOLTAGE),
-        ReplyTo(request)
+        Also(*faults, HardwareErrors::INPUT_VOLTAGE)
     )]
     BelowMin {
         /// The actuator.
@@ -1462,11 +1465,9 @@ pub enum VoltageError {
 
     /// The present input voltage is above Max Voltage Limit.
     #[error(
-        "actuator {} measures {measured} input, above its Max Voltage Limit {max} \
-         (limits {min} to {max}); lower the supply voltage{}{}",
+        "id {}: voltage {measured} above {max}{}",
         id.get(),
-        Also(*faults, HardwareErrors::INPUT_VOLTAGE),
-        ReplyTo(request)
+        Also(*faults, HardwareErrors::INPUT_VOLTAGE)
     )]
     AboveMax {
         /// The actuator.
@@ -1487,11 +1488,9 @@ pub enum VoltageError {
     /// after it is inside the limits: it dipped or spiked briefly (a load
     /// step on a weak supply, long thin wiring).
     #[error(
-        "actuator {} reported an input voltage error, but measures {measured}, inside its limits \
-         {min} to {max}: the voltage dipped or spiked briefly{}{}",
+        "id {}: voltage error, now {measured} (limits {min} to {max}){}",
         id.get(),
-        Also(*faults, HardwareErrors::INPUT_VOLTAGE),
-        ReplyTo(request)
+        Also(*faults, HardwareErrors::INPUT_VOLTAGE)
     )]
     InsideLimits {
         /// The actuator.
@@ -1585,11 +1584,9 @@ impl VoltageError {
 pub enum TemperatureError {
     /// The present temperature is above Temperature Limit.
     #[error(
-        "actuator {} measures {measured}, above its Temperature Limit {limit}; \
-         let it cool and reduce its load{}{}",
+        "id {}: temperature {measured} above {limit}{}",
         id.get(),
-        Also(*faults, HardwareErrors::OVERHEATING),
-        ReplyTo(request)
+        Also(*faults, HardwareErrors::OVERHEATING)
     )]
     AboveLimit {
         /// The actuator.
@@ -1608,11 +1605,9 @@ pub enum TemperatureError {
     /// is at or below the limit: it has cooled since, and the fault stays
     /// latched until cleared.
     #[error(
-        "actuator {} reported overheating, but measures {measured}, at or below its \
-         Temperature Limit {limit}: it has cooled since{}{}",
+        "id {}: overheated, now {measured} (limit {limit}){}",
         id.get(),
-        Also(*faults, HardwareErrors::OVERHEATING),
-        ReplyTo(request)
+        Also(*faults, HardwareErrors::OVERHEATING)
     )]
     WithinLimit {
         /// The actuator.
@@ -1685,7 +1680,7 @@ impl TemperatureError {
 /// answered, so a P2 `DataRange` or P1 `Range` says which write was
 /// refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("actuator {} reported {report}{}", id.get(), ReplyTo(request))]
+#[error("id {}: {report}{}", id.get(), Ctx(request))]
 #[non_exhaustive]
 pub struct StatusError {
     /// The actuator that reported it.
@@ -1697,6 +1692,14 @@ pub struct StatusError {
 }
 
 impl StatusError {
+    /// Whether the actuator saw a corrupted instruction packet.
+    fn is_corruption(&self) -> bool {
+        match self.report {
+            StatusReport::P1(flags) => flags.contains(P1Flag::Checksum),
+            StatusReport::P2 { code, .. } => code == Some(P2Code::Crc),
+        }
+    }
+
     /// Whether the report is a hardware fault, after which the actuator
     /// should be treated as faulted and its torque as off.
     ///
@@ -1734,18 +1737,14 @@ impl fmt::Display for StatusReport {
         match *self {
             StatusReport::P1(flags) => write!(f, "{flags}"),
             StatusReport::P2 { alert, code } => match (alert, code) {
-                (true, Some(code)) => write!(f, "a hardware alert and {code}"),
-                (true, None) => f.write_str("a hardware alert"),
+                (true, Some(code)) => write!(f, "hardware alert, {code}"),
+                (true, None) => f.write_str("hardware alert"),
                 (false, Some(code)) => write!(f, "{code}"),
                 (false, None) => f.write_str("no error"),
             },
         }
     }
 }
-
-/// What to check after the actuator saw a corrupted instruction packet.
-const CORRUPTED: &str = "the instruction packet it received was corrupted on the line \
-     (check wiring, connectors, supply noise and the baud rate)";
 
 /// A Protocol 2 error code (bits 0..=6 of the error byte).
 ///
@@ -1793,25 +1792,14 @@ impl P2Code {
 impl fmt::Display for P2Code {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ResultFail => f.write_str("result fail (it could not process the instruction)"),
-            Self::Instruction => f.write_str(
-                "an instruction error (undefined instruction, or Action without Reg Write)",
-            ),
-            Self::Crc => write!(f, "a CRC error: {CORRUPTED}"),
-            Self::DataRange => {
-                f.write_str("a data range error (the value is outside the register's range)")
-            }
-            Self::DataLength => {
-                f.write_str("a data length error (the data is shorter than the register)")
-            }
-            Self::DataLimit => {
-                f.write_str("a data limit error (the value is outside its configured limit)")
-            }
-            Self::Access => f.write_str(
-                "an access error (read-only, write-only or undefined address, \
-                 or an EEPROM write while torque is on)",
-            ),
-            Self::Unknown(code) => write!(f, "unknown error code {code}"),
+            Self::ResultFail => f.write_str("result fail"),
+            Self::Instruction => f.write_str("instruction error"),
+            Self::Crc => f.write_str("CRC error"),
+            Self::DataRange => f.write_str("data range error"),
+            Self::DataLength => f.write_str("data length error"),
+            Self::DataLimit => f.write_str("data limit error"),
+            Self::Access => f.write_str("access error"),
+            Self::Unknown(code) => write!(f, "error code {code}"),
         }
     }
 }
@@ -1856,23 +1844,15 @@ impl P1Flag {
 
 impl fmt::Display for P1Flag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InputVoltage => {
-                f.write_str("an input voltage error (supply outside its voltage limits)")
-            }
-            Self::AngleLimit => {
-                f.write_str("an angle limit error (goal position outside its CW/CCW angle limits)")
-            }
-            Self::Overheating => {
-                f.write_str("overheating (temperature above its Temperature Limit)")
-            }
-            Self::Range => f.write_str("a range error (a value outside the register's range)"),
-            Self::Checksum => write!(f, "a checksum error: {CORRUPTED}"),
-            Self::Overload => f.write_str("an overload (load above its maximum torque)"),
-            Self::Instruction => f.write_str(
-                "an instruction error (undefined instruction, or Action without Reg Write)",
-            ),
-        }
+        f.write_str(match self {
+            Self::InputVoltage => "input voltage error",
+            Self::AngleLimit => "angle limit error",
+            Self::Overheating => "overheating",
+            Self::Range => "range error",
+            Self::Checksum => "checksum error",
+            Self::Overload => "overload",
+            Self::Instruction => "instruction error",
+        })
     }
 }
 
@@ -1970,35 +1950,25 @@ mod tests {
         assert_eq!(Request::NONE.to_string(), "the request");
         assert_eq!(
             model_number_read().to_string(),
-            "Read of Model Number (address 0, 2 bytes) from actuator 1, \
-             during setup, reading the model number"
+            "id 1: Read Model Number in setup"
         );
         let write = Request::NONE
             .instruction(Instruction::Write)
             .id(id(3))
             .addr(30)
             .len(1);
-        assert_eq!(
-            write.to_string(),
-            "Write (address 30, 1 byte) to actuator 3"
-        );
+        assert_eq!(write.to_string(), "id 3: Write addr 30 (1 byte)");
         let sync = Request::NONE
             .instruction(Instruction::SyncWrite)
             .register("Goal Position")
             .addr(116)
             .len(4);
-        assert_eq!(
-            sync.to_string(),
-            "Sync Write of Goal Position (address 116, 4 bytes) (broadcast)"
-        );
+        assert_eq!(sync.to_string(), "Sync Write Goal Position");
         assert_eq!(Request::NONE.register("LED").to_string(), "LED");
-        assert_eq!(Request::NONE.id(id(4)).to_string(), "on actuator 4");
-        assert_eq!(Request::NONE.addr(7).to_string(), "(address 7)");
+        assert_eq!(Request::NONE.id(id(4)).to_string(), "id 4: the request");
+        assert_eq!(Request::NONE.addr(7).to_string(), "addr 7");
         assert_eq!(Request::NONE.len(3).to_string(), "(3 bytes)");
-        assert_eq!(
-            Request::NONE.step(Step::Scan).to_string(),
-            "during setup, scanning for actuators"
-        );
+        assert_eq!(Request::NONE.step(Step::Scan).to_string(), "scan");
         assert_eq!(
             Request::NONE.instruction(Instruction::Ping).to_string(),
             "Ping"
@@ -2089,51 +2059,44 @@ mod tests {
         });
         assert_eq!(
             no_reply,
-            "no reply within 10 ms to Read of Model Number (address 0, 2 bytes) from actuator 1, \
-             during setup, reading the model number; check power, wiring, the baud rate and the ID, \
-             and that the USB adapter's latency timer is below 10 ms (FTDI default: 16 ms)"
-        );
-        assert!(
-            !text(TransportError::NoReply {
-                request,
-                timeout_us: 50_000,
-            })
-            .contains("latency")
+            "id 1: no reply to Read Model Number in setup in 10 ms"
         );
         let late = text(TransportError::LateReply {
             request,
             timeout_us: 10_000,
             bytes: 8,
         });
-        assert!(late.starts_with("the reply to Read of Model Number"));
-        assert!(late.contains("nothing within the 10 ms timeout, then 8 bytes"));
-        assert!(late.contains("latency timer to 1 ms"));
+        assert_eq!(
+            late,
+            "id 1: late reply to Read Model Number in setup: 8 bytes after 10 ms"
+        );
         let partial = text(TransportError::PartialReply {
             request,
             timeout_us: 10_000,
             bytes: 3,
         });
-        assert!(partial.starts_with("only 3 bytes of the reply to Read of Model Number"));
-        assert!(partial.contains("within 10 ms"));
+        assert_eq!(
+            partial,
+            "id 1: partial reply to Read Model Number in setup: 3 bytes in 10 ms"
+        );
         let skipped = text(TransportError::Skipped {
             request: Request::NONE.instruction(Instruction::SyncRead).id(id(3)),
             answered: id(4),
         });
         assert_eq!(
             skipped,
-            "actuator 3 sent nothing in its turn of Sync Read from actuator 3; \
-             actuator 4, later in the list, answered in its place"
+            "id 3: skipped its turn in Sync Read, id 4 answered"
         );
         assert_eq!(
             text(TransportError::PortTimeout {
                 request,
                 direction: Direction::Write,
             }),
-            format!("the serial port's own timeout expired while writing, in {request}")
+            "id 1: port timeout while writing (Read Model Number in setup)"
         );
         assert_eq!(
             text(TransportError::EndOfStream { request }),
-            format!("the serial port closed (end of stream) while reading, in {request}")
+            "id 1: port closed (Read Model Number in setup)"
         );
         assert_eq!(
             text(TransportError::Io {
@@ -2141,7 +2104,7 @@ mod tests {
                 direction: Direction::Flush,
                 kind: embedded_io::ErrorKind::BrokenPipe,
             }),
-            format!("the serial port failed while flushing (BrokenPipe), in {request}")
+            "id 1: port error BrokenPipe while flushing (Read Model Number in setup)"
         );
     }
 
@@ -2197,10 +2160,7 @@ mod tests {
                     computed: 0xAB,
                     received: 0xCD,
                 },
-                format!(
-                    "status packet with id byte 1 failed its checksum (computed 0xAB, received 0xCD) \
-                     in reply to {request}"
-                ),
+                "id 1: bad checksum 0xCD, expected 0xAB (Read Model Number in setup)",
             ),
             (
                 ProtocolError::Crc {
@@ -2209,10 +2169,7 @@ mod tests {
                     computed: 0x1234,
                     received: 0xBEEF,
                 },
-                format!(
-                    "status packet with id byte 2 failed its CRC (computed 0x1234, received 0xBEEF) \
-                     in reply to {request}"
-                ),
+                "id 1: bad CRC 0xBEEF, expected 0x1234 (Read Model Number in setup)",
             ),
             (
                 ProtocolError::WrongId {
@@ -2220,7 +2177,7 @@ mod tests {
                     expected: id(1),
                     got: 7,
                 },
-                format!("the reply to {request} came from id 7, not actuator 1"),
+                "id 1: reply from id 7 (Read Model Number in setup)",
             ),
             (
                 ProtocolError::WrongLength {
@@ -2228,7 +2185,7 @@ mod tests {
                     expected: 2,
                     got: 0,
                 },
-                format!("the reply to {request} carried 0 data bytes, expected 2"),
+                "id 1: reply has 0 data bytes, expected 2 (Read Model Number in setup)",
             ),
             (
                 ProtocolError::LengthTooShort {
@@ -2237,10 +2194,7 @@ mod tests {
                     length: 1,
                     min: 2,
                 },
-                format!(
-                    "Protocol 1 status packet header with length field 1, below the minimum 2 \
-                     in reply to {request}"
-                ),
+                "id 1: Protocol 1 length field 1 below 2 (Read Model Number in setup)",
             ),
             (
                 ProtocolError::LengthTooLong {
@@ -2248,14 +2202,11 @@ mod tests {
                     length: 400,
                     max: 7,
                 },
-                format!(
-                    "Protocol 2 status packet header with length field 400, above the 7 the reply \
-                     can have in reply to {request}"
-                ),
+                "id 1: length field 400 above 7 (Read Model Number in setup)",
             ),
             (
                 ProtocolError::InvalidReplyId { request, got: 253 },
-                format!("a reply to {request} came from id 253, outside 0..=252"),
+                "id 1: reply from invalid id 253 (Read Model Number in setup)",
             ),
         ];
         for (err, msg) in cases {
@@ -2275,9 +2226,7 @@ mod tests {
         let cases = [
             (
                 ValidationError::AddressOutOfRange { addr: 300, request },
-                format!(
-                    "address 300 does not fit Protocol 1's one-byte address field (in {request})"
-                ),
+                "id 3: address 300 above Protocol 1's 255 (Write Goal Position)",
             ),
             (
                 ValidationError::PacketTooLarge {
@@ -2285,7 +2234,7 @@ mod tests {
                     max: 255,
                     request,
                 },
-                format!("packet of 300 bytes exceeds the protocol limit of 255 (in {request})"),
+                "id 3: packet of 300 bytes above the limit 255 (Write Goal Position)",
             ),
             (
                 ValidationError::DataLength {
@@ -2293,11 +2242,11 @@ mod tests {
                     got: 2,
                     request,
                 },
-                format!("data is 2 bytes, expected 4 (in {request})"),
+                "id 3: data is 2 bytes, expected 4 (Write Goal Position)",
             ),
             (
                 ValidationError::NotFinite { request },
-                format!("value is not a finite number (in {request})"),
+                "id 3: value not finite (Write Goal Position)",
             ),
             (
                 ValidationError::DoesNotFit {
@@ -2305,7 +2254,7 @@ mod tests {
                     size: 2,
                     request,
                 },
-                format!("value 70000 does not fit a 2-byte register (in {request})"),
+                "id 3: value 70000 does not fit a 2-byte register (Write Goal Position)",
             ),
             (
                 ValidationError::DoesNotFit {
@@ -2313,7 +2262,7 @@ mod tests {
                     size: 0,
                     request: Request::NONE,
                 },
-                "value 3000000000 does not fit in 32 bits".into(),
+                "value 3000000000 does not fit in 32 bits",
             ),
             (
                 ValidationError::BufferLength {
@@ -2321,16 +2270,13 @@ mod tests {
                     got: 2,
                     request,
                 },
-                format!("buffer has 2 slots for 3 targets (in {request})"),
+                "id 3: buffer has 2 slots for 3 targets (Write Goal Position)",
             ),
             (
                 ValidationError::InvalidSlopeStep { step: 9, request },
-                format!("compliance slope step 9 is outside 1..=7 (in {request})"),
+                "id 3: slope step 9 outside 1..=7 (Write Goal Position)",
             ),
-            (
-                ValidationError::NOT_FINITE,
-                "value is not a finite number".into(),
-            ),
+            (ValidationError::NOT_FINITE, "value not finite"),
         ];
         for (err, msg) in cases {
             assert_eq!(text(err), msg);
@@ -2352,15 +2298,15 @@ mod tests {
         let cases = [
             (
                 ValidationError::InvalidId(253),
-                "invalid actuator id 253: must be in 0..=252",
+                "invalid id 253, must be 0..=252",
             ),
             (
                 ValidationError::ActuatorIsOff { id: id(4) },
-                "actuator 4 has torque off; enable torque before setting a goal",
+                "id 4: torque off",
             ),
             (
                 ValidationError::ActuatorFaulted { id: id(4) },
-                "actuator 4 is faulted; clear the fault before enabling torque",
+                "id 4: faulted",
             ),
             (
                 ValidationError::OutOfLimits {
@@ -2369,11 +2315,11 @@ mod tests {
                     min: 1000,
                     max: 3000,
                 },
-                "goal 3001 for actuator 3 is outside its limits 1000..=3000",
+                "id 3: goal 3001 outside 1000..=3000",
             ),
             (
                 ValidationError::LimitsUnknown { id: id(3) },
-                "limits of actuator 3 are not known; they are read at setup",
+                "id 3: limits unknown",
             ),
             (
                 ValidationError::InvertedLimits {
@@ -2381,36 +2327,36 @@ mod tests {
                     min: 3000,
                     max: 1000,
                 },
-                "actuator 3 reports a minimum limit 3000 above its maximum 1000",
+                "id 3: min limit 3000 above max 1000",
             ),
             (
                 ValidationError::DuplicateId { id: id(5) },
-                "actuator 5 is listed more than once",
+                "id 5: listed twice",
             ),
             (
                 ValidationError::NotPositionMode { id: id(4) },
-                "actuator 4 is not in a position mode; it ignores goal positions",
+                "id 4: not in a position mode",
             ),
             (
                 ValidationError::NotVelocityMode {
                     id: id(2),
                     mode: LimitMode::Bounded,
                 },
-                "actuator 2 is in Bounded mode; only velocity or wheel mode uses a goal velocity",
+                "id 2: no goal velocity in Bounded mode",
             ),
             (
                 ValidationError::NotCurrentMode {
                     id: id(2),
                     mode: LimitMode::Velocity,
                 },
-                "actuator 2 is in Velocity mode; only current or current-based position mode uses a goal current",
+                "id 2: no goal current in Velocity mode",
             ),
             (
                 ValidationError::Unsupported {
                     id: id(1),
                     register: "Present Current",
                 },
-                "actuator 1 has no Present Current register",
+                "id 1: no Present Current register",
             ),
             (
                 ValidationError::NoUnit {
@@ -2418,14 +2364,14 @@ mod tests {
                     register: "Moving Speed",
                     mode: LimitMode::Wheel,
                 },
-                "Moving Speed of actuator 1 has no typed form in Wheel mode; use its raw form",
+                "id 1: Moving Speed has no unit in Wheel mode",
             ),
             (
                 ValidationError::UnsupportedInstruction {
                     id: id(3),
                     instruction: "Bulk Read",
                 },
-                "actuator 3 does not support the Bulk Read instruction",
+                "id 3: no Bulk Read instruction",
             ),
         ];
         for (err, msg) in cases {
@@ -2445,12 +2391,11 @@ mod tests {
         let cases = [
             (
                 unsupported(Some("x-series")),
-                "actuator 3 reports model number 1020, not supported on Protocol 1 \
-                 (enable the `x-series` feature)",
+                "id 3: model 1020 not supported on Protocol 1 (enable the `x-series` feature)",
             ),
             (
                 unsupported(None),
-                "actuator 3 reports model number 1020, not supported on Protocol 1",
+                "id 3: model 1020 not supported on Protocol 1",
             ),
             (
                 SetupError::TooManyActuators {
@@ -2458,7 +2403,7 @@ mod tests {
                     ids,
                     declared: false,
                 },
-                "3 actuators answered (ids 1, 2, 5), more than the bus capacity of 2",
+                "3 actuators found (ids 1, 2, 5), capacity 2",
             ),
             (
                 SetupError::TooManyActuators {
@@ -2466,16 +2411,14 @@ mod tests {
                     ids,
                     declared: true,
                 },
-                "3 actuators were declared (ids 1, 2, 5), more than the bus capacity of 2",
+                "3 actuators declared (ids 1, 2, 5), capacity 2",
             ),
             (
                 SetupError::Missing {
                     id: id(5),
                     timeout_us: 10_000,
                 },
-                "declared actuator 5 sent nothing within 10 ms of its Ping; check power, wiring, \
-                 the baud rate and the ID, and that the USB adapter's latency timer is below 10 ms \
-                 (FTDI default: 16 ms)",
+                "id 5: no reply to Ping in 10 ms",
             ),
             (
                 SetupError::WrongModel {
@@ -2483,19 +2426,16 @@ mod tests {
                     declared: 1020,
                     found: 12,
                 },
-                "actuator 5 was declared as model number 1020 but reports 12",
+                "id 5: model 12, declared 1020",
             ),
-            (
-                SetupError::NotOnBus { id: id(7) },
-                "actuator 7 is not on this bus",
-            ),
+            (SetupError::NotOnBus { id: id(7) }, "id 7: not on this bus"),
             (
                 SetupError::UnknownOperatingMode {
                     id: id(5),
                     value: 7,
                     register: "Operating Mode",
                 },
-                "actuator 5 reports unknown Operating Mode value 7",
+                "id 5: unknown Operating Mode 7",
             ),
         ];
         for (err, msg) in cases {
@@ -2527,20 +2467,20 @@ mod tests {
         assert!(matches!(below, VoltageError::BelowMin { .. }));
         assert_eq!(
             text(FaultError::from(below)),
-            "actuator 5 measures 9.7 V input, below its Min Voltage Limit 10.5 V (limits 10.5 V \
-             to 13.0 V); check the supply and the voltage drop along the wiring in reply to Ping \
-             from actuator 5, during setup, scanning for actuators"
+            "id 5: voltage 9.7 V below 10.5 V"
         );
         let above = classify(140);
         assert!(matches!(above, VoltageError::AboveMax { .. }));
-        assert!(
-            text(FaultError::from(above)).starts_with(
-                "actuator 5 measures 14.0 V input, above its Max Voltage Limit 13.0 V"
-            )
+        assert_eq!(
+            text(FaultError::from(above)),
+            "id 5: voltage 14.0 V above 13.0 V"
         );
         let inside = classify(120);
         assert!(matches!(inside, VoltageError::InsideLimits { .. }));
-        assert!(text(FaultError::from(inside)).contains("measures 12.0 V, inside its limits"));
+        assert_eq!(
+            text(FaultError::from(inside)),
+            "id 5: voltage error, now 12.0 V (limits 10.5 V to 13.0 V)"
+        );
         for err in [below, above, inside] {
             assert_eq!(err.id(), id(5));
             assert_eq!(err.faults(), faults);
@@ -2562,13 +2502,15 @@ mod tests {
         assert!(matches!(hot, TemperatureError::AboveLimit { .. }));
         assert_eq!(
             text(FaultError::from(hot)),
-            "actuator 2 measures 80 °C, above its Temperature Limit 72 °C; let it cool and reduce \
-             its load; it also reports an overload"
+            "id 2: temperature 80 °C above 72 °C, also overload"
         );
         let cooled =
             TemperatureError::classify(id(2), Celsius(72), Celsius(72), faults, Request::NONE);
         assert!(matches!(cooled, TemperatureError::WithinLimit { .. }));
-        assert!(text(FaultError::from(cooled)).contains("measures 72 °C, at or below"));
+        assert_eq!(
+            text(FaultError::from(cooled)),
+            "id 2: overheated, now 72 °C (limit 72 °C), also overload"
+        );
         for err in [hot, cooled] {
             assert_eq!(err.id(), id(2));
             assert_eq!(err.faults(), faults);
@@ -2587,7 +2529,7 @@ mod tests {
                     faults: HardwareErrors::from_raw(HardwareErrors::OVERLOAD),
                     request,
                 },
-                "actuator 1 reports an overload: the load stays above what it can hold",
+                "id 1: overload",
             ),
             (
                 FaultError::ElectricalShock {
@@ -2595,9 +2537,8 @@ mod tests {
                     faults,
                     request,
                 },
-                "actuator 1 reports an electrical shock, or too little power for its motor; it \
-                 also reports an input voltage error, overheating, a motor encoder malfunction, \
-                 an overload",
+                "id 1: electrical shock, also input voltage error, overheating, encoder error, \
+                 overload",
             ),
             (
                 FaultError::Encoder {
@@ -2605,7 +2546,7 @@ mod tests {
                     faults: HardwareErrors::from_raw(HardwareErrors::ENCODER),
                     request,
                 },
-                "actuator 1 reports a motor encoder malfunction",
+                "id 1: encoder error",
             ),
             (
                 FaultError::Unmeasurable {
@@ -2614,8 +2555,7 @@ mod tests {
                     register: "Present Temperature",
                     request,
                 },
-                "actuator 1 reports overheating, but its model has no Present Temperature \
-                 register to measure it",
+                "id 1: overheating, no Present Temperature register to measure it",
             ),
             (
                 FaultError::Unidentified {
@@ -2623,8 +2563,7 @@ mod tests {
                     faults: HardwareErrors::from_raw(0x40),
                     request,
                 },
-                "actuator 1 raised a hardware alert, but its Hardware Error Status reads 0x40, \
-                 no known fault",
+                "id 1: unknown hardware error 0x40",
             ),
         ];
         for (err, msg) in cases {
@@ -2660,9 +2599,7 @@ mod tests {
         };
         assert_eq!(
             text(checksum),
-            "actuator 11 reported a checksum error: the instruction packet it received was \
-             corrupted on the line (check wiring, connectors, supply noise and the baud rate) in \
-             reply to Write of Goal Position (address 30, 2 bytes) to actuator 11"
+            "id 11: checksum error (Write Goal Position)"
         );
         assert_eq!(Error::from(checksum).request(), Some(&request));
         let p1 = |byte| {
@@ -2673,13 +2610,9 @@ mod tests {
             }
             .to_string()
         };
-        assert_eq!(
-            p1(0x24),
-            "actuator 1 reported overheating (temperature above its Temperature Limit), \
-             an overload (load above its maximum torque)"
-        );
-        assert_eq!(p1(0), "actuator 1 reported no error");
-        assert_eq!(p1(0x80), "actuator 1 reported unknown error bits 0x80");
+        assert_eq!(p1(0x24), "id 1: overheating, overload");
+        assert_eq!(p1(0), "id 1: no error");
+        assert_eq!(p1(0x80), "id 1: unknown error bits 0x80");
         assert!(p1(0xA0).ends_with(", unknown error bits 0x80"));
         let p2 = |alert, code| {
             StatusError {
@@ -2691,29 +2624,203 @@ mod tests {
         };
         assert_eq!(
             p2(true, Some(P2Code::DataLength)),
-            "actuator 5 reported a hardware alert and a data length error (the data is shorter \
-             than the register)"
+            "id 5: hardware alert, data length error"
         );
-        assert_eq!(p2(true, None), "actuator 5 reported a hardware alert");
-        assert_eq!(
-            p2(false, Some(P2Code::Unknown(9))),
-            "actuator 5 reported unknown error code 9"
-        );
-        assert_eq!(p2(false, None), "actuator 5 reported no error");
-        for code in [
+        assert_eq!(p2(true, None), "id 5: hardware alert");
+        assert_eq!(p2(false, Some(P2Code::Unknown(9))), "id 5: error code 9");
+        assert_eq!(p2(false, None), "id 5: no error");
+        let names: std::vec::Vec<_> = [
             P2Code::ResultFail,
             P2Code::Instruction,
             P2Code::Crc,
             P2Code::DataRange,
             P2Code::DataLimit,
             P2Code::Access,
-        ] {
-            assert!(code.to_string().contains('('), "{code:?} explains itself");
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert_eq!(
+            names,
+            [
+                "result fail",
+                "instruction error",
+                "CRC error",
+                "data range error",
+                "data limit error",
+                "access error"
+            ]
+        );
+        let names: std::vec::Vec<_> = P1Flag::ALL.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            names,
+            [
+                "input voltage error",
+                "angle limit error",
+                "overheating",
+                "range error",
+                "checksum error",
+                "overload",
+                "instruction error"
+            ]
+        );
+    }
+
+    #[test]
+    fn hints_say_what_to_check() {
+        let request = Request::NONE;
+        let status = |report| {
+            Error::from(StatusError {
+                id: id(1),
+                report,
+                request,
+            })
+        };
+        let voltage = |measured| {
+            Error::from(FaultError::from(VoltageError::classify(
+                id(1),
+                Decivolts(measured),
+                Decivolts(105),
+                Decivolts(130),
+                HardwareErrors::default(),
+                request,
+            )))
+        };
+        let temperature = |measured| {
+            Error::from(FaultError::from(TemperatureError::classify(
+                id(1),
+                Celsius(measured),
+                Celsius(70),
+                HardwareErrors::default(),
+                request,
+            )))
+        };
+        let faults = HardwareErrors::default();
+        let cases = [
+            (
+                Error::from(TransportError::NoReply {
+                    request,
+                    timeout_us: 1,
+                }),
+                NO_REPLY,
+            ),
+            (
+                SetupError::Missing {
+                    id: id(1),
+                    timeout_us: 1,
+                }
+                .into(),
+                NO_REPLY,
+            ),
+            (
+                TransportError::LateReply {
+                    request,
+                    timeout_us: 1,
+                    bytes: 1,
+                }
+                .into(),
+                "set the USB adapter's latency timer to 1 ms (FTDI default: 16 ms) \
+                 or raise the bus timeout",
+            ),
+            (
+                TransportError::PartialReply {
+                    request,
+                    timeout_us: 1,
+                    bytes: 1,
+                }
+                .into(),
+                "a USB adapter latency timer above the timeout, or a noisy line, \
+                 cuts replies short",
+            ),
+            (
+                ProtocolError::Checksum {
+                    request,
+                    packet_id: 1,
+                    computed: 0,
+                    received: 1,
+                }
+                .into(),
+                LINE_NOISE,
+            ),
+            (
+                ProtocolError::Crc {
+                    request,
+                    packet_id: 1,
+                    computed: 0,
+                    received: 1,
+                }
+                .into(),
+                LINE_NOISE,
+            ),
+            (status(StatusReport::P1(P1Flags(0x10))), LINE_NOISE),
+            (
+                status(StatusReport::P2 {
+                    alert: false,
+                    code: Some(P2Code::Crc),
+                }),
+                LINE_NOISE,
+            ),
+            (
+                status(StatusReport::P2 {
+                    alert: false,
+                    code: Some(P2Code::Access),
+                }),
+                "read-only, write-only or undefined address, \
+                 or an EEPROM write while torque is on",
+            ),
+            (
+                voltage(90),
+                "check the supply and the voltage drop along the wiring",
+            ),
+            (voltage(140), "lower the supply voltage"),
+            (voltage(120), "the voltage dipped or spiked briefly"),
+            (temperature(80), "let it cool and reduce its load"),
+            (temperature(60), "it has cooled since"),
+            (
+                FaultError::Overload {
+                    id: id(1),
+                    faults,
+                    request,
+                }
+                .into(),
+                "the load stays above what it can hold",
+            ),
+            (
+                FaultError::ElectricalShock {
+                    id: id(1),
+                    faults,
+                    request,
+                }
+                .into(),
+                "an electrical shock, or too little power for its motor",
+            ),
+            (
+                ValidationError::ActuatorIsOff { id: id(1) }.into(),
+                "enable torque before setting a goal",
+            ),
+            (
+                ValidationError::ActuatorFaulted { id: id(1) }.into(),
+                "clear the fault before enabling torque",
+            ),
+            (
+                ValidationError::LimitsUnknown { id: id(1) }.into(),
+                "limits are read at setup",
+            ),
+            (
+                ValidationError::NoUnit {
+                    id: id(1),
+                    register: "Moving Speed",
+                    mode: LimitMode::Wheel,
+                }
+                .into(),
+                "use the register's raw form",
+            ),
+        ];
+        for (err, hint) in cases {
+            assert_eq!(err.hint(), Some(hint), "{err}");
         }
-        assert!(P2Code::Crc.to_string().contains("corrupted on the line"));
-        for flag in P1Flag::ALL {
-            assert!(flag.to_string().len() > 10, "{flag:?} explains itself");
-        }
+        assert_eq!(status(StatusReport::P1(P1Flags(0x08))).hint(), None);
+        assert_eq!(Error::from(SetupError::NotOnBus { id: id(1) }).hint(), None);
     }
 
     #[test]
