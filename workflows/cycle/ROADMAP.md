@@ -50,18 +50,19 @@ built and merged into `dev`, so each one starts at the step its code is
 really at, without a step-4 contract: the open spec-kit tasks were
 carried into `docs/plans/<module>.md` instead of being dropped. The
 pub surface on `dev` at that date stands for the step-4 contract.
-protocol has no open task left, so its step 5 is done: it is at step 6.
+protocol has no open task left, so its step 5 is done: it is at step 6;
+the two red commands fail outside its files.
 The others are at step 5 until their plan is ticked or deferred.
 
 | module | owner | mode | step | branch | last oracle run |
 |---|---|---|---|---|---|
-| core | ? | ? | 5 | — | — |
-| protocol | ? | ? | 6 | — | — |
-| transport | ? | ? | 5 | — | — |
-| bus | ? | ? | 5 | — | — |
-| tables | ? | ? | 5 | — | — |
-| xtask | ? | ? | 5 | — | — |
-| ci | ? | ? | 5 | — | — |
+| core | ? | ? | 5 | — | `2026-11-05 red`: the 3 clippy runs (xtask `type_complexity`, render_tests.rs:305) and `cargo test --workspace` (example rx28_gain_ramp needs `raw-registers`), both already red on dev 4c74e97; the 16 other CI commands green |
+| protocol | ? | ? | 6 | — | `2026-11-05 red`: the 3 clippy runs (xtask `type_complexity`, render_tests.rs:305) and `cargo test --workspace` (example rx28_gain_ramp needs `raw-registers`), both already red on dev 4c74e97; the 16 other CI commands green |
+| transport | ? | ? | 5 | — | `2026-11-05 red`: the 3 clippy runs (xtask `type_complexity`, render_tests.rs:305) and `cargo test --workspace` (example rx28_gain_ramp needs `raw-registers`), both already red on dev 4c74e97; the 16 other CI commands green |
+| bus | ? | ? | 5 | — | `2026-11-05 red`: the 3 clippy runs (xtask `type_complexity`, render_tests.rs:305) and `cargo test --workspace` (example rx28_gain_ramp needs `raw-registers`), both already red on dev 4c74e97; the 16 other CI commands green |
+| tables | ? | ? | 5 | — | `2026-11-05 red`: the 3 clippy runs (xtask `type_complexity`, render_tests.rs:305) and `cargo test --workspace` (example rx28_gain_ramp needs `raw-registers`), both already red on dev 4c74e97; the 16 other CI commands green |
+| xtask | ? | ? | 5 | — | `2026-11-05 red`: the 3 clippy runs (xtask `type_complexity`, render_tests.rs:305) and `cargo test --workspace` (example rx28_gain_ramp needs `raw-registers`), both already red on dev 4c74e97; the 16 other CI commands green |
+| ci | ? | ? | 5 | — | `2026-11-05 red`: the 3 clippy runs (xtask `type_complexity`, render_tests.rs:305) and `cargo test --workspace` (example rx28_gain_ramp needs `raw-registers`), both already red on dev 4c74e97; the 16 other CI commands green |
 
 - **owner** `delegated`: an agent builds it under the step-4 contract.
   `mine`: I write it by hand; agents do not touch its files without
