@@ -246,6 +246,43 @@ mod tests {
         use crate::error::{Error, Instruction, Request, ValidationError};
         use crate::protocol::P1;
         use crate::transport::MockTime;
+        use crate::{IdSet, ModelNumber};
+
+        #[test]
+        fn faulted_at_setup_is_fixed_with_write_raw() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p1_status(1, 0x01, &[]))
+                .reply_to(2, &p1_status(1, 0x01, &AX12.to_le_bytes()))
+                .reply_to(3, &p1_status(1, 0x01, &0u16.to_le_bytes()))
+                .reply_to(4, &p1_status(1, 0x01, &1023u16.to_le_bytes()))
+                .reply_to(5, &p1_status(1, 0, &[]))
+                .reply_to(6, &p1_status(1, 0, &[]))
+                .reply_to(7, &p1_status(1, 0, &[]));
+            let report = bus.declare([(id(1), ModelNumber(AX12))]).unwrap();
+            assert_eq!(report.faulted, [id(1)].into_iter().collect::<IdSet>());
+            let mark = mark(&bus);
+            let mut ax = bus.actuator(id(1)).unwrap();
+            assert_eq!(
+                ax.enable_torque(),
+                Err(ValidationError::ActuatorFaulted { id: id(1) }.into())
+            );
+            assert_eq!(ax.write_raw(12, &[95]), Ok(()));
+            assert_eq!(ax.torque_state(), FAULTED);
+            assert_eq!(ax.clear_fault(), Ok(()));
+            assert_eq!(ax.torque_state(), OFF);
+            assert_eq!(ax.enable_torque(), Ok(()));
+            assert_eq!(ax.torque_state(), ON);
+            assert_eq!(
+                sent_since(&bus, mark),
+                concat(&[
+                    p1_write(1, 12, &[95]),
+                    p1_instruction(1, PING, &[]),
+                    p1_write(1, 24, &[1]),
+                ])
+            );
+        }
 
         #[test]
         fn p1_raw_round_trip_and_short_addresses() {

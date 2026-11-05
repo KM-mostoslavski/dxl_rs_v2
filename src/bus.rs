@@ -30,7 +30,9 @@
 //!   that actuator [`Faulted`](crate::TorqueState::Faulted) on the same call.
 //!   Only [`ActuatorRef::clear_fault`] clears it, after asking the actuator.
 //!   An X-series actuator needs a reboot before its fault clears: on
-//!   Protocol 2, [`ActuatorRef::reboot`].
+//!   Protocol 2, [`ActuatorRef::reboot`]. Setup is the exception: it holds
+//!   such an actuator `Faulted` and lists it in [`SetupReport::faulted`]
+//!   instead of failing, so its EEPROM can still be fixed.
 //! - Broadcast writes get no reply, so a loop that only writes sees a fault
 //!   on its next read.
 //! - A multi-actuator call validates every target before any byte, so a
@@ -364,6 +366,16 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Nothing is written. It never sweeps the bus. No other register is
     /// read after Setup unless a call asks for it (FR-9.6).
     ///
+    /// An actuator whose replies report only a hardware fault (Protocol 1:
+    /// Input Voltage, Overheating, Overload; Protocol 2: the alert bit with
+    /// no error code) is held all the same, with torque
+    /// [`Faulted`](TorqueState::Faulted), and listed in
+    /// [`SetupReport::faulted`]: goals and torque are refused until
+    /// [`ActuatorRef::clear_fault`], which measures and returns the fault,
+    /// and its EEPROM can be fixed with `write_raw` (feature
+    /// `raw-registers`) in the meantime. On Protocol 2 its model number is
+    /// then read from Model Number, the ping having failed.
+    ///
     /// # Errors
     ///
     /// Before anything is sent:
@@ -379,8 +391,11 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     ///   its model's lists (or outside its torque switch's values).
     /// - [`ValidationError::InvertedLimits`]: its minimum limit is above its
     ///   maximum.
-    /// - [`Error::Status`] (a hardware fault fails Setup), and any transport
-    ///   or protocol error of a read.
+    /// - [`Error::Status`]: a reply reporting any other error (Protocol 1
+    ///   Angle Limit, Range, Checksum or Instruction, even beside a hardware
+    ///   flag; a Protocol 2 error code), measured into [`Error::Fault`] when
+    ///   it also reports a hardware fault; and any transport or protocol
+    ///   error of a read.
     ///
     /// [`SetupError::TooManyActuators`]: crate::SetupError::TooManyActuators
     /// [`ValidationError::DuplicateId`]: crate::ValidationError::DuplicateId
@@ -410,13 +425,14 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// waiting `scan_timeout`, which takes about 2.5 s at the default when
     /// few IDs answer. Each actuator found is then set up like
     /// [`declare`](Bus::declare) does, in `Id` order, and held with torque
-    /// `Off`.
+    /// `Off`, or `Faulted` and listed in [`SetupReport::faulted`] when its
+    /// replies report only a hardware fault, as `declare` does.
     ///
     /// # Errors
     ///
     /// - [`Error::Protocol`]: a corrupted reply to the scan.
-    /// - [`Error::Status`]: a reply reporting an error (a hardware fault
-    ///   fails Setup).
+    /// - [`Error::Status`]: a reply reporting any error other than only a
+    ///   hardware fault (see [`declare`](Bus::declare)).
     /// - [`ValidationError::DuplicateId`]: two replies with one `Id`.
     /// - [`SetupError::TooManyActuators`]: more than `N` replies.
     /// - [`SetupError::UnsupportedModel`]: a model this build has no table

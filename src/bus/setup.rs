@@ -406,10 +406,9 @@ mod tests {
 
     use super::*;
     use crate::bus::testing::*;
-    use crate::error::{Decivolts, FaultError, Instruction, P1Flags, P2Code, VoltageError};
+    use crate::error::Instruction;
     use crate::protocol::{P1, P2, ProtocolVersion};
     use crate::transport::MockTime;
-    use crate::units::HardwareErrors;
 
     fn model(n: u16) -> ModelNumber {
         ModelNumber(n)
@@ -520,6 +519,7 @@ mod tests {
     mod x_series {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
+        use crate::error::P2Code;
 
         fn xm430_bus(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
             let mut bus = test_bus(time);
@@ -743,6 +743,34 @@ mod tests {
         }
 
         #[test]
+        fn faulted_at_setup_refuses_enable_torque() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            let at = xm430_p2(line(&mut bus), 1, 1, 0, 4095, 3);
+            line(&mut bus)
+                .reply_to(at, &p2_pong(2, XM430, XM430_FW))
+                .reply_to(at + 1, &p2_status(2, 0, &0i32.to_le_bytes()))
+                .reply_to(at + 2, &p2_status(2, 0, &4095i32.to_le_bytes()))
+                .reply_to(at + 3, &p2_status(2, 0x80, &[3]));
+            let list = [1, 2].map(|n| (id(n), model(XM430)));
+            assert_eq!(bus.declare(list).unwrap().faulted, ids(&[2]));
+            assert_eq!(
+                bus.torque_states(),
+                [TorqueState::Off, TorqueState::Faulted]
+            );
+            let mark = mark(&bus);
+            assert_eq!(
+                bus.enable_torque(bus.ids()),
+                Err(ValidationError::ActuatorFaulted { id: id(2) }.into())
+            );
+            assert_quiet(&bus, mark);
+            assert_eq!(
+                bus.torque_states(),
+                [TorqueState::Off, TorqueState::Faulted]
+            );
+        }
+
+        #[test]
         fn second_declare_clears_a_held_fault() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
@@ -870,6 +898,8 @@ mod tests {
     mod ax {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
+        use crate::error::{Decivolts, FaultError, P1Flags, VoltageError};
+        use crate::units::HardwareErrors;
 
         #[test]
         fn p1_scan_voltage_fault_is_held_and_measured_by_clear_fault() {

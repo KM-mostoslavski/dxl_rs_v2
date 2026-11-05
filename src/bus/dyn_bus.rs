@@ -870,6 +870,21 @@ mod tests {
         }
 
         #[test]
+        fn dyn_bus_holds_a_faulted_actuator_like_bus() {
+            let time = MockTime::new();
+            let mut bus = test_dyn_bus::<P2>(&time);
+            bus.transport
+                .reply_to(1, &p2_pong(1, XM430, XM430_FW))
+                .reply_to(2, &p2_status(1, 0, &1000i32.to_le_bytes()))
+                .reply_to(3, &p2_status(1, 0, &3000i32.to_le_bytes()))
+                .reply_to(4, &p2_status(1, 0x80, &[3]));
+            let report = bus.declare([(id(1), ModelNumber(XM430))]).unwrap();
+            assert_eq!(report.faulted, [id(1)].into_iter().collect::<IdSet>());
+            assert_eq!(bus.torque_states(), [TorqueState::Faulted]);
+            assert_eq!(bus.stages.len(), 1);
+        }
+
+        #[test]
         fn failed_declare_leaves_every_vec_empty() {
             let time = MockTime::new();
             let mut bus = test_dyn_bus::<P2>(&time);
