@@ -55,13 +55,13 @@ The others are at step 5 until their plan is ticked or deferred.
 
 | module | owner | mode | step | branch | last oracle run |
 |---|---|---|---|---|---|
-| core | ? | ? | 5 | — | `2026-11-05 green`: all 20 local CI commands |
-| protocol | ? | ? | 6 | — | `2026-11-05 green`: all 20 local CI commands |
-| transport | ? | ? | 5 | — | `2026-11-05 green`: all 20 local CI commands |
-| bus | ? | ? | 5 | — | `2026-11-05 green`: all 20 local CI commands |
-| tables | ? | ? | 5 | — | `2026-11-05 green`: all 20 local CI commands |
-| xtask | ? | ? | 5 | — | `2026-11-05 green`: all 20 local CI commands |
-| ci | ? | ? | 5 | — | `2026-11-05 green`: all 20 local CI commands |
+| core | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
+| protocol | delegated | loop | 6 | — | `2026-11-05 green`: all 20 local CI commands |
+| transport | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
+| bus | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
+| tables | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
+| xtask | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
+| ci | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
 
 - **owner** `delegated`: an agent builds it under the step-4 contract.
   `mine`: I write it by hand; agents do not touch its files without
