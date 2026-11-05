@@ -1,8 +1,8 @@
 # QA checklist
 
 `[oracle]` items are mechanical: run the command, pass or fail. They are
-the only merge gate; the agent runs them at step 6 and merges at step 7
-when all pass. `[reviewer]` items need judgment; the reviewer agent
+the merge gate; the agent runs them at step 6 and opens the PR at
+step 7 when all pass; I merge. `[reviewer]` items need judgment; the reviewer agent
 applies them during the walkthrough (step 10), function by function.
 The profile tag (`[serious]`, `[poc, serious]`) says which ROADMAP
 profiles run the item; `toy` runs none.
@@ -18,15 +18,22 @@ fails this checklist.
       the report, not hidden.
 - [ ] `[oracle]` `[serious]` Clippy clean.
       `cargo clippy --workspace --all-targets -- -D warnings`, zero
-      warnings. This also catches leftover `todo!()`, `unimplemented!()`
-      and `dbg!` (see `Cargo.toml.snippet`).
+      warnings, also with `--features mock` and `--all-features`. This
+      also catches leftover `todo!()` and `dbg!` (`Cargo.toml`
+      `[workspace.lints]`). `unimplemented!("SRS <id>: …")` is the SRS
+      5.0 marker and stays allowed; each one is listed in the report.
 - [ ] `[oracle]` `[poc, serious]` Pub diff empty against the step-4
       contract, unless the task text says otherwise. Compare `pub`
       items, signatures, visibility, re-exports, trait impls on pub
       types.
 - [ ] `[oracle]` `[poc, serious]` Requirement coverage. Every
-      `<MOD>-<n>` in the module's SRS section has a test named for it.
-      `grep` the ids against the test names; a missing one fails.
+      SRS id the module's `Covers:` line names has a test that names it
+      (in its name or its doc comment). `grep` the ids against the
+      tests; a missing one fails.
+- [ ] `[oracle]` `[poc, serious]` The CI commands that run locally
+      pass: `cargo fmt --check`, the doc tests with `--features mock`,
+      the thumbv7em no_std builds, `cargo xtask codegen` without a diff,
+      `python3 control_tables/check_tables.py`.
 - [ ] `[oracle]` `[serious]` No `mod.rs` anywhere. `clippy::mod_module_files`
       is deny; a module is `foo.rs` with children in `foo/`.
 - [ ] `[oracle]` `[poc, serious]` No new dependency, no `unsafe`, no

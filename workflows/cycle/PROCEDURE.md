@@ -12,9 +12,9 @@ skill that runs them. Step 10 is project-level and has no row.
   Modules that satisfy the rule run in parallel, one loop each.
 - The pub surface is frozen at the end of step 4. Changing it afterwards
   is a deferral, not a decision.
-- One branch per module, one squash commit per module at step 7, made
-  by the agent when the oracle is green. No pull request, no review
-  request, no step that waits for me.
+- One `feature/<module>` branch per module, cut from `dev`. At step 7
+  the agent opens a PR into `dev`; I review it and squash-merge it. An
+  agent never merges.
 - A **change** (bug, small feature, refactor) enters at step 4 and exits
   at step 7. A **new module** runs 1→9. A **walkthrough** is step 10.
 - `docs/preferences.md` is read before any code is written and obeyed
@@ -35,7 +35,8 @@ At the end of steps 5, 6 and 7 the agent does this itself. No question,
 one line in the summary saying it was done.
 
 1. Verify the exit test of the step is met. If not, say which part
-   fails and stop. Never end a step on a promise.
+   fails and stop. Never end a step on a promise. Ending step 7:
+   confirm the squash commit is on `dev` first.
 2. Update the module's row in `workflows/cycle/ROADMAP.md`:
    - `step` → the next step, or `needs contract rework` after 3 open
      deferrals on this module
@@ -64,9 +65,12 @@ and I can say in one sentence why the project exists. **Tool:**
 ## 2. Defining (POC-ready SRS, holes allowed)
 
 **Who:** me drafting, agent probing for ambiguity. **What:**
-`docs/srs/SRS.md`, one `## Module: <module>` section per C2 container, requirements numbered
-`<MOD>-<n>`, each one testable sentence. Holes are allowed and marked
-`TODO(srs)`; the SRS is POC-ready, not final. This is where my
+`docs/srs/SRS.md`, one `## Module: <module>` section per C2 container,
+requirements numbered with SRS ids (`FR-4.5`, `NFR-2`), each one
+testable sentence, and a `Covers:` line per module. Holes are allowed
+and marked **\[decision\]** or as open questions, and in code
+`unimplemented!("SRS <id>: <question>")` (SRS 5.0); the SRS is
+POC-ready, not final. This is where my
 architectural and data decisions are written down; the agent builds
 from here. **Exit:** every C2 container has an SRS section with at
 least one testable requirement, and every hole is marked. **Tool:**
@@ -83,10 +87,11 @@ Each module gets a C3 box in `docs/c4/<module>.dsl`, included from
 `docs/workspace.dsl`. **Exit:**
 `cargo build` green on the skeleton, dependency order readable from the
 `//!` comments, every module has a C3 box. Ends with the skeleton and
-the owner column filled (default `delegated`). **Tool:** run
+the owner column filled (`?` until I set it). **Tool:** run
 `superpowers:brainstorming` (skip if the SRS is complete enough), then
 `superpowers:writing-plans`. Output: `docs/plans/<module>.md` with
-tasks numbered `<module>-NN`, agent tasks only. This file is the task
+tasks numbered `T<nnn>`, agent tasks only (`[human]` tasks stay in the
+plan, owned by me). This file is the task
 list for steps 5 to 7. Profile `toy`: skip and say so.
 
 ## 4. Contract (pub stubs + test names, todo!() bodies)
@@ -99,19 +104,21 @@ the SRS says no tests, say "step 4 folded into 5" and continue.
 full signature and `///` doc comment, body `todo!()`; hot structs
 `#[repr(C)]` with a `size_of` test; one `#[test]` per requirement,
 named after it, body `todo!()`. Nothing private, nothing implemented.
-**Exit:** `cargo build` green, `cargo test` compiles, every requirement
-`<MOD>-<n>` of the section has a test named for it, the pub surface is
+**Exit:** `cargo build` green, `cargo test` compiles, every SRS id the
+section covers has a test that names it, the pub surface is
 printed in the summary. No sign-off: the module goes to step 5 at once.
 I veto later with `/issue`, which sends the module back to step 4.
 **Tool:** `/contract`.
 
 ## 5. Build
 
-**Who:** owner `delegated`: agent via `/goal`, I am not in the room.
-Owner `mine`: me, by hand, no agent. **What:** fill the `todo!()`
+**Entry:** run `/mode` if the row has no mode; otherwise use the row.
+**Who:** owner `delegated`: an agent, in the row's mode (`loop` = `/goal`,
+I am not in the room). Owner `mine`: me, by hand. **What:** fill the `todo!()`
 bodies under the step-4 contract, the `CLAUDE.md` decision policy and
-`docs/preferences.md`. Commit per task, message starts with the task
-ID (`shape-03: ...`); step 9 changes use the issue number (`#42: ...`).
+`docs/preferences.md`. Commit per task, Conventional Commits with the
+task ID first in the description (`fix(bus): T090 ...`); step 9 changes
+use the issue number (`fix(bus): #42 ...`).
 Contract breaks go to `docs/deferred.md` and the test is
 `#[ignore = "deferred"]`; the loop continues. **Exit:** oracle green,
 no `todo!()` left, every deferral names its smallest unblocking
@@ -124,8 +131,7 @@ and sets `needs contract rework`. **Tool:** `/goal` with the oracle,
 **Who:** agent, alone. **What:** the agent walks `QA.md`: runs every
 `[oracle]` item and writes a report of one screen: pass/fail per item,
 every `// DECISION:` listed, every deferral listed, pub diff shown.
-The report goes into the squash commit body at step 7 and nowhere
-else. An unmet requirement (a failing test named for an SRS id) sends
+The report goes into the PR description at step 7. An unmet requirement (a failing test named for an SRS id) sends
 the module back to step 5, fix, verify again, no question. Round cap
 per profile: `toy` 1, `poc` 2, `serious` 3. After the cap, remaining
 unmet requirements go to `docs/deferred.md` tagged `unmet`, their tests
@@ -135,12 +141,13 @@ green, report written. **Tool:** `QA.md`.
 
 ## 7. Merge
 
-**Who:** agent. **What:** one squash commit per module onto the base
-branch, when the oracle is green on the branch and on the result.
-Message: module name, SRS section, one line on what it does, then the
-step-6 report. Branch deleted. No pull request. **Exit:** base branch
-builds, oracle green on it, ROADMAP row says step 8 (new module) or is
-closed (change). **Tool:** git, then the automatic step end.
+**Who:** agent opens the PR, I merge. **What:** a PR from
+`feature/<module>` into `dev` with `.github/pull_request_template.md`
+and the step-6 report, opened when the oracle is green on the branch.
+I review and squash-merge it. Message: Conventional Commits, module,
+SRS section, one line on what it does. Branch deleted. `dev` reaches
+`main` through its own PR. **Exit:** `dev` builds, oracle green on
+`dev`, ROADMAP row says step 8 (new module) or is closed (change). **Tool:** git, then the automatic step end.
 
 ## 8. Deploy (augmented)
 
@@ -161,6 +168,10 @@ step 4: contract if the pub surface moves, straight to 5 if not.
 has a module and a step. **Tool:** `/issue`, `/start`, `/contract`.
 
 ## 10. Walkthrough (the code review)
+
+Not adopted in dxl_rs_v2: `/walkthrough` and the reviewer agent are
+not copied; the step-7 PR review stands in for it. Kept for when they
+are.
 
 **Who:** me, in depth, with the reviewer agent. **When:** any time the
 app mostly runs; optional, repeatable, the only code review in the

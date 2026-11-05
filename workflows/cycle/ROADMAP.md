@@ -4,16 +4,17 @@
 
 - Claude Code with Superpowers: `brainstorming`, `writing-plans`,
   `test-driven-development`.
-- Claude Code `/goal` for every delegated build: the agent runs against
-  the oracle until green, no questions, under `CLAUDE.md`.
+- Claude Code `/goal` for every build in mode `loop`: the agent runs
+  against the oracle until green, no questions, under `AGENTS.md`
+  (`CLAUDE.md` is a symlink to it).
 - Project skills in `.claude/skills/`, all user commands: `/start`,
-  `/issue`, `/contract`, `/walkthrough`. Step end is automatic: the
-  agent runs it at the end of steps 5, 6 and 7 (see `PROCEDURE.md`).
-- Project agent `.claude/agents/reviewer.md`: reads the SRS, `QA.md`
-  and `docs/preferences.md`; used by `/walkthrough` only.
-- Oracle = the `[oracle]` items in `QA.md`: `cargo test`, `cargo clippy`,
-  pub diff, requirement coverage. It is the only merge gate. Reviewer =
-  the `[reviewer]` items, read by the reviewer agent at step 10.
+  `/issue`, `/mode`, `/contract`. Step end is automatic: the agent runs
+  it at the end of steps 5, 6 and 7 (see `PROCEDURE.md`).
+- `/walkthrough` and the reviewer agent of the cycle are not adopted
+  here; the maintainer reviews each module PR at step 7.
+- Oracle = the `[oracle]` items in `QA.md` and the local commands of
+  `.github/workflows/ci.yml` (`AGENTS.md` § Commands). An agent never
+  merges: the maintainer squash-merges the PR into `dev`.
 
 ## Entry points
 
@@ -24,7 +25,7 @@
 - **Walkthrough**: step 10, project-level, any time the app mostly
   runs. Optional, repeatable, the only code review in the cycle.
 - **Existing project**: see "Adopting an existing project" in
-  `PROCEDURE.md`. Every module enters at step 4.
+  `PROCEDURE.md`. dxl_rs_v2 did not follow it: see the Status note.
 
 ## Dependency rule
 
@@ -33,7 +34,7 @@ lines of the empty modules. A module enters step 4 only when every
 module it depends on is at step 4 or later.
 
 Modules that satisfy the rule are built in parallel, one loop and one
-branch each. Nothing waits for me.
+`feature/<module>` branch each.
 
 ## Status
 
@@ -42,14 +43,32 @@ items only; toy = build + run only. `docs/srs/SRS.md` non-functional section
 overrides `QA.md`. Start a project, or an adoption, on `poc`; move to
 `serious` once the oracle is green on the base branch.
 
-| module | owner | step | branch | last oracle run |
-|---|---|---|---|---|
-| _example_ | mine · delegated | 1–10 · `needs contract rework` | `mod/<name>` | `2026-10-29 green` |
+`profile: poc`
 
-- **owner** `delegated`: an agent builds it in a `/goal` loop under the
-  step-4 contract. `mine`: I write it by hand, no agent touches its
-  files. Default `delegated`.
+Every module entered the cycle on 2026-11-05 from spec-kit, already
+built and merged into `dev`, so each one starts at the step its code is
+really at, without a step-4 contract: the open spec-kit tasks were
+carried into `docs/plans/<module>.md` instead of being dropped. The
+pub surface on `dev` at that date stands for the step-4 contract.
+protocol has no open task left, so its step 5 is done: it is at step 6.
+The others are at step 5 until their plan is ticked or deferred.
+
+| module | owner | mode | step | branch | last oracle run |
+|---|---|---|---|---|---|
+| core | ? | ? | 5 | — | — |
+| protocol | ? | ? | 6 | — | — |
+| transport | ? | ? | 5 | — | — |
+| bus | ? | ? | 5 | — | — |
+| tables | ? | ? | 5 | — | — |
+| xtask | ? | ? | 5 | — | — |
+| ci | ? | ? | 5 | — | — |
+
+- **owner** `delegated`: an agent builds it under the step-4 contract.
+  `mine`: I write it by hand; agents do not touch its files without
+  listing them first. `?`: not set yet.
+- **mode**: set with `/mode`. `draft`, `pair` or `loop` (`/goal`). `?`:
+  not set yet; nothing is built on a row without a mode.
 - **step**: the step the module is *in*, updated at step end.
-- **branch**: one branch per module, squashed onto the base branch by
-  the agent at step 7 when the oracle is green.
+- **branch**: one `feature/<module>` per module, squash-merged into
+  `dev` by the maintainer at step 7.
 - **last oracle run**: date and green/red, written at step end.

@@ -17,7 +17,8 @@ description: Open a cycle session. Reads workflows/cycle/ROADMAP.md, triages new
    continue.
 3. Say which module is at which step, one line each. Then, for each
    `delegated` module at step 4 or 5 that satisfies the dependency
-   rule, say it can run now. For each other module, one line on what
+   rule, say it can run now; if its mode is `?`, say to run `/mode`
+   first. For each other module, one line on what
    blocks it. Nothing else.
 4. Before step 5, if no plan file `docs/plans/<module>.md` exists for a
    module and profile isn't `toy`, run `superpowers:writing-plans`
@@ -32,4 +33,5 @@ Rules:
 - If the table is empty, propose step 1 and offer
   `superpowers:brainstorming`.
 - If the next module is at step 3, offer `superpowers:writing-plans`.
-- If every module is at step 8 or later, offer `/walkthrough`.
+- If every module is at step 8 or later, say so; `/walkthrough` is not
+  adopted in this repo.

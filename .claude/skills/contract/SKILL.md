@@ -19,13 +19,13 @@ names. Ask for the name if not given.
      `///` doc comment naming the requirement ids it serves, body `todo!()`
    - hot structs from the Data subsection: `#[repr(C)]`, typed fields,
      and a `size_of` test pinning the size
-   - `#[cfg(test)] mod tests` with one `#[test] fn <mod>_<n>_<slug>()`
-     per requirement `<MOD>-<n>`, body `todo!()`
+   - `#[cfg(test)] mod tests` with one `#[test] fn <id>_<slug>()`
+     per SRS id the section covers (`fr_4_5_caller_buffer`), body `todo!()`
    On an existing module (adoption or change), start from its current
    pub surface and keep what the SRS still implies.
 4. No private items, no implementation, no new dependencies. Anything
-   the SRS leaves open: a `TODO(srs)` comment in place and a row in
-   `docs/deferred.md`.
+   the SRS leaves open: `unimplemented!("SRS <id>: <question>")` in
+   place (SRS 5.0) and a row in `docs/deferred.md`.
 5. Run `cargo build`: must be green. `cargo test` must compile. Every
    requirement id of the section has a test named for it.
 6. Print the pub surface, one line per item. Set the module's ROADMAP
