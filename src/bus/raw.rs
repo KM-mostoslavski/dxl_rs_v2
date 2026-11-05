@@ -248,6 +248,8 @@ mod tests {
         use crate::transport::MockTime;
         use crate::{IdSet, ModelNumber};
 
+        /// FR-2.7, FR-6.5, FR-8.1: an actuator held `Faulted` at Setup is
+        /// reached with `write_raw`, cleared, then enabled.
         #[test]
         fn faulted_at_setup_is_fixed_with_write_raw() {
             let time = MockTime::new();

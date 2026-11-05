@@ -658,6 +658,8 @@ mod tests {
             assert!(bus.actuators().is_empty());
         }
 
+        /// FR-2.7: a reply reporting only a hardware fault holds the
+        /// actuator `Faulted` instead of failing Setup.
         #[test]
         fn fault_at_setup_holds_faulted() {
             let time = MockTime::new();
@@ -698,6 +700,7 @@ mod tests {
             assert_eq!(sent(&bus), xm430_p2_sent(1));
         }
 
+        /// FR-2.7: any other error in a Setup reply still fails it.
         #[test]
         fn p2_alert_with_error_code_fails_setup() {
             let time = MockTime::new();
@@ -1242,6 +1245,7 @@ mod tests {
             assert!(bus.actuators().is_empty());
         }
 
+        /// FR-2.7, autoscan side.
         #[cfg(feature = "x-series")]
         #[test]
         fn pong_with_alert_is_held() {
