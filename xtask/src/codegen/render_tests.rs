@@ -14,6 +14,9 @@ use super::render::sign_value;
 use super::resolve::{GenModel, LookupList, ModeRole, Resolved};
 use super::schema::ProtocolTag;
 
+/// The untyped modes that share one raw range (`None`: no range).
+type ModesByRange = (Option<(i64, i64)>, Vec<String>);
+
 /// The text of `src/models/tests.rs`, or `None` with no model.
 pub(crate) fn render_tests(resolved: &Resolved) -> Option<String> {
     if resolved.models.is_empty() {
@@ -302,7 +305,7 @@ fn render_roles(out: &mut String, model: &GenModel) {
         );
         let _ = writeln!(body, "assert_eq!(role.bounded_by(), {bound});");
         let covered = role.scales.iter().fold(0, |acc, s| acc | s.modes);
-        let mut by_range: Vec<(Option<(i64, i64)>, Vec<String>)> = Vec::new();
+        let mut by_range: Vec<ModesByRange> = Vec::new();
         for bit in (0..7)
             .map(|i| 1u8 << i)
             .filter(|bit| ALL & !covered & bit != 0)

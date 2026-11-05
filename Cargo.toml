@@ -30,6 +30,10 @@ heapless = { version = "0.9", default-features = false }
 [dev-dependencies]
 proptest = "1"
 
+[[example]]
+name = "rx28_gain_ramp"
+required-features = ["raw-registers"]
+
 [lints]
 workspace = true
 
