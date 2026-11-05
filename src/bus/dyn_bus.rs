@@ -50,9 +50,14 @@ impl Slots for DynSlots<'_> {
         self.bounds.clear();
     }
 
-    fn push(&mut self, kind: ActuatorKind, bound: Bound) -> Result<(), SetupError> {
+    fn push(
+        &mut self,
+        kind: ActuatorKind,
+        bound: Bound,
+        state: TorqueState,
+    ) -> Result<(), SetupError> {
         self.actuators.push(kind);
-        self.states.push(TorqueState::Off);
+        self.states.push(state);
         self.bounds.push(bound);
         Ok(())
     }
