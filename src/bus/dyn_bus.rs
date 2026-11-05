@@ -22,7 +22,7 @@ use super::field::{
 use super::group::Stage;
 use super::slots::{Bound, Held, Slots, find};
 use super::wire::{AnyProtocol, ReadMany, SyncRead, Wire};
-use super::{ActuatorRef, Config, IdSet, multi, setup};
+use super::{ActuatorRef, Config, IdSet, SetupReport, multi, setup};
 
 /// Every `Id` there is: the most a Setup can find.
 const ALL_IDS: usize = Id::MAX as usize + 1;
@@ -133,15 +133,18 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
     /// # Errors
     ///
     /// As [`Bus::declare`], without `TooManyActuators`.
-    pub fn declare<I>(&mut self, list: I) -> Result<&[ActuatorKind], Error>
+    pub fn declare<I>(&mut self, list: I) -> Result<SetupReport<'_>, Error>
     where
         I: IntoIterator<Item = (Id, ModelNumber)>,
     {
         self.stages.clear();
         let (mut wire, mut slots) = self.split();
-        setup::declare::<P, T, C, _, _, ALL_IDS>(&mut wire, &mut slots, list)?;
+        let faulted = setup::declare::<P, T, C, _, _, ALL_IDS>(&mut wire, &mut slots, list)?;
         self.stages.resize(self.actuators.len(), Stage::EMPTY);
-        Ok(self.actuators())
+        Ok(SetupReport {
+            actuators: self.actuators(),
+            faulted,
+        })
     }
 
     /// Setup by scanning (P2 broadcast ping, P1 sweep 0..=252), as
@@ -151,12 +154,15 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
     /// # Errors
     ///
     /// As [`Bus::autoscan`], without `TooManyActuators`.
-    pub fn autoscan(&mut self) -> Result<&[ActuatorKind], Error> {
+    pub fn autoscan(&mut self) -> Result<SetupReport<'_>, Error> {
         self.stages.clear();
         let (mut wire, mut slots) = self.split();
-        setup::autoscan::<P, T, C, _, ALL_IDS>(&mut wire, &mut slots)?;
+        let faulted = setup::autoscan::<P, T, C, _, ALL_IDS>(&mut wire, &mut slots)?;
         self.stages.resize(self.actuators.len(), Stage::EMPTY);
-        Ok(self.actuators())
+        Ok(SetupReport {
+            actuators: self.actuators(),
+            faulted,
+        })
     }
 
     /// Held actuators, ascending by `Id`.
@@ -633,7 +639,7 @@ mod tests {
             }
             let mut bus = DynBus::<P2, _, _>::new(line, Ticker(&time), Config::new());
 
-            let held = bus.autoscan().unwrap();
+            let held = bus.autoscan().unwrap().actuators;
             assert_eq!(held.len(), usize::from(MANY));
             let ids: Vec<u8> = held.iter().map(|kind| kind.id().get()).collect();
             assert_eq!(ids, (1..=MANY).collect::<Vec<_>>());

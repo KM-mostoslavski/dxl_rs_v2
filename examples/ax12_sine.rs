@@ -235,7 +235,12 @@ fn drive(
         .iter()
         .map(|&id| Ok((Id::new(id)?, ModelNumber(AX12A))))
         .collect::<Result<Vec<_>, Error>>()?;
-    let ids: Vec<Id> = bus.declare(list)?.iter().map(|a| a.id()).collect();
+    let ids: Vec<Id> = bus
+        .declare(list)?
+        .actuators
+        .iter()
+        .map(|a| a.id())
+        .collect();
     println!("found {} actuators", ids.len());
 
     let mut centers = Vec::new();

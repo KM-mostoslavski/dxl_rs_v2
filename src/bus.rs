@@ -117,6 +117,7 @@ pub use id_set::{IdSet, IdSetIter};
 pub use model_ref::ModelRef;
 #[cfg(feature = "std")]
 pub use serial::SerialBus;
+pub use setup::SetupReport;
 
 use slots::{Bound, FixedSlots, Slots, find};
 use wire::Wire;
@@ -388,13 +389,16 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// [`SetupError::WrongModel`]: crate::SetupError::WrongModel
     /// [`SetupError::UnknownOperatingMode`]: crate::SetupError::UnknownOperatingMode
     /// [`ValidationError::InvertedLimits`]: crate::ValidationError::InvertedLimits
-    pub fn declare<I>(&mut self, list: I) -> Result<&[ActuatorKind], Error>
+    pub fn declare<I>(&mut self, list: I) -> Result<SetupReport<'_>, Error>
     where
         I: IntoIterator<Item = (Id, ModelNumber)>,
     {
         let (mut wire, mut slots) = self.split();
-        setup::declare::<P, T, C, _, _, N>(&mut wire, &mut slots, list)?;
-        Ok(self.actuators())
+        let faulted = setup::declare::<P, T, C, _, _, N>(&mut wire, &mut slots, list)?;
+        Ok(SetupReport {
+            actuators: self.actuators(),
+            faulted,
+        })
     }
 
     /// Setup by scanning (P2 broadcast ping, P1 sweep 0..=252). Available
@@ -422,10 +426,13 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// [`ValidationError::DuplicateId`]: crate::ValidationError::DuplicateId
     /// [`SetupError::TooManyActuators`]: crate::SetupError::TooManyActuators
     /// [`SetupError::UnsupportedModel`]: crate::SetupError::UnsupportedModel
-    pub fn autoscan(&mut self) -> Result<&[ActuatorKind], Error> {
+    pub fn autoscan(&mut self) -> Result<SetupReport<'_>, Error> {
         let (mut wire, mut slots) = self.split();
-        setup::autoscan::<P, T, C, _, N>(&mut wire, &mut slots)?;
-        Ok(self.actuators())
+        let faulted = setup::autoscan::<P, T, C, _, N>(&mut wire, &mut slots)?;
+        Ok(SetupReport {
+            actuators: self.actuators(),
+            faulted,
+        })
     }
 
     /// Held actuators, ascending by `Id`.

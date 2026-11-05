@@ -14,16 +14,33 @@ use super::field;
 use super::slots::Slots;
 use super::wire::Wire;
 
+/// What a successful Setup holds: returned by `declare` and `autoscan` on
+/// [`Bus`](crate::Bus) and `DynBus`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SetupReport<'a> {
+    /// The held actuators, ascending by `Id`, as
+    /// [`Bus::actuators`](crate::Bus::actuators) returns them.
+    pub actuators: &'a [ActuatorKind],
+    /// The held actuators whose Setup replies reported only a hardware
+    /// fault: held [`Faulted`](crate::TorqueState::Faulted), so torque and
+    /// goals are refused until
+    /// [`clear_fault`](crate::ActuatorRef::clear_fault), which also measures
+    /// and returns the fault. Empty when no actuator reported one.
+    pub faulted: IdSet,
+}
+
 /// Declared Setup: pings only the listed actuators.
 ///
 /// Replaces what `slots` held. The list is checked before any byte: more
 /// than `N` entries, a repeated `Id` or a model this build cannot drive on
-/// `P` fail at once. On any error `slots` is left empty.
+/// `P` fail at once. On any error `slots` is left empty. Returns the
+/// actuators held `Faulted`.
 pub(crate) fn declare<P, T, C, S, I, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     list: I,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -44,7 +61,7 @@ fn declare_all<P, T, C, S, I, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     list: I,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -97,7 +114,7 @@ where
         }
         init_one(wire, slots, id, declared, pong.firmware)?;
     }
-    Ok(())
+    Ok(IdSet::new())
 }
 
 /// Setup by scanning: a P2 broadcast ping, or a P1 sweep of IDs 0..=252.
@@ -106,11 +123,11 @@ where
 /// reply, a reply reporting an error, two replies with one `Id`, or more
 /// than `N` replies fail Setup before anything else is sent. The replies are
 /// then set up in `Id` order like declared actuators. On any error `slots`
-/// is left empty.
+/// is left empty. Returns the actuators held `Faulted`.
 pub(crate) fn autoscan<P, T, C, S, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -129,7 +146,7 @@ where
 fn autoscan_all<P, T, C, S, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -176,7 +193,7 @@ where
         };
         init_one(wire, slots, pong.id, ModelNumber(model), pong.firmware)?;
     }
-    Ok(())
+    Ok(IdSet::new())
 }
 
 /// Adds one scan reply to `pongs`, or says why Setup fails.
@@ -412,7 +429,13 @@ mod tests {
         let time = MockTime::new();
         let mut bus = test_bus::<P2, 32>(&time);
         let mark = mark(&bus);
-        assert_eq!(bus.declare([]), Ok(&[] as &[ActuatorKind]));
+        assert_eq!(
+            bus.declare([]),
+            Ok(SetupReport {
+                actuators: &[],
+                faulted: IdSet::new(),
+            })
+        );
         assert_quiet(&bus, mark);
     }
 
@@ -603,7 +626,7 @@ mod tests {
             let next = xm430_p2(line(&mut bus), 1, 1, 0, 4095, 3);
             bus.declare([(id(1), model(XM430))]).unwrap();
             xm430_p2(line(&mut bus), next, 2, 0, 4095, 3);
-            let held = bus.declare([(id(2), model(XM430))]).unwrap();
+            let held = bus.declare([(id(2), model(XM430))]).unwrap().actuators;
             assert_eq!(held.len(), 1);
             assert_eq!(held[0].id(), id(2));
             assert_eq!(
@@ -626,7 +649,7 @@ mod tests {
                 at = xm430_p2(line(&mut bus), at, n, 0, 4095, 3);
             }
             let list = [3, 1, 2].map(|n| (id(n), model(XM430)));
-            let held = bus.declare(list).unwrap();
+            let held = bus.declare(list).unwrap().actuators;
             let ids: [u8; 3] = core::array::from_fn(|i| held[i].id().get());
             assert_eq!(ids, [1, 2, 3]);
             assert_eq!(
@@ -828,7 +851,10 @@ mod tests {
             for n in 1..=8 {
                 at = angle_p1(line(&mut bus), at, n, RX28, 0, 1023);
             }
-            let held = bus.declare((1..=8).map(|n| (id(n), model(RX28)))).unwrap();
+            let held = bus
+                .declare((1..=8).map(|n| (id(n), model(RX28))))
+                .unwrap()
+                .actuators;
             assert_eq!(held.len(), 8);
             assert!(
                 held.iter()
@@ -949,7 +975,13 @@ mod tests {
         fn p2_autoscan_empty_is_bounded() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
-            assert_eq!(bus.autoscan(), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(
+                bus.autoscan(),
+                Ok(SetupReport {
+                    actuators: &[],
+                    faulted: IdSet::new(),
+                })
+            );
             assert_eq!(
                 sent(&bus),
                 [0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x03, 0x00, 0x01, 0x31, 0x42]
@@ -961,7 +993,13 @@ mod tests {
         fn p1_autoscan_empty_is_bounded() {
             let time = MockTime::new();
             let mut bus = test_bus::<P1, 32>(&time);
-            assert_eq!(bus.autoscan(), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(
+                bus.autoscan(),
+                Ok(SetupReport {
+                    actuators: &[],
+                    faulted: IdSet::new(),
+                })
+            );
             assert_eq!(sent(&bus), p1_sweep());
             assert!(
                 time.now() <= 253 * 10_000 + 10_000,
@@ -1089,7 +1127,13 @@ mod tests {
         fn autoscan_replaces_a_declared_list() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
-            assert_eq!(bus.declare([]), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(
+                bus.declare([]),
+                Ok(SetupReport {
+                    actuators: &[],
+                    faulted: IdSet::new(),
+                })
+            );
             line(&mut bus).reply_to(1, &p2_pong(1, 9999, 1));
             assert!(bus.autoscan().is_err());
             assert!(bus.actuators().is_empty());
@@ -1111,7 +1155,7 @@ mod tests {
                 for n in [1, 2, 3] {
                     at = xm430_p2_reads(line(&mut bus), at, n, 0, 4095, 3);
                 }
-                let held = bus.autoscan().unwrap();
+                let held = bus.autoscan().unwrap().actuators;
                 let ids: [u8; 3] = core::array::from_fn(|i| held[i].id().get());
                 assert_eq!(ids, [1, 2, 3]);
                 assert_eq!(
@@ -1134,7 +1178,7 @@ mod tests {
                     let mut bus = test_bus::<P2, 32>(&time);
                     line(&mut bus).reply_to(1, &p2_pong(4, 1190, fw));
                     xm430_p2_reads(line(&mut bus), 2, 4, 0, 4095, 3);
-                    let held = bus.autoscan().unwrap();
+                    let held = bus.autoscan().unwrap().actuators;
                     assert_eq!(
                         matches!(held[0], ActuatorKind::Xl330M077Fw52(_)),
                         fw52,
@@ -1181,7 +1225,7 @@ mod tests {
                     .reply_to(6, &p1_status(5, 0, &[]));
                 let at = angle_p1_reads(line(&mut bus), 254, 1, RX28, 0, 1023);
                 angle_p1_reads(line(&mut bus), at, 5, RX28, 0, 1023);
-                let held = bus.autoscan().unwrap();
+                let held = bus.autoscan().unwrap().actuators;
                 assert_eq!(held.len(), 2);
                 assert!(matches!(held[0], ActuatorKind::Rx28(_)));
                 assert!(matches!(held[1], ActuatorKind::Rx28(_)));
