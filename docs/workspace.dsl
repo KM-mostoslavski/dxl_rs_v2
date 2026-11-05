@@ -111,7 +111,6 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         dxl.xtask -> dxl.lib.kind "Generates"
 
         // C3/C4 per module (docs/c4/<module>.dsl)
-        // ov:includes:begin
         !include c4/bus.dsl
         !include c4/ci.dsl
         !include c4/core.dsl
@@ -119,7 +118,6 @@ workspace "dxl_rs_v2" "no_std HAL for Dynamixel actuators (Protocol 1 & 2)." {
         !include c4/tables.dsl
         !include c4/transport.dsl
         !include c4/xtask.dsl
-        // ov:includes:end
     }
 
     views {

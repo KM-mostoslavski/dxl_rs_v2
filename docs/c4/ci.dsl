@@ -1,5 +1,5 @@
-// C3/C4 for ci: written by /speckit-ov-c4-code
-// Source: .github/workflows/ci.yml (ov-*.yml excluded) and Cargo.toml [package]; no [lints] table exists yet.
+// C3/C4 for ci.
+// Source: .github/workflows/ci.yml and Cargo.toml [package].
 // The container sits in dxl, not in the external ci system: workspace.dsl sets `scope softwaresystem`,
 // which rejects containers in a second software system. The external ci system runs it.
 

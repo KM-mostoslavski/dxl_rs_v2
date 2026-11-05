@@ -1,4 +1,4 @@
-// C3/C4 for core: written by /speckit-ov-c4-code
+// C3/C4 for core.
 // Source: .worktrees/int (src/lib.rs, id.rs, error.rs, actuator.rs, register.rs, units.rs, units/**), at core-3.
 !element dxl.lib {
 

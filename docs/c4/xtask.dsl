@@ -1,4 +1,4 @@
-// C3/C4 for xtask: written by /speckit-ov-c4-code
+// C3/C4 for xtask.
 
 !element dxl.xtask {
     xtask_cli = component "xtask: CLI and driver" "cargo xtask codegen entry point and the validate-then-write pipeline: parse, check and render everything in memory, format, then write only changed files. Reports Diagnostic lines, a Report summary or a Failure, and sets the exit code." "Rust binary (xtask/src/main.rs, xtask/src/codegen.rs)"

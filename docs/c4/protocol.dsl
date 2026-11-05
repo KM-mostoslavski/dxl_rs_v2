@@ -1,4 +1,4 @@
-// C3/C4 for protocol: written by /speckit-ov-c4-code
+// C3/C4 for protocol.
 // Source: src/protocol.rs, src/protocol/{clock,crc,p1,p2,vectors,no_alloc}.rs
 // Packet facts: https://emanual.robotis.com/docs/en/dxl/protocol1/ and .../protocol2/
 

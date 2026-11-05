@@ -1,5 +1,5 @@
-// C3/C4 for bus: written by /speckit-ov-c4-code
-// Source: src/bus.rs, src/bus/** (integration worktree after core-3); spec: docs/srs/modules/bus.md.
+// C3/C4 for bus.
+// Source: src/bus.rs, src/bus/** (integration worktree after core-3); spec: the `## Module: bus` section of docs/srs/SRS.md.
 // The C2 components dxl.lib.bus, handle, multi, scan and fault are realized by the C3 components below.
 
 !element dxl.lib {

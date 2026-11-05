@@ -1,0 +1,17 @@
+# clippy.toml, next to Cargo.toml. Settings only; lint levels live in
+# Cargo.toml [lints] (see Cargo.toml.snippet).
+
+# The pub surface is frozen after step 4 (QA.md: pub diff empty).
+# Clippy must not suggest changes to exported items.
+avoid-breaking-exported-api = true
+
+# Contract style: small functions. The cycle's
+# too-many-arguments-threshold = 5 is left out: 16 functions on dev
+# (test helpers in src/bus/testing.rs among them) take 6 or 7.
+cognitive-complexity-threshold = 15
+
+# Tests may unwrap, expect and print. Production code may not.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true

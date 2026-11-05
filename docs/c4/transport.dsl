@@ -1,4 +1,4 @@
-// C3/C4 for transport: written by /speckit-ov-c4-code
+// C3/C4 for transport.
 // Code: src/transport.rs, src/transport/serial.rs (feature std), src/transport/mock.rs (feature mock, or crate tests).
 // The C2 component dxl.lib.transport is the module as a whole; this file adds what is inside it.
 
