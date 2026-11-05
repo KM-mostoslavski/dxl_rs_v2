@@ -24,7 +24,7 @@ Plan, decisions and tests in
 Changes a merged contract: step 3 → 4 → 5.
 
 - [ ] T091 [human] Architect: decide D1 (hold by default), D2 (`SetupReport { actuators, faulted: IdSet }`), D3 (hardware-only flags); amend FR-2.7, FR-6.2 and the § 8 "Typed EEPROM writes" sentence (supersedes T087's FR-2.7 item); triage D-01 as bus step 4
-- [ ] T092 Contract: `SetupReport<'a>`, `declare`/`autoscan` on `Bus` and `DynBus` return it, callers and examples updated, the four old fault tests renamed to `todo!()`, new test stubs
-- [ ] T093 Declared Setup holds an actuator whose replies carry only hardware fault flags as `Faulted`; mixed flags and P2 error codes still fail
-- [ ] T094 Autoscan holds a hardware-faulted pong the same way
-- [ ] T095 Recovery path (`write_raw` → `clear_fault` → `enable_torque`), whole-bus `enable_torque` refused, `DynBus` parity, rustdoc, D-01 done
+- [x] T092 Contract: `SetupReport<'a>`, `declare`/`autoscan` on `Bus` and `DynBus` return it, callers and examples updated, the four old fault tests renamed to `todo!()`, new test stubs
+- [x] T093 Declared Setup holds an actuator whose replies carry only hardware fault flags as `Faulted`; mixed flags and P2 error codes still fail
+- [x] T094 Autoscan holds a hardware-faulted pong the same way
+- [x] T095 Recovery path (`write_raw` → `clear_fault` → `enable_torque`), whole-bus `enable_torque` refused, `DynBus` parity, rustdoc, D-01 done
