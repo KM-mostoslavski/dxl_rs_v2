@@ -37,7 +37,7 @@
 
 ## Tasks
 
-- [ ] T096 [human] Architect: SRS text for D1 to D7: a new FR-9 item for typed limit writes, the FR-9 "Out of scope" line on EEPROM writes, the § 8 "Typed EEPROM writes" question (limits answered; ID, baud and the rest still open), FR-6.4 for `ActuatorIsOn`.
+- [ ] T096 [human] Architect: SRS text for D1 to D10 (D8 torque confirmed off, D9 wheel switch, D10 Acceleration Limit, `TorqueUnconfirmed`, `WheelSpeedUnknown` included): a new FR-9 item for typed limit writes, the FR-9 "Out of scope" line on EEPROM writes, the § 8 "Typed EEPROM writes" question (limits answered; ID, baud and the rest still open), FR-6.4 for `ActuatorIsOn`.
 - [x] T097 tables: `unit_info` for PWM Limit in `mx_64.ron` and `xm430_w350.ron`, and for any D1 register a verified table has without one, read online from the page its `unit_source` cites; `verified` date 2026-11-09. `check_tables.py` and its tests pass.
 - [x] T098 xtask: roles `MinPositionLimit`, `MaxPositionLimit`, `VelocityLimit`, `CurrentLimit`, `PwmLimit`, `MaxTorque` (P1 CW/CCW Angle Limit as the position-limit roles there), a quantity for `Pwm`; regenerate `src/models.rs` and `src/models/`.
 - [x] T099 core: `units::Pwm`; `ValidationError::ActuatorIsOn { id, register }` with its hint and the NFR-12 tests; the new roles in `src/actuator/roles.rs`.

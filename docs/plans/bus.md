@@ -33,7 +33,7 @@ Changes a merged contract: step 3 → 4 → 5.
 
 Plan: [`2026-11-09-typed-limits.md`](2026-11-09-typed-limits.md).
 
-- [ ] T096 [human] Architect: SRS text for typed limit writes (plan D1 to D7)
+- [ ] T096 [human] Architect: SRS text for typed limit writes (plan D1 to D10)
 - [x] T097 tables: `unit_info` for the D1 registers in the six verified tables
 - [x] T098 xtask: limit roles and the `Pwm` quantity; regenerate models
 - [x] T099 core: `units::Pwm`, `ValidationError::ActuatorIsOn`, the new roles
