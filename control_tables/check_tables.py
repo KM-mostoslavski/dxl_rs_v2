@@ -870,7 +870,8 @@ def check_type_info(file: str, scale: object, report: Report) -> None:
 # - `data_name`: the exact `data_name` of a row of this table.
 # - `value`: the e-Manual's size of one raw step, in `unit`; above zero.
 # - `unit`: one of UNITS, as the e-Manual writes it (`rev/min` is `rpm`,
-#   `1 [°C]` is `°C`, `0.1 [V]` is `V`, `0.1%` is `%`, `1 [msec]` is `ms`).
+#   `1 [°C]` is `°C`, `0.1 [V]` is `V`, `0.1%` is `%`, `1 [msec]` is `ms`,
+#   `214.577 Rev/min²` is `rev/min^2`).
 # - `sign_type`: `unsigned` (raw is a magnitude), `twos_complement` (Protocol 2
 #   pages: "Two's complement is applied for the negative value") or
 #   `direction_bit_N` (Protocol 1 pages: "the 10th bit becomes the direction
@@ -902,7 +903,7 @@ def check_type_info(file: str, scale: object, report: Report) -> None:
 
 UNIT_INFO_KEYS = ("data_name", "value", "unit", "sign_type")
 UNIT_INFO_FR9_KEYS = ("modes", "profile", "zero_is_unlimited", "range", "bounded_by", "from_fw")
-UNITS = ("deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2")
+UNITS = ("deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2", "rev/min^2")
 SIGN_TYPES = ("unsigned", "twos_complement")
 LEGACY_SIGN_TYPES = ("signed", "unsigned")
 DIRECTION_BIT_RE = re.compile(r"^direction_bit_(\d+)$")

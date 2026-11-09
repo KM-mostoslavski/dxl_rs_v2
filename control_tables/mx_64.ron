@@ -53,6 +53,13 @@
       range: (min: 0, max: 1941),
     },
     {
+      data_name: "Acceleration Limit",
+      value: 214.577,
+      unit: "rev/min^2",
+      sign_type: "unsigned",
+      range: (min: 0, max: 32767),
+    },
+    {
       data_name: "Velocity Limit",
       value: 0.229,
       unit: "rpm",

@@ -65,8 +65,19 @@ const P1_MODES: [(&str, Modes); 4] = [
 /// share of it.
 const STEP_TOLERANCE: f64 = 0.05;
 
-/// The units `unit_info` may give.
-const UNITS: [&str; 8] = ["deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2"];
+/// The units `unit_info` may give, as `control_tables/check_tables.py`
+/// spells them: the e-Manual's "Rev/min²" is `rev/min^2`.
+const UNITS: [&str; 9] = [
+    "deg",
+    "rpm",
+    "mA",
+    "V",
+    "°C",
+    "%",
+    "ms",
+    "deg/s^2",
+    "rev/min^2",
+];
 
 /// What a role's typed value is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1276,6 +1287,23 @@ mod tests {
 
     fn with_unit(fields: &str) -> Table {
         Table::xm_fr9().unit(fields)
+    }
+
+    /// MX-64(2.0) Acceleration Limit(40): "214.577 Rev/min²", 0 ~ 32,767
+    /// (<https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/>, 2026-11-09),
+    /// recorded as `rev/min^2`; the page's spelling is not a unit.
+    #[test]
+    fn check19_angular_acceleration_unit() {
+        let table = |unit: &str| {
+            Table::xm_fr9()
+                .with_row(40, 4, "Acceleration Limit", "RW", "EEPROM")
+                .unit(&format!(
+                    r#"data_name: "Acceleration Limit", value: 214.577, unit: "{unit}", sign_type: "unsigned", range: (min: 0, max: 32767)"#
+                ))
+        };
+        let out = single(table("rev/min^2"));
+        assert!(out.errors.is_empty(), "{:?}", out.errors);
+        assert_fails(table("rev/min²"), &["unknown unit \"rev/min²\""]);
     }
 
     #[test]
