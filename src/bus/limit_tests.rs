@@ -4,14 +4,15 @@
 //!
 //! Register addresses, sizes, units and ranges are those of the models'
 //! control tables, verified against their e-Manual pages: AX-12A
-//! (<https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>, 2026-11-03) and
+//! (<https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>, 2026-11-03),
 //! XM430-W350 units (<https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>,
-//! 2026-11-09).
+//! 2026-11-09) and MX-64(2.0) Acceleration Limit
+//! (<https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/>, 2026-11-09).
 
 extern crate std;
 
 /// `instruction` of `register` at `addr` (`len` bytes) on actuator `n`.
-#[cfg(any(feature = "ax", feature = "x-series"))]
+#[cfg(any(feature = "ax", feature = "mx", feature = "x-series"))]
 fn on(
     instruction: crate::error::Instruction,
     n: u8,
@@ -39,7 +40,9 @@ mod ax12a {
     };
     use crate::protocol::P1;
     use crate::transport::MockTime;
-    use crate::units::{Current, Load, Position, Pwm, SpeedLimit, Temperature, Velocity, Voltage};
+    use crate::units::{
+        Acceleration, Current, Load, Position, Pwm, SpeedLimit, Temperature, Velocity, Voltage,
+    };
     use crate::{IdSet, TorqueState};
 
     /// An AX-12A at ID 1 with these angle limits, torque `on` or off.
@@ -241,6 +244,14 @@ mod ax12a {
             missing("Current Limit")
         );
         assert_eq!(ax.set_pwm_limit(Pwm::from_ratio(0.5)), missing("PWM Limit"));
+        assert_eq!(
+            ax.set_acceleration_limit(Acceleration::from_rad_per_s2(1.0)),
+            missing("Acceleration Limit")
+        );
+        assert_eq!(
+            ax.acceleration_limit(),
+            missing("Acceleration Limit").map(|()| Acceleration::ZERO)
+        );
         assert_eq!(
             ax.velocity_limit(),
             missing("Velocity Limit").map(|()| Velocity::ZERO)
@@ -1198,6 +1209,215 @@ mod mx64_p1 {
                 p1_write(1, 24, &[1]),
                 p1_write(1, 30, &20_000u16.to_le_bytes()),
             ])
+        );
+    }
+}
+
+#[cfg(feature = "mx")]
+mod mx64 {
+    use super::on;
+    use crate::actuator::{Actuator, LimitMode, ModelNumber};
+    use crate::bus::testing::*;
+    use crate::error::{Error, Instruction, TransportError, ValidationError};
+    use crate::field::{AccelerationLimit, GoalVelocity, Raw};
+    use crate::protocol::P2;
+    use crate::transport::MockTime;
+    use crate::units::Acceleration;
+
+    /// MX-28(2.0) model number: its table, unverified, has Acceleration
+    /// Limit(40) and no unit for it.
+    const MX28: u16 = 30;
+
+    /// One raw step of MX-64(2.0) Acceleration Limit(40), "214.577
+    /// Rev/min²", in rad/s².
+    const STEP: f32 = 214.577 * core::f32::consts::TAU / 3600.0;
+
+    /// Disables torque on actuator 1 with an acknowledged write, as
+    /// [`write_limit`](crate::ActuatorRef::write_limit) asks before EEPROM
+    /// writes where torque may be on.
+    fn disable(bus: &mut TestBus<'_, P2>) {
+        ack(bus, 1);
+        bus.actuator(id(1)).unwrap().disable_torque().unwrap();
+    }
+
+    /// An MX-64(2.0) at ID 1, limits 1000..=3000, in Operating Mode `mode`,
+    /// torque disabled.
+    fn mx64(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
+        let mut bus = test_bus(time);
+        mx64_p2(line(&mut bus), 1, 1, 1000, 3000, mode);
+        bus.declare([(id(1), ModelNumber(MX64))]).unwrap();
+        disable(&mut bus);
+        bus
+    }
+
+    /// Plan D10: the setter writes Acceleration Limit(40), 4 bytes, in the
+    /// table's step of 214.577 rev/min²; the getter reads it back; the bus
+    /// holds no copy, so nothing it caches changes.
+    #[test]
+    fn acceleration_limit_is_written_and_read() {
+        let time = MockTime::new();
+        let mut bus = mx64(&time, 3);
+        let mark = mark(&bus);
+        script(
+            &mut bus,
+            &[
+                p2_status(1, 0, &[]),
+                p2_status(1, 0, &[]),
+                p2_status(1, 0, &[]),
+                p2_status(1, 0, &100u32.to_le_bytes()),
+            ],
+        );
+        let mut mx = bus.actuator(id(1)).unwrap();
+        let before = mx.kind().clone();
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(37.45)),
+            Ok(())
+        );
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(32_767.0 * STEP)),
+            Ok(())
+        );
+        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 0), Ok(()));
+        let read = mx.acceleration_limit().unwrap();
+        assert!((read.rad_per_s2() - 100.0 * STEP).abs() < 1e-4, "{read:?}");
+        assert!((read.rad_per_s2() - 37.450_75).abs() < 1e-4, "{read:?}");
+        assert_eq!(*mx.kind(), before);
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p2_write(1, 40, &100u32.to_le_bytes()),
+                p2_write(1, 40, &32_767u32.to_le_bytes()),
+                p2_write(1, 40, &0u32.to_le_bytes()),
+                p2_read(1, 40, 4),
+            ])
+        );
+        assert_done(&bus);
+    }
+
+    /// Plan D4: outside the e-Manual's 0 ~ 32,767, negative, not finite,
+    /// torque on: refused, and nothing is sent.
+    #[test]
+    fn acceleration_limit_refusals_send_nothing() {
+        let time = MockTime::new();
+        let mut bus = mx64(&time, 3);
+        let quiet = mark(&bus);
+        let mut mx = bus.actuator(id(1)).unwrap();
+        let request = on(Instruction::Write, 1, "Acceleration Limit", 40, 4);
+        let out = |raw| {
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw,
+                min: 0,
+                max: 32_767,
+            }
+            .into())
+        };
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(32_768.0 * STEP)),
+            out(32_768)
+        );
+        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 40_000), out(40_000));
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(-1.0)),
+            Err(ValidationError::DoesNotFit {
+                raw: -3,
+                size: 4,
+                request,
+            }
+            .into())
+        );
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(f32::NAN)),
+            Err(ValidationError::NotFinite { request }.into())
+        );
+        assert_quiet(&bus, quiet);
+
+        ack(&mut bus, 1);
+        bus.actuator(id(1)).unwrap().enable_torque().unwrap();
+        let enabled = mark(&bus);
+        let mut mx = bus.actuator(id(1)).unwrap();
+        let is_on = || -> Result<(), Error> {
+            Err(ValidationError::ActuatorIsOn {
+                id: id(1),
+                register: "Acceleration Limit",
+            }
+            .into())
+        };
+        assert_eq!(mx.set_acceleration_limit(Acceleration::ZERO), is_on());
+        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 100), is_on());
+        assert_quiet(&bus, enabled);
+    }
+
+    /// Plan D5, D10: Acceleration Limit is not cached, so a write of it
+    /// that fails leaves the position limits, the mode and the goal bound
+    /// known, and goals pass as before.
+    #[test]
+    fn failed_acceleration_write_keeps_the_cache() {
+        let time = MockTime::new();
+        let mut bus = mx64(&time, 1);
+        let mut mx = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(37.45)),
+            Err(TransportError::NoReply {
+                request: on(Instruction::Write, 1, "Acceleration Limit", 40, 4),
+                timeout_us: 10_000,
+            }
+            .into())
+        );
+        assert_eq!(mx.goal_bound_raw(), Some(XM430_VELOCITY_LIMIT));
+        assert_eq!(mx.position_limits_raw(), Some(1000..=3000));
+        assert_eq!(mx.limit_mode(), LimitMode::Velocity);
+        script(&mut bus, &[p2_status(1, 0, &[]), p2_status(1, 0, &[])]);
+        let mark = mark(&bus);
+        let mut mx = bus.actuator(id(1)).unwrap();
+        mx.enable_torque().unwrap();
+        assert_eq!(mx.write(Raw(GoalVelocity), 200), Ok(()));
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p2_write(1, 64, &[1]),
+                p2_write(1, 104, &200i32.to_le_bytes()),
+            ])
+        );
+    }
+
+    /// Plan D6: MX-28(2.0)'s table gives Acceleration Limit no unit, so the
+    /// typed setter and getter are refused; the raw forms work.
+    #[test]
+    fn no_unit_refuses_the_typed_form_only() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P2, 32>(&time);
+        hold(&mut bus, MX28, 1, (0, 4095), LimitMode::Bounded, OFF);
+        disable(&mut bus);
+        let quiet = mark(&bus);
+        let mut mx = bus.actuator(id(1)).unwrap();
+        let no_unit = || -> Result<(), Error> {
+            Err(ValidationError::NoUnit {
+                id: id(1),
+                register: "Acceleration Limit",
+                mode: LimitMode::Bounded,
+            }
+            .into())
+        };
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(37.45)),
+            no_unit()
+        );
+        assert_eq!(
+            mx.acceleration_limit(),
+            no_unit().map(|()| Acceleration::ZERO)
+        );
+        assert_quiet(&bus, quiet);
+        script(
+            &mut bus,
+            &[p2_status(1, 0, &[]), p2_status(1, 0, &100u32.to_le_bytes())],
+        );
+        let mut mx = bus.actuator(id(1)).unwrap();
+        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 100), Ok(()));
+        assert_eq!(mx.read(Raw(AccelerationLimit)), Ok(100));
+        assert_eq!(
+            sent_since(&bus, quiet),
+            concat(&[p2_write(1, 40, &100u32.to_le_bytes()), p2_read(1, 40, 4),])
         );
     }
 }

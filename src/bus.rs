@@ -9,9 +9,9 @@
 //! [`field`]: read and written on one actuator, on many with
 //! [`Bus::read_field`] and [`Bus::sync_write`], and several at once with
 //! [`Bus::bulk_read`] and [`Bus::bulk_write`] ([`bulk`]). The EEPROM
-//! limits most models share (voltage, temperature, position, velocity,
-//! current and PWM limits, Max Torque) are fields too, read on every tier
-//! and written on one actuator only, with
+//! limits several series share (voltage, temperature, position, velocity,
+//! acceleration, current and PWM limits, Max Torque) are fields too, read
+//! on every tier and written on one actuator only, with
 //! [`ActuatorRef::write_limit`] and its setters.
 //!
 //! Rules that hold for every call:

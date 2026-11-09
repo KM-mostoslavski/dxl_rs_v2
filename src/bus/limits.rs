@@ -242,8 +242,8 @@ fn record_written(kind: &mut ActuatorKind, bound: &mut Bound, min: Option<i32>, 
 /// that determines one makes it known again (both limits, or the bounding
 /// register). Failed: the cache they touch is forgotten, the goal bound
 /// the bus holds included, until the next Setup or an acknowledged write
-/// that determines it. Voltage, temperature, PWM and Max Torque are not
-/// cached.
+/// that determines it. Voltage, temperature, acceleration, PWM and Max
+/// Torque limits are not cached.
 fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bool) {
     let registers = kind.data().limits;
     let bounding = bound_register(kind);

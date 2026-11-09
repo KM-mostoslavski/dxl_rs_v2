@@ -45,7 +45,7 @@
 - [x] T101 bus: docs: the table in `field`, the `ActuatorRef` overview, the sentence "Nor is any EEPROM register … stay raw" (now: ID, baud rate and series-specific registers), rustdoc of every new item with its errors; step end (ROADMAP row, plan ticks, `docs/learnings.md`).
 
 - [ ] T102 bus: D8 torque confirmed off and D9 wheel-switch refusal, with tests; un-ignore the two deferred tests; close the two `docs/deferred.md` rows.
-- [ ] T103 tables, xtask, core, bus: D10 Acceleration Limit (`unit_info` from the e-Manual, quantity, `units::Acceleration`, field, setter, getter).
+- [x] T103 tables, xtask, core, bus: D10 Acceleration Limit (`unit_info` from the e-Manual, quantity, `units::Acceleration`, field, setter, getter).
 
 ## Review focus
 

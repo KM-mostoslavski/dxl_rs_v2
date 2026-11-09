@@ -53,6 +53,7 @@
 //! | [`CurrentLimit`] | [`Current`] | must be off | any | e-Manual range |
 //! | [`PwmLimit`] | [`Pwm`] | must be off | any | e-Manual range |
 //! | [`MaxTorque`] | [`Load`] | must be off | any | e-Manual range |
+//! | [`AccelerationLimit`] | [`Acceleration`] | must be off | any | e-Manual range |
 //!
 //! Every value is also checked against the register size. "e-Manual
 //! range" is the range the table records for the register: a register
@@ -82,9 +83,8 @@
 //! could not keep its torque state true to the hardware. Use
 //! [`Bus::enable_torque`](crate::Bus::enable_torque) and
 //! [`Bus::disable_torque`](crate::Bus::disable_torque). Nor are ID, baud
-//! rate and the registers outside the limits most models share
-//! (Acceleration Limit, in MX(2.0), PRO, PRO+, Y and RH-P12-RN; Position
-//! Limit Threshold, Y; ...): those stay raw (`raw-registers`).
+//! rate and the registers of one series (Position Limit Threshold, Y;
+//! ...): those stay raw (`raw-registers`).
 
 use crate::Id;
 use crate::actuator::{Actuator, Cache, Describe, LimitMode, Role};
@@ -92,7 +92,7 @@ use crate::error::{Error, Instruction, ValidationError};
 use crate::models::ActuatorKind;
 use crate::register::{Access, Register};
 use crate::units::{
-    ComplianceMargin, ComplianceSlope, Current, Gain, HardwareErrors, Load, Position,
+    Acceleration, ComplianceMargin, ComplianceSlope, Current, Gain, HardwareErrors, Load, Position,
     PositionScale, Pwm, RegisterScale, Temperature, Tick, Velocity, Voltage,
 };
 
@@ -697,6 +697,16 @@ role_field!(
     MaxTorque,
     MaxTorque
 );
+role_field!(
+    /// Acceleration Limit, in rad/s² ([`Acceleration`]): the EEPROM bound of
+    /// Profile Acceleration, which the firmware enforces (MX-64(2.0):
+    /// "Profile Acceleration(108) can’t be configured with any values
+    /// exceeding Acceleration Limit(40)",
+    /// <https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/>, 2026-11-09).
+    /// MX(2.0), PRO, PRO+, Y, RH-P12-RN. A [`LimitField`].
+    AccelerationLimit,
+    AccelerationLimit
+);
 
 impl Rule for GoalVelocity {
     const MOVES: bool = true;
@@ -822,6 +832,7 @@ read_values! {
     CurrentLimit: Current;
     PwmLimit: Pwm;
     MaxTorque: Load;
+    AccelerationLimit: Acceleration;
 }
 
 /// Declares the limit fields; a limit writes the type it reads.
@@ -843,6 +854,7 @@ limit_values! {
     CurrentLimit,
     PwmLimit,
     MaxTorque,
+    AccelerationLimit,
 }
 
 write_values! {
@@ -894,6 +906,7 @@ scaled_decode! {
     Temperature => temperature;
     Voltage => voltage;
     Velocity => velocity;
+    Acceleration => acceleration;
     Load => load;
     Current => current;
     Pwm => pwm;
@@ -935,6 +948,13 @@ impl Encode for Velocity {
     fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
         let scale = scale_of(site)?;
         register_value(scale, scale.velocity_to_raw(self)?)
+    }
+}
+
+impl Encode for Acceleration {
+    fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
+        let scale = scale_of(site)?;
+        register_value(scale, scale.acceleration_to_raw(self)?)
     }
 }
 
@@ -1322,6 +1342,11 @@ mod tests {
         );
         assert_eq!(Velocity::ZERO.to_raw(&none), missing.map(|()| 0));
         assert_eq!(Current::ZERO.to_raw(&none), missing.map(|()| 0));
+        assert_eq!(Acceleration::ZERO.to_raw(&none), missing.map(|()| 0));
+        assert_eq!(
+            Acceleration::from_raw(1, &none),
+            missing.map(|()| Acceleration::ZERO)
+        );
         assert_eq!(
             crate::units::SpeedLimit::Unlimited.to_raw(&none),
             missing.map(|()| 0)
@@ -1334,6 +1359,11 @@ mod tests {
         );
         assert_eq!(Velocity::from_rad_per_s(-3.0).to_raw(&scaled), Ok(-3));
         assert_eq!(Current::from_amps(2.0).to_raw(&scaled), Ok(2));
+        assert_eq!(Acceleration::from_rad_per_s2(-4.0).to_raw(&scaled), Ok(-4));
+        assert_eq!(
+            Acceleration::from_raw(5, &scaled),
+            Ok(Acceleration::from_rad_per_s2(5.0))
+        );
         assert_eq!(Position::check_site(&none), Ok(()));
         assert_eq!(Position::from_raw(2048, &none), Ok(Position::ZERO));
         assert_eq!(Position::ZERO.to_raw(&none), Ok(2048));

@@ -4,17 +4,17 @@ use crate::Transport;
 use crate::actuator::{Actuator, Cache, Describe, ModelData, TorqueState};
 use crate::error::{Error, StatusError, StatusReport};
 use crate::field::{
-    CurrentLimit, DGain, GoalCurrent, GoalPosition, GoalVelocity, HardwareErrorStatus, Led,
-    LimitField, MaxPositionLimit, MaxTorque, MaxVoltageLimit, MinPositionLimit, MinVoltageLimit,
-    Moving, PGain, PresentCurrent, PresentLoad, PresentPosition, PresentTemperature,
-    PresentVelocity, PresentVoltage, PwmLimit, Raw, ReadField, RealtimeTick,
+    AccelerationLimit, CurrentLimit, DGain, GoalCurrent, GoalPosition, GoalVelocity,
+    HardwareErrorStatus, Led, LimitField, MaxPositionLimit, MaxTorque, MaxVoltageLimit,
+    MinPositionLimit, MinVoltageLimit, Moving, PGain, PresentCurrent, PresentLoad, PresentPosition,
+    PresentTemperature, PresentVelocity, PresentVoltage, PwmLimit, Raw, ReadField, RealtimeTick,
     SpeedLimit as SpeedLimitField, TemperatureLimit, VelocityLimit, WriteField,
 };
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, P2, Protocol};
 use crate::units::{
-    Current, Gain, HardwareErrors, Load, Position, Pwm, SpeedLimit, Temperature, Tick, Velocity,
-    Voltage,
+    Acceleration, Current, Gain, HardwareErrors, Load, Position, Pwm, SpeedLimit, Temperature,
+    Tick, Velocity, Voltage,
 };
 
 use super::diagnose::diagnosed;
@@ -87,16 +87,16 @@ fn poke<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) {
 /// and sends nothing; [`model`](ActuatorRef::model) gives the Tier 2
 /// handle, where such a call does not compile.
 ///
-/// The EEPROM limits most models share (voltage, temperature, position,
-/// velocity, current and PWM limits, Max Torque) are read the same way and
-/// written with [`write_limit`](ActuatorRef::write_limit) and its setters
-/// ([`set_voltage_limits`](ActuatorRef::set_voltage_limits),
+/// The EEPROM limits several series share (voltage, temperature, position,
+/// velocity, acceleration, current and PWM limits, Max Torque) are read the
+/// same way and written with [`write_limit`](ActuatorRef::write_limit) and
+/// its setters ([`set_voltage_limits`](ActuatorRef::set_voltage_limits),
 /// [`set_position_limits`](ActuatorRef::set_position_limits), ...): one
 /// acknowledged write with torque off, checked against the e-Manual range
 /// where the table records one and, for a pair, its order. The bus follows
 /// each write: goals are then checked against the new position limits,
-/// limit mode and goal bound. ID, baud rate and the registers outside the
-/// limits most models share stay raw (`raw-registers`).
+/// limit mode and goal bound. ID, baud rate and the registers of one series
+/// stay raw (`raw-registers`).
 #[cfg_attr(
     all(feature = "mock", feature = "rx"),
     doc = r#"
@@ -863,6 +863,23 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         self.write_limit(MaxTorque, limit)
     }
 
+    /// Sets Acceleration Limit, in rad/s² (MX(2.0), PRO, PRO+, Y,
+    /// RH-P12-RN): the bound of Profile Acceleration, which the firmware
+    /// enforces (MX-64(2.0): "Profile Acceleration(108) can’t be configured
+    /// with any values exceeding Acceleration Limit(40)",
+    /// <https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/>). One
+    /// acknowledged write, with torque off. The bus holds no copy of it, so
+    /// nothing else it checks changes.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// without it; `NoUnit` where the table gives it no unit (write
+    /// `Raw(AccelerationLimit)`); `DoesNotFit` for a negative acceleration.
+    pub fn set_acceleration_limit(&mut self, limit: Acceleration) -> Result<(), Error> {
+        self.write_limit(AccelerationLimit, limit)
+    }
+
     /// Reads Min and Max Voltage Limit, in volts, `(min, max)`: one read
     /// of both where the registers are adjacent (every model). Never
     /// cached: each call asks the actuator.
@@ -925,6 +942,18 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// As [`read`](Self::read); `Unsupported` on models without it.
     pub fn max_torque(&mut self) -> Result<Load, Error> {
         self.read(MaxTorque)
+    }
+
+    /// Reads Acceleration Limit, in rad/s² (MX(2.0), PRO, PRO+, Y,
+    /// RH-P12-RN): the bound of Profile Acceleration. Never cached.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `Unsupported` on models without it;
+    /// `NoUnit` where the table gives it no unit (read
+    /// `Raw(AccelerationLimit)`).
+    pub fn acceleration_limit(&mut self) -> Result<Acceleration, Error> {
+        self.read(AccelerationLimit)
     }
 
     /// Reads and decodes `reg`, the actuator's fault report, as

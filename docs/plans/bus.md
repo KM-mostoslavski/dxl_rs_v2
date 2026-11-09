@@ -40,4 +40,4 @@ Plan: [`2026-11-09-typed-limits.md`](2026-11-09-typed-limits.md).
 - [x] T100 bus: limit fields, `LimitField`, `write_limit`, setters and getters, checks, cache updates
 - [x] T101 bus: docs and step end
 - [ ] T102 bus: D8 torque confirmed off, D9 no wheel switch with a live speed
-- [ ] T103 tables, xtask, core, bus: D10 typed Acceleration Limit
+- [x] T103 tables, xtask, core, bus: D10 typed Acceleration Limit
