@@ -21,9 +21,12 @@
 //!
 //! A position-limit role is a `Position`, converted with the model's
 //! `type_info` scale like Goal Position: it gets no register scale, and its
-//! raw range is the table's position range. Check 22 refuses a row range or
-//! `unit_info` entry of its row that gives another range, a unit that is not
-//! an angle, or a step more than 5 % off the `type_info` step.
+//! raw range is the e-Manual range of its row, from the row's own range or
+//! else its `unit_info` entry. Check 22 refuses a verified table whose limit
+//! row gives no range, a range that does not contain the table's position
+//! range (`type_info`), a unit that is not an angle, or a step more than
+//! 5 % off the `type_info` step. A limit range may be wider than one turn
+//! (Y series: "within the servo's 32-bit range of motion").
 
 use std::f64::consts::PI;
 
@@ -814,8 +817,8 @@ fn role_of(
         return role;
     }
     if def.quantity == Quantity::Position {
-        // DECISION: a position-limit range comes only under unit_source, like every FR-9 range: an unverified table's type_info is not checked against its limit rows.
-        role.row_range = Some(position_range(file, table, def, row, errors));
+        // DECISION: a position-limit range comes only under unit_source, like every FR-9 range, and only from the e-Manual (row, else unit_info), never from type_info: an unverified table gets none, so the bus refuses its typed form (plan D6).
+        role.row_range = position_range(file, table, def, row, errors);
         return role;
     }
     role.row_range = row.range.map(|r| (r.min, r.max));
@@ -932,40 +935,32 @@ pub(crate) fn load_full_magnitude(
     }
 }
 
-/// The raw range of a position-limit role served by `row`: the table's
-/// position range (`type_info`), which its `Position` converts through.
-/// Check 22: the row's own range and every `unit_info` entry of the row give
-/// that range, a unit of angle and about the `type_info` step.
+/// The raw range of a position-limit role served by `row` in a verified
+/// table: the e-Manual range of the row, its own range or else the range
+/// of its `unit_info` entry. Check 22: the table gives one; every range it
+/// gives for the row contains the table's position range (`type_info`),
+/// which its `Position` converts through, and agrees with the others; every
+/// `unit_info` entry of the row has a unit of angle and about the
+/// `type_info` step.
 fn position_range(
     file: &str,
     table: &ControlTable,
     def: &RoleDef,
     row: &Row,
     errors: &mut Vec<Diagnostic>,
-) -> (i64, i64) {
+) -> Option<(i64, i64)> {
     let scale = &table.type_info;
-    let range = (
+    let turn = (
         i64::from(scale.value_of_min_radian_position),
         i64::from(scale.value_of_max_radian_position),
     );
     let step =
-        (f64::from(scale.max_radian) - f64::from(scale.min_radian)) / (range.1 - range.0) as f64;
-    // DECISION: a limit row's own range, unit and step must agree with type_info, so the Position conversion and the e-Manual range never disagree in one table.
+        (f64::from(scale.max_radian) - f64::from(scale.min_radian)) / (turn.1 - turn.0) as f64;
+    // DECISION: a limit range must contain type_info's position range, not equal it: the e-Manual may allow limits beyond one turn (YM070-210-M001 Max/Min Position Limit(76, 84): -2,147,483,648 ~ 2,147,483,647, type_info one turn), while a narrower range would make positions the conversion covers unreachable as limits.
     let mut fail = |message: String| errors.push(Diagnostic::new(file, message));
-    let other_range = |(min, max): (i64, i64)| {
-        format!(
-            "range {min}..={max} is not the table's position range {}..={} (type_info), which the {} role converts through",
-            range.0, range.1, def.field
-        )
-    };
-    if let Some(r) = row.range
-        && (r.min, r.max) != range
-    {
-        fail(format!(
-            "row {:?}: {}",
-            row.data_name,
-            other_range((r.min, r.max))
-        ));
+    let mut ranges: Vec<(String, (i64, i64))> = Vec::new();
+    if let Some(r) = row.range {
+        ranges.push((format!("row {:?}", row.data_name), (r.min, r.max)));
     }
     for entry in table
         .unit_info
@@ -979,14 +974,8 @@ fn position_range(
             ));
             continue;
         };
-        if let Some(r) = entry.range
-            && (r.min, r.max) != range
-        {
-            fail(format!(
-                "unit_info {:?}: {}",
-                entry.data_name,
-                other_range((r.min, r.max))
-            ));
+        if let Some(r) = entry.range {
+            ranges.push((format!("unit_info {:?}", entry.data_name), (r.min, r.max)));
         }
         let table_step = entry.value * factor;
         if (table_step / step - 1.0).abs() > STEP_TOLERANCE {
@@ -999,7 +988,30 @@ fn position_range(
             ));
         }
     }
-    range
+    let found = ranges.first().map(|(_, range)| *range);
+    for (what, (min, max)) in &ranges {
+        if *min > turn.0 || *max < turn.1 {
+            fail(format!(
+                "{what}: range {min}..={max} does not contain the table's position range {}..={} (type_info), which the {} role converts through",
+                turn.0, turn.1, def.field
+            ));
+        }
+        if let Some((first_min, first_max)) = found
+            && (first_min, first_max) != (*min, *max)
+        {
+            fail(format!(
+                "{what}: range {min}..={max} is not the range {first_min}..={first_max} the table gives first for the {} role",
+                def.field
+            ));
+        }
+    }
+    if found.is_none() {
+        fail(format!(
+            "row {:?}: a verified table gives the {} role no range (row or unit_info), so its typed form would have no e-Manual range",
+            row.data_name, def.field
+        ));
+    }
+    found
 }
 
 /// The roles of `roles` by field.
@@ -1226,7 +1238,10 @@ mod tests {
 
     #[test]
     fn units_count_only_under_unit_source() {
-        let mut table = Table::ax_fr9().without_range("CW Compliance Slope");
+        let mut table = Table::ax_fr9()
+            .without_range("CW Compliance Slope")
+            .without_range("CW Angle Limit")
+            .without_range("CCW Angle Limit");
         table = table.omit_field("unit_source");
         let m = model(table);
         assert!(
@@ -1537,6 +1552,8 @@ mod tests {
         let m = model(
             ax_limits()
                 .without_range("CW Compliance Slope")
+                .without_range("CW Angle Limit")
+                .without_range("CCW Angle Limit")
                 .omit_field("unit_source"),
         );
         let roles = by_field(&m.typed);
@@ -1564,12 +1581,20 @@ mod tests {
             ],
         );
         assert_fails(
+            Table::ax_fr9().without_range("CCW Angle Limit").unit(
+                r#"data_name: "CCW Angle Limit", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 1000)"#,
+            ),
+            &[
+                "unit_info \"CCW Angle Limit\": range 0..=1000 does not contain the table's position range 0..=1023 (type_info)",
+                "max_position_limit role",
+            ],
+        );
+        assert_fails(
             Table::ax_fr9().unit(
                 r#"data_name: "CCW Angle Limit", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 4095)"#,
             ),
             &[
-                "unit_info \"CCW Angle Limit\": range 0..=4095 is not the table's position range 0..=1023 (type_info)",
-                "max_position_limit role",
+                "unit_info \"CCW Angle Limit\": range 0..=4095 is not the range 0..=1023 the table gives first for the max_position_limit role",
             ],
         );
         assert_fails(
@@ -1581,14 +1606,53 @@ mod tests {
             ],
         );
         assert_fails(
-            Table::ax_fr9().row_range("CW Angle Limit", 0, 4095),
-            &["row \"CW Angle Limit\": range 0..=4095 is not the table's position range 0..=1023"],
+            Table::ax_fr9().row_range("CW Angle Limit", 10, 1023),
+            &[
+                "row \"CW Angle Limit\": range 10..=1023 does not contain the table's position range 0..=1023",
+            ],
+        );
+        assert_fails(
+            Table::ax_fr9().without_range("CW Angle Limit"),
+            &[
+                "row \"CW Angle Limit\": a verified table gives the min_position_limit role no range (row or unit_info)",
+            ],
         );
         let ranged = model(Table::ax_fr9().row_range("CW Angle Limit", 0, 1023));
         assert_eq!(
             by_field(&ranged.typed)["min_position_limit"].row_range,
             Some((0, 1023))
         );
+        let from_unit = model(
+            Table::ax_fr9().without_range("CW Angle Limit").unit(
+                r#"data_name: "CW Angle Limit", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 1023)"#,
+            ),
+        );
+        assert_eq!(
+            by_field(&from_unit.typed)["min_position_limit"].row_range,
+            Some((0, 1023))
+        );
+    }
+
+    /// YM070-210-M001 Max/Min Position Limit(76, 84): "within the servo's
+    /// 32-bit range of motion (-2,147,483,648 ~ 2,147,483,647)"
+    /// (<https://emanual.robotis.com/docs/en/dxl/y/ym070-210-m001-rh/>,
+    /// 2026-11-09): a limit range wider than the one turn of `type_info` is
+    /// the role's range, not refused.
+    #[test]
+    fn check22_limit_range_wider_than_a_turn() {
+        let wide = model(
+            Table::xm_fr9()
+                .row_range("Min Position Limit", -2_147_483_648, 2_147_483_647)
+                .row_range("Max Position Limit", -2_147_483_648, 2_147_483_647),
+        );
+        let roles = by_field(&wide.typed);
+        for field in ["min_position_limit", "max_position_limit"] {
+            assert_eq!(
+                roles[field].row_range,
+                Some((-2_147_483_648, 2_147_483_647)),
+                "{field}"
+            );
+        }
     }
 
     #[test]
