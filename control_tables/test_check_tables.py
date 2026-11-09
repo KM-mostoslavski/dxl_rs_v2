@@ -1287,10 +1287,43 @@ class RealTablesTests(unittest.TestCase):
     """The FR-9 data in this repository's own tables (specs/009-tables-fr9)."""
 
     FR9_STEMS = ("ax_12a", "ax_12_plus", "rx_28", "mx_64_p1", "mx_64", "xm430_w350")
+    # The limits written through typed setters (docs/plans/2026-11-09-typed-limits.md, D1).
+    TYPED_LIMITS = (
+        "Min Voltage Limit",
+        "Max Voltage Limit",
+        "Temperature Limit",
+        "Min Position Limit",
+        "Max Position Limit",
+        "CW Angle Limit",
+        "CCW Angle Limit",
+        "Velocity Limit",
+        "Current Limit",
+        "PWM Limit",
+        "Max Torque",
+    )
+    # MX-64 P1 gives Min/Max Voltage Limit the range 50..160 and Max Voltage Limit the initial
+    # value 240 (specs/009-tables-fr9, edge cases): no range for either.
+    LIMITS_WITHOUT_RANGE = {("mx_64_p1", "Min Voltage Limit"), ("mx_64_p1", "Max Voltage Limit")}
 
     def test_repository_tables_pass(self) -> None:
-        code, out, err = run_check(["--today", "2026-11-03"])
+        code, out, err = run_check(["--today", "2026-11-09"])
         self.assertEqual(code, 0, err)
+
+    def test_fr9_tables_scale_every_typed_limit(self) -> None:
+        _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)
+        for stem in self.FR9_STEMS:
+            rows = {r["data_name"] for r in tables[stem]["control_table"]}
+            entries = {e["data_name"]: e for e in tables[stem]["unit_info"]}
+            for name in self.TYPED_LIMITS:
+                if name not in rows:
+                    continue
+                with self.subTest(stem=stem, register=name):
+                    self.assertIn(name, entries)
+                    entry = entries[name]
+                    for key in ("value", "unit", "sign_type"):
+                        self.assertIn(key, entry)
+                    if (stem, name) not in self.LIMITS_WITHOUT_RANGE:
+                        self.assertIn("range", entry)
 
     def test_fr9_tables_carry_unit_source(self) -> None:
         _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)

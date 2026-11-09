@@ -1,6 +1,6 @@
 (
   source: Unverified,
-  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/", verified: "2026-11-03"),
+  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/", verified: "2026-11-09"),
   protocols: [P1, P2],
   operating_modes: (bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [16], current_position: [5]),
   type_info: {
@@ -33,6 +33,13 @@
       range: (min: 95, max: 160),
     },
     {
+      data_name: "PWM Limit",
+      value: 0.113,
+      unit: "%",
+      sign_type: "unsigned",
+      range: (min: 0, max: 885),
+    },
+    {
       data_name: "Current Limit",
       value: 2.69,
       unit: "mA",
@@ -45,6 +52,21 @@
       unit: "rpm",
       sign_type: "unsigned",
       range: (min: 0, max: 1023),
+    },
+    // DECISION: Min/Max Position Limit get the page's 0.088 deg scale as the AX CW/CCW Angle Limit do; Goal/Present Position stay on type_info.
+    {
+      data_name: "Max Position Limit",
+      value: 0.088,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 4095),
+    },
+    {
+      data_name: "Min Position Limit",
+      value: 0.088,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 4095),
     },
     {
       data_name: "Goal Current",
