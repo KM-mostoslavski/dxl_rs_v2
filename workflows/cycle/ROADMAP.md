@@ -60,7 +60,7 @@ The others are at step 5 until their plan is ticked or deferred.
 | transport | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
 | bus | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
 | tables | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
-| xtask | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
+| xtask | delegated | loop | 4 | — | `2026-11-05 green`: all 20 local CI commands |
 | ci | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
 
 - **owner** `delegated`: an agent builds it under the step-4 contract.
