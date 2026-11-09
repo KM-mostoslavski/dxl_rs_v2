@@ -10,7 +10,7 @@ use super::resolve::FAMILIES;
 use super::schema::{Access, Area, ProtocolTag};
 
 // DECISION: a struct holding the file beside a cause enum, not a file field
-// in each of ~60 variants: every diagnostic names its file the same way.
+// in every check variant: every diagnostic names its file the same way.
 /// One problem found in the input, naming the file it is in.
 #[derive(Debug)]
 pub struct Diagnostic {
