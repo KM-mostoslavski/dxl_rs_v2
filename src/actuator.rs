@@ -186,7 +186,11 @@ pub trait Model: Actuator {
     const DATA: &'static ModelData;
 }
 
-/// Torque and fault state of one actuator. Faulted always means torque off.
+/// Torque and fault state of one actuator, as the bus holds it.
+///
+/// `Faulted` means the bus refuses goals and `enable_torque` until the
+/// fault is cleared. It does not say the hardware's torque is off: see
+/// [`Faulted`](TorqueState::Faulted).
 ///
 /// Every actuator starts [`Off`](TorqueState::Off). The bus keeps one state
 /// per actuator and moves it by these rules:
@@ -209,13 +213,13 @@ pub trait Model: Actuator {
 ///     match state {
 ///         TorqueState::Off => "torque off",
 ///         TorqueState::On => "torque on",
-///         TorqueState::Faulted => "faulted, torque off",
+///         TorqueState::Faulted => "faulted",
 ///     }
 /// }
 /// assert_eq!(label(TorqueState::default()), "torque off");
 /// ```
 ///
-/// Only the crate moves a state, so "faulted means off" holds:
+/// Only the crate moves a state, so the table above holds:
 ///
 /// ```compile_fail,E0624
 /// use dxl_rs_v2::{Id, TorqueState};
@@ -234,13 +238,23 @@ pub enum TorqueState {
     Off = 0,
     /// Torque on. Goals are accepted.
     On = 1,
-    /// The actuator reported a hardware fault. Torque is off, goals are
-    /// refused, and torque stays off until the fault is cleared.
+    /// The actuator reported a hardware fault. Goals and `enable_torque()`
+    /// are refused until the fault is cleared. The firmware turns its
+    /// output off only for the faults it shuts down on: on AX, RX and MX on
+    /// Protocol 1, those its Shutdown register selects (AX-12A
+    /// Shutdown(18), default 36: Overheating and Overload, "the motor's
+    /// output will be 0 [%]",
+    /// <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>, 2026-11-09).
+    /// So a `Faulted` actuator that was `On` may still hold torque until an
+    /// acknowledged `disable_torque()` (see
+    /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)).
     Faulted = 2,
 }
 
 impl TorqueState {
-    /// Whether torque is on. `Faulted` counts as off.
+    /// Whether the bus holds torque on: only `On`. `Faulted` is not on
+    /// here, though the hardware may still hold torque (see
+    /// [`Faulted`](Self::Faulted)).
     pub const fn is_on(self) -> bool {
         matches!(self, Self::On)
     }

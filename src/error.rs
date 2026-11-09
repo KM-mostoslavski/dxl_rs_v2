@@ -205,9 +205,10 @@ impl Error {
         })
     }
 
-    /// Whether the error is a hardware fault, after which the actuator is
-    /// treated as faulted and its torque as off: a [`FaultError`], or a
-    /// [`StatusError`] whose report is one (before it is measured).
+    /// Whether the error is a hardware fault, after which the bus holds
+    /// the actuator [`Faulted`](crate::TorqueState::Faulted) and refuses
+    /// its goals: a [`FaultError`], or a [`StatusError`] whose report is
+    /// one (before it is measured).
     pub fn is_hardware_fault(&self) -> bool {
         match self {
             Self::Fault(_) => true,
@@ -1771,8 +1772,9 @@ impl StatusError {
         }
     }
 
-    /// Whether the report is a hardware fault, after which the actuator
-    /// should be treated as faulted and its torque as off.
+    /// Whether the report is a hardware fault, after which the bus holds
+    /// the actuator [`Faulted`](crate::TorqueState::Faulted) and refuses
+    /// its goals.
     ///
     /// - Protocol 2: the alert bit (bit 7) is set. The e-Manual defines it as
     ///   "a problem with the device", detailed in Hardware Error Status
