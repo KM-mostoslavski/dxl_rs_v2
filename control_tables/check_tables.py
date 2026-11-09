@@ -2,24 +2,52 @@
 """Table check for `control_tables/`: validates every table and `dynamixel.ron`.
 
 Command line, output and exit codes are the contract in
-`specs/005-tables/contracts/table-tools.md` section 1; the rules are those of
-`specs/005-tables/contracts/ron-schema.md` sections 1 and 2, extended for the
-FR-9 register data by `specs/009-tables-fr9/contracts/fr9-schema.md` (see
-"FR-9 register data" below for the vocabulary).
+`specs/005-tables/contracts/table-tools.md` section 1, made precise by SRS
+FR-6.14; the rules are those of `specs/005-tables/contracts/ron-schema.md`
+sections 1 and 2, extended for the FR-9 register data by
+`specs/009-tables-fr9/contracts/fr9-schema.md` (see "FR-9 register data" below
+for the vocabulary).
 
     python3 control_tables/check_tables.py [--dir DIR] [--today YYYY-MM-DD] [--markdown] [STEM ...]
 
-Exit codes: 0 no error, 1 a rule is broken, 2 bad arguments, a file that does
-not parse or a missing `dynamixel.ron`. No network.
+Every finding is a `Diagnostic`: a cause code from `CAUSES`, the file, the
+location in it, the model number, register and field involved, and the values
+that decided it (`found` against `expected` or `allowed`, and any other), next
+to a message that states those facts. It prints as one line,
+
+    FILE: LOCATION: [CAUSE] MESSAGE
+
+followed, when the cause has advice, by an indented `hint:` line. A cause code
+is stable: once published it keeps its meaning; a new check gets a new code
+and a removed check retires its code for good.
+
+Exit codes, one per failure class (the highest wins when several occur):
+
+    0  no diagnostic
+    1  a rule is broken
+    2  bad command line: an unknown option, a `--today` that is not a real ISO
+       date, a `--dir` that is not a directory, a STEM that names no table
+    3  `dynamixel.ron` is missing
+    4  a file does not parse: RON syntax (with the parser's own code, line and
+       column) or bytes that are not UTF-8
+    5  a file or the directory cannot be read (I/O error)
+
+Every file that cannot be loaded is reported before the run stops; the rules
+run only once every file loads.
+
+No network.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime
+import os
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple, NoReturn
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MAP_FILE = "dynamixel.ron"
@@ -31,15 +59,40 @@ EMANUAL_PREFIX = "https://emanual.robotis.com/"
 # --------------------------------------------------------------------------
 
 
-class RonError(Exception):
-    """A file that does not parse: names the file, line and column."""
+# The parser's own codes, one per way a text fails to parse (`RonError.code`).
+RON_ERROR_CODES = (
+    "unexpected-char",
+    "unknown-escape",
+    "unterminated-string",
+    "expected-token",
+    "trailing-value",
+    "expected-value",
+    "expected-map-key",
+    "duplicate-key",
+    "expected-field-name",
+    "expected-separator",
+    "bad-unicode-escape",
+    "number-too-long",
+    "too-deep",
+)
+# DECISION: nesting is capped well above the tables' own depth (about 6), so a pathological file fails with
+# `too-deep` at a known token instead of exhausting Python's recursion limit.
+MAX_DEPTH = 64
+_HEX_RE = re.compile(r"[0-9A-Fa-f]{1,6}")
 
-    def __init__(self, file: str, line: int, col: int, message: str) -> None:
+
+class RonError(Exception):
+    """A file that does not parse: names the file, line and column, and the parser's code for the cause."""
+
+    # DECISION: `code` defaults to None so emanual.py, which raises RonError for a table without
+    # `control_table` and is outside this change, keeps working; every parser site passes a code.
+    def __init__(self, file: str, line: int, col: int, message: str, code: str | None = None) -> None:
         super().__init__(f"{file}:{line}:{col}: {message}")
         self.file = file
         self.line = line
         self.col = col
         self.message = message
+        self.code = code
 
 
 class Ident:
@@ -141,7 +194,7 @@ def _tokenize(text: str, file: str) -> list[_Token]:
         col = pos - line_start + 1
         m = _TOKEN_RE.match(text, pos)
         if m is None:
-            raise RonError(file, line, col, f"unexpected character {text[pos]!r}")
+            raise RonError(file, line, col, f"unexpected character {text[pos]!r}", "unexpected-char")
         kind = m.lastgroup
         if kind == "string":
             value, end = _read_string(text, pos, file, line, col)
@@ -152,7 +205,11 @@ def _tokenize(text: str, file: str) -> list[_Token]:
             if kind == "float":
                 tokens.append(_Token("float", float(raw), pos, end, line, col))
             elif kind == "int":
-                tokens.append(_Token("int", int(raw), pos, end, line, col))
+                try:
+                    number = int(raw)
+                except ValueError:
+                    raise RonError(file, line, col, f"integer of {len(raw)} characters", "number-too-long") from None
+                tokens.append(_Token("int", number, pos, end, line, col))
             elif kind == "ident":
                 tokens.append(_Token("ident", raw, pos, end, line, col))
             elif kind == "punct":
@@ -186,14 +243,20 @@ def _read_string(text: str, start: int, file: str, line: int, col: int) -> tuple
                 close = text.find("}", pos)
                 if close < 0:
                     break
-                out.append(chr(int(text[pos + 2 : close], 16)))
+                digits = text[pos + 2 : close]
+                point = int(digits, 16) if _HEX_RE.fullmatch(digits) else -1
+                if not (0 <= point <= 0x10FFFF) or 0xD800 <= point <= 0xDFFF:
+                    raise RonError(
+                        file, line, col, f"\\u{{{digits}}} is not a Unicode scalar value", "bad-unicode-escape"
+                    )
+                out.append(chr(point))
                 pos = close
             else:
-                raise RonError(file, line, col, f"unknown escape \\{e} in string")
+                raise RonError(file, line, col, f"unknown escape \\{e} in string", "unknown-escape")
         else:
             out.append(c)
         pos += 1
-    raise RonError(file, line, col, "unterminated string")
+    raise RonError(file, line, col, "unterminated string", "unterminated-string")
 
 
 class _Parser:
@@ -201,6 +264,7 @@ class _Parser:
         self.file = file
         self.tokens = _tokenize(text, file)
         self.i = 0
+        self.depth = 0
 
     def peek(self, ahead: int = 0) -> _Token:
         return self.tokens[min(self.i + ahead, len(self.tokens) - 1)]
@@ -210,8 +274,8 @@ class _Parser:
         self.i += 1
         return tok
 
-    def error(self, tok: _Token, message: str) -> RonError:
-        return RonError(self.file, tok.line, tok.col, message)
+    def error(self, tok: _Token, message: str, code: str) -> RonError:
+        return RonError(self.file, tok.line, tok.col, message, code)
 
     def is_punct(self, tok: _Token, value: str) -> bool:
         return tok.kind == "punct" and tok.value == value
@@ -219,7 +283,7 @@ class _Parser:
     def expect(self, value: str) -> _Token:
         tok = self.next()
         if not self.is_punct(tok, value):
-            raise self.error(tok, f"expected `{value}`, found {self.describe(tok)}")
+            raise self.error(tok, f"expected `{value}`, found {self.describe(tok)}", "expected-token")
         return tok
 
     @staticmethod
@@ -234,10 +298,19 @@ class _Parser:
         value = self.value()
         tok = self.peek()
         if tok.kind != "eof":
-            raise self.error(tok, f"unexpected {self.describe(tok)} after the value")
+            raise self.error(tok, f"unexpected {self.describe(tok)} after the value", "trailing-value")
         return value
 
     def value(self) -> object:
+        self.depth += 1
+        try:
+            if self.depth > MAX_DEPTH:
+                raise self.error(self.peek(), f"nesting deeper than {MAX_DEPTH} levels", "too-deep")
+            return self.plain_value()
+        finally:
+            self.depth -= 1
+
+    def plain_value(self) -> object:
         tok = self.peek()
         if tok.kind in ("str", "int", "float"):
             self.next()
@@ -254,7 +327,7 @@ class _Parser:
                 return self.brace()
             if tok.value == "[":
                 return self.list()
-        raise self.error(tok, f"expected a value, found {self.describe(tok)}")
+        raise self.error(tok, f"expected a value, found {self.describe(tok)}", "expected-value")
 
     def starts_record(self) -> bool:
         return self.peek().kind == "ident" and self.is_punct(self.peek(1), ":")
@@ -276,10 +349,10 @@ class _Parser:
         while not self.is_punct(self.peek(), "}"):
             key_tok = self.peek()
             if key_tok.kind not in ("int", "str"):
-                raise self.error(key_tok, f"expected a map key, found {self.describe(key_tok)}")
+                raise self.error(key_tok, f"expected a map key, found {self.describe(key_tok)}", "expected-map-key")
             self.next()
             if key_tok.value in result:
-                raise self.error(key_tok, f"duplicate key {key_tok.value}")
+                raise self.error(key_tok, f"duplicate key {key_tok.value}", "duplicate-key")
             self.expect(":")
             result[key_tok.value] = self.value()
             if not self.comma_or_close("}"):
@@ -294,9 +367,11 @@ class _Parser:
         while not self.is_punct(self.peek(), close):
             key_tok = self.next()
             if key_tok.kind != "ident":
-                raise self.error(key_tok, f"expected a field name, found {self.describe(key_tok)}")
+                raise self.error(
+                    key_tok, f"expected a field name, found {self.describe(key_tok)}", "expected-field-name"
+                )
             if key_tok.value in record:
-                raise self.error(key_tok, f"duplicate key `{key_tok.value}`")
+                raise self.error(key_tok, f"duplicate key `{key_tok.value}`", "duplicate-key")
             self.expect(":")
             value_start = self.peek().start
             record[key_tok.value] = self.value()
@@ -327,7 +402,7 @@ class _Parser:
             return True
         if self.is_punct(tok, close):
             return False
-        raise self.error(tok, f"expected `,` or `{close}`, found {self.describe(tok)}")
+        raise self.error(tok, f"expected `,` or `{close}`, found {self.describe(tok)}", "expected-separator")
 
 
 def parse_ron(text: str, file: str = "<string>") -> object:
@@ -346,40 +421,477 @@ def parse_ron(text: str, file: str = "<string>") -> object:
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# Diagnostics (SRS FR-6.14)
+# --------------------------------------------------------------------------
+
+PROG = "check_tables.py"
+EXIT_OK = 0
+EXIT_RULE = 1
+EXIT_USAGE = 2
+EXIT_NO_MAP = 3
+EXIT_PARSE = 4
+EXIT_IO = 5
+
+
+class Cause(NamedTuple):
+    """What a cause code means for a run: its exit code, and the advice it carries, if any."""
+
+    exit_code: int
+    hint: str | None = None
+
+
+RULE = Cause(EXIT_RULE)
+FR9_HINT = (
+    "the FR-9 data is verified per table: add `unit_source: Verified(url: …, verified: …)` "
+    "once the e-Manual page is checked"
+)
+
+# Every cause code the check emits. A code is stable: never renamed, never reused.
+# DECISION: codes are kebab-case names (`row-size-invalid`), not numbers, so a line reads without a lookup
+# table; one code per check, and a "must be a non-empty list" check keeps one `-shape` code whose `found`
+# tells an empty list from another value; advice is static per code, as `Error::hint()` is (FR-6.12).
+CAUSES: dict[str, Cause] = {
+    # command line
+    "usage": Cause(EXIT_USAGE),
+    "today-not-iso": Cause(EXIT_USAGE),
+    "today-not-a-date": Cause(EXIT_USAGE),
+    "dir-not-found": Cause(EXIT_USAGE),
+    "stem-unknown": Cause(EXIT_USAGE),
+    # loading
+    "map-missing": Cause(EXIT_NO_MAP, "pass `--dir` the directory that holds the tables and `dynamixel.ron`"),
+    "ron-parse": Cause(EXIT_PARSE),
+    # DECISION: bytes that are not UTF-8 are content the parser cannot take, so exit 4 with the syntax errors;
+    # exit 5 is kept for the file system refusing a read.
+    "not-utf8": Cause(EXIT_PARSE, "save the file as UTF-8"),
+    "read-failed": Cause(EXIT_IO),
+    # table shape
+    "table-not-record": RULE,
+    "control-table-missing": RULE,
+    "control-table-shape": RULE,
+    "row-not-record": RULE,
+    "row-address-invalid": RULE,
+    "row-size-invalid": RULE,
+    "row-name-invalid": RULE,
+    "table-unknown-key": RULE,
+    # source and URLs
+    "source-missing": RULE,
+    "source-shape": RULE,
+    "source-unknown-field": RULE,
+    "source-url-missing": RULE,
+    "source-date-missing": RULE,
+    "source-date-not-iso": RULE,
+    "source-date-not-real": RULE,
+    "source-date-future": Cause(
+        EXIT_RULE, "the date is the day the e-Manual page was checked; `--today` sets the bound"
+    ),
+    "url-not-string": RULE,
+    "url-not-emanual": Cause(EXIT_RULE, "the e-Manual is the only source (Principle IV)"),
+    # instructions
+    "instructions-missing": Cause(
+        EXIT_RULE, "a verified table lists the instructions of each of its protocols, from the e-Manual protocol page"
+    ),
+    "instructions-on-unverified": RULE,
+    "instructions-shape": RULE,
+    "instruction-entry-not-record": RULE,
+    "instruction-entry-unknown-field": RULE,
+    "instruction-protocol-invalid": RULE,
+    "instruction-protocol-not-in-table": RULE,
+    "instruction-source-missing": RULE,
+    "instruction-list-shape": RULE,
+    "instruction-unknown": RULE,
+    "instruction-duplicate": RULE,
+    "instruction-not-p1": RULE,
+    "instruction-from-fw-invalid": RULE,
+    "instruction-from-fw-duplicate": RULE,
+    "instructions-protocol-missing": RULE,
+    # protocols
+    "protocols-missing": RULE,
+    "protocols-not-list": RULE,
+    "protocols-empty": RULE,
+    "protocol-unknown": RULE,
+    "protocol-duplicate": RULE,
+    # row fields
+    "row-access-missing": RULE,
+    "row-access-invalid": RULE,
+    "row-area-missing": RULE,
+    "row-area-invalid": RULE,
+    "row-unknown-field": RULE,
+    # mode source
+    "mode-row-duplicate": RULE,
+    "mode-rows-both": RULE,
+    "mode-row-beside-angle-limits": RULE,
+    "control-mode-outside-xl320": Cause(
+        EXIT_RULE,
+        "only xl320.ron carries a `Control Mode` row (contract 4.3); a second such table goes to the architect first",
+    ),
+    "mode-source-missing": Cause(
+        EXIT_RULE, "a table has an `Operating Mode` or `Control Mode` row, or the CW/CCW Angle Limit pair (FR-7.6)"
+    ),
+    "mode-row-attributes": RULE,
+    "operating-modes-missing": RULE,
+    "operating-modes-without-mode-row": RULE,
+    # operating_modes
+    "operating-modes-not-record": RULE,
+    "operating-modes-key-missing": RULE,
+    "operating-modes-unknown-key": RULE,
+    "per-mode-lists-need-unit-source": Cause(EXIT_RULE, FR9_HINT),
+    "per-mode-list-missing": Cause(
+        EXIT_RULE, "the per-mode lists `current`, `velocity`, `pwm` and `current_position` come all four or none"
+    ),
+    "mode-list-not-list": RULE,
+    "mode-value-invalid": RULE,
+    "per-mode-value-outside-parent": RULE,
+    "per-mode-value-twice": RULE,
+    "per-mode-value-uncovered": RULE,
+    "mode-value-twice": RULE,
+    # roles (mapped tables)
+    "role-missing": RULE,
+    "role-attributes": RULE,
+    "model-number-place": RULE,
+    "limit-pair-half": RULE,
+    "limit-forms-both": RULE,
+    "limit-pair-missing": RULE,
+    "limit-attributes": RULE,
+    "p1-address-above-255": Cause(EXIT_RULE, "Protocol 1 addresses are one byte"),
+    "register-constant-duplicate": RULE,
+    # type_info
+    "type-info-missing": RULE,
+    "type-info-not-record": RULE,
+    "type-info-key-missing": RULE,
+    "type-info-unknown-key": RULE,
+    "type-info-position-not-int": RULE,
+    "type-info-radian-not-number": RULE,
+    "type-info-max-not-above-min": RULE,
+    "type-info-max-radian-not-above-min": RULE,
+    "type-info-zero-outside": RULE,
+    # ranges
+    "range-shape": RULE,
+    "range-not-int": RULE,
+    "range-min-above-max": RULE,
+    "range-does-not-fit": RULE,
+    # unit_info
+    "unit-info-not-list": RULE,
+    "unit-entry-not-record": RULE,
+    "unit-entry-name-invalid": RULE,
+    "unit-entry-key-missing": RULE,
+    "unit-entry-value-invalid": RULE,
+    "unit-entry-unit-invalid": RULE,
+    "unit-entry-fr9-needs-unit-source": Cause(EXIT_RULE, FR9_HINT),
+    "unit-entry-unknown-field": RULE,
+    "unit-entry-sign-unknown": RULE,
+    "unit-entry-no-row": RULE,
+    "unit-entry-unit-unknown": RULE,
+    "unit-entry-sign-invalid": RULE,
+    "unit-entry-direction-bit-outside": RULE,
+    "unit-entry-modes-need-angle-limits": RULE,
+    "unit-entry-modes-invalid": RULE,
+    "unit-entry-mode-unknown": RULE,
+    "unit-entry-mode-needs-torque-control": RULE,
+    "unit-entry-mode-duplicate": RULE,
+    "unit-entry-profile-invalid": RULE,
+    "unit-entry-profile-needs-drive-mode": RULE,
+    "unit-entry-zero-is-unlimited-invalid": RULE,
+    "unit-entry-from-fw-invalid": RULE,
+    "unit-entry-overlap": Cause(EXIT_RULE, "an entry without `modes` or `profile` applies in all of them"),
+    "bounded-by-no-row": RULE,
+    "bounded-by-self": RULE,
+    "bounded-by-scale-mismatch": RULE,
+    "row-range-needs-unit-source": Cause(EXIT_RULE, FR9_HINT),
+    # torque_control_mode
+    "torque-control-needs-unit-source": Cause(EXIT_RULE, FR9_HINT),
+    "torque-control-needs-angle-limits": RULE,
+    "torque-control-not-record": RULE,
+    "torque-control-key-missing": RULE,
+    "torque-control-unknown-key": RULE,
+    "torque-control-on-invalid": RULE,
+    "torque-control-no-row": RULE,
+    "torque-control-row-attributes": RULE,
+    "torque-control-on-outside-range": RULE,
+    "torque-control-same-row": RULE,
+    # model map
+    "map-not-record": RULE,
+    "map-unknown-key": RULE,
+    "models-not-map": RULE,
+    "model-number-invalid": RULE,
+    "model-entry-not-record": RULE,
+    "model-unknown-key": RULE,
+    "model-ref-unknown-key": RULE,
+    "model-family-invalid": RULE,
+    "model-name-invalid": RULE,
+    "model-also-shape": RULE,
+    "model-also-names": RULE,
+    "model-list-not-list": RULE,
+    "model-ref-invalid": RULE,
+    "model-lists-missing": RULE,
+    "model-list-empty": RULE,
+    "model-first-from-fw": RULE,
+    "model-from-fw-range": RULE,
+    "model-from-fw-order": RULE,
+    "model-file-missing": RULE,
+    "model-file-protocol": RULE,
+    "model-firmware-version-places": RULE,
+    "model-default-missing": RULE,
+    "model-default-invalid": RULE,
+    "model-default-unexpected": RULE,
+    "model-needs-both-lists": RULE,
+    "model-legacy-tables": Cause(
+        EXIT_RULE, "the `tables` key was removed in T2; list the tables under `p1` and `p2` (ron-schema §2)"
+    ),
+    "file-under-two-numbers": RULE,
+    "type-ident-duplicate": RULE,
+    "module-ident-reserved": RULE,
+    # not_mapped
+    "not-mapped-not-list": RULE,
+    "not-mapped-record-invalid": RULE,
+    "not-mapped-unknown-key": RULE,
+    "not-mapped-number-unknown": RULE,
+    "not-mapped-reason-invalid": Cause(
+        EXIT_RULE, "being unverified is never a reason: an unverified table stays mapped and flagged unverified"
+    ),
+    "not-mapped-file-missing": RULE,
+    "not-mapped-also-mapped": RULE,
+    "not-mapped-duplicate": RULE,
+    "table-unlisted": Cause(
+        EXIT_RULE, "map it under its model number, or record it in `not_mapped` with its reason (FR-7.4)"
+    ),
+}
+
+
+@dataclasses.dataclass
+class Diagnostic:
+    """One finding: a stable cause code, its facts as fields, and a message that states them.
+
+    `file` is the file the finding is in (empty for the command line) and
+    `location` the row, key or model number inside it; `model`, `register`
+    and `field` name the model number, register and key involved; `values`
+    holds the values that decided it (`found` against `expected` or
+    `allowed`, and any other, such as `index`, `table` or `today`).
+    """
+
+    code: str
+    file: str
+    location: str
+    message: str
+    model: int | None = None
+    register: str | None = None
+    field: str | None = None
+    values: dict[str, object] = dataclasses.field(default_factory=dict)
+
+    @property
+    def exit_code(self) -> int:
+        return CAUSES[self.code].exit_code
+
+    @property
+    def hint(self) -> str | None:
+        """Advice for the usual cause, kept apart from the facts of the message (FR-6.12)."""
+        return CAUSES[self.code].hint
+
+    def data(self) -> dict[str, object]:
+        """Every field as one flat dict."""
+        return {
+            "code": self.code,
+            "file": self.file,
+            "location": self.location,
+            "message": self.message,
+            "model": self.model,
+            "register": self.register,
+            "field": self.field,
+            **self.values,
+        }
+
+    def line(self) -> str:
+        """The printed line: `FILE: LOCATION: [CAUSE] MESSAGE`."""
+        # DECISION: keep the old `file: location: message` frame and insert `[cause]`; no script, xtask step or
+        # CI job parses the text (CI reads only the exit code), and grep on `[cause]` finds every occurrence.
+        where = self.file or PROG
+        if "line" in self.values and "column" in self.values:
+            where += f":{self.values['line']}:{self.values['column']}"
+        head = f"{where}: {self.location}: " if self.location else f"{where}: "
+        return f"{head}[{self.code}] {self.message}"
+
+
+class Report:
+    """The diagnostics of one run."""
+
+    def __init__(self) -> None:
+        self.diagnostics: list[Diagnostic] = []
+
+    def add(
+        self,
+        code: str,
+        file: str,
+        location: str,
+        message: str,
+        *,
+        model: int | None = None,
+        register: str | None = None,
+        field: str | None = None,
+        **values: object,
+    ) -> None:
+        """Records one diagnostic. A code missing from `CAUSES` is a bug in this script: KeyError."""
+        if code not in CAUSES:
+            raise KeyError(f"unregistered cause code {code!r}")
+        self.diagnostics.append(Diagnostic(code, file, location, message, model, register, field, values))
+
+    def lines(self) -> list[str]:
+        """One line per diagnostic, each followed by `  hint: …` when its cause has advice."""
+        out: list[str] = []
+        # DECISION: the hint goes on its own indented line under its diagnostic, on stdout and stderr alike,
+        # so the diagnostic line itself holds facts only (FR-6.12) and stays one line per finding.
+        for diagnostic in self.diagnostics:
+            out.append(diagnostic.line())
+            if diagnostic.hint:
+                out.append(f"  hint: {diagnostic.hint}")
+        return out
+
+    def exit_code(self) -> int:
+        """The highest exit code among the diagnostics, 0 without any."""
+        # DECISION: when several failure classes occur the highest code wins; every class above 1 is input the
+        # check could not take in, which outranks a broken rule.
+        return max((d.exit_code for d in self.diagnostics), default=EXIT_OK)
+
+
+def _describe(value: object) -> str:
+    """A parsed value in a few words, for a message that must not print a whole table."""
+    # DECISION: a shape check (record, list) reports this description as `found`, not the raw value, which
+    # can be a whole table; a value check reports the raw value itself.
+    if value is None:
+        return "nothing"
+    if isinstance(value, Record):
+        return "a record" if value else "an empty record"
+    if isinstance(value, dict):
+        return "a map"
+    if isinstance(value, list):
+        return "a list" if value else "an empty list"
+    if isinstance(value, str):
+        return f"string {value!r}"
+    if isinstance(value, int):
+        return f"integer {value}"
+    if isinstance(value, float):
+        return f"number {value}"
+    if isinstance(value, Ident):
+        return f"identifier `{value.name}`"
+    if isinstance(value, Tagged):
+        return f"`{value.name}(…)`"
+    return type(value).__name__
+
+
+def _name(value: object) -> object:
+    """An identifier's name (`RW` for `Ident("RW")`), any other value as it is."""
+    return value.name if isinstance(value, Ident) else value
+
+
+def _shown(value: object) -> str:
+    """`_name(value)` for a message, `-` when absent."""
+    return "-" if value is None else str(_name(value))
+
+
+# --------------------------------------------------------------------------
+# Loading
+# --------------------------------------------------------------------------
+
+
 class LoadError(Exception):
-    """Exit code 2: a missing `dynamixel.ron` or a file that does not parse."""
+    """Input the check cannot take in: carries one diagnostic per file it could not load."""
+
+    def __init__(self, diagnostics: list[Diagnostic]) -> None:
+        super().__init__("\n".join(d.line() for d in diagnostics))
+        self.diagnostics = diagnostics
+
+
+_UNREAD = object()
+
+
+def _read_ron(path: Path, report: Report) -> object:
+    """Reads, decodes and parses one file; on failure records why and returns `_UNREAD`."""
+    try:
+        data = path.read_bytes()
+    except OSError as err:
+        report.add(
+            "read-failed", path.name, "", f"read failed: {err}", operation="read", path=str(path), errno=err.errno
+        )
+        return _UNREAD
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as err:
+        byte = f"0x{data[err.start]:02x}"
+        report.add(
+            "not-utf8",
+            path.name,
+            "",
+            f"byte {byte} at offset {err.start} is not UTF-8",
+            operation="decode",
+            path=str(path),
+            offset=err.start,
+            found=byte,
+        )
+        return _UNREAD
+    try:
+        return parse_ron(text, path.name)
+    except RonError as err:
+        report.add(
+            "ron-parse",
+            path.name,
+            "",
+            err.message,
+            operation="parse",
+            path=str(path),
+            line=err.line,
+            column=err.col,
+            parser_code=err.code,
+        )
+        return _UNREAD
+
+
+def read_inputs(directory: Path, report: Report) -> tuple[object, dict[str, object]]:
+    """Reads `dynamixel.ron` and every other `*.ron` in `directory` (stem -> value).
+
+    Every file it cannot take in gets a diagnostic and is left out; the map is
+    None when missing or unreadable.
+    """
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError as err:
+        report.add(
+            "read-failed",
+            str(directory),
+            "",
+            f"list failed: {err}",
+            operation="list",
+            path=str(directory),
+            errno=err.errno,
+        )
+        return None, {}
+    map_path = directory / MAP_FILE
+    if MAP_FILE not in names:
+        report.add("map-missing", MAP_FILE, "", f"{map_path} does not exist", path=str(map_path))
+    tables: dict[str, object] = {}
+    # DECISION: list the directory instead of globbing it, so an unreadable directory is a diagnostic rather
+    # than an empty table set; the names kept are those `*.ron` matched (no dot file, the map apart).
+    for name in names:
+        if not name.endswith(".ron") or name.startswith(".") or name == MAP_FILE:
+            continue
+        path = directory / name
+        value = _read_ron(path, report)
+        if value is not _UNREAD:
+            tables[path.stem] = value
+    model_map = _read_ron(map_path, report) if MAP_FILE in names else _UNREAD
+    return (None if model_map is _UNREAD else model_map), tables
 
 
 def load(directory: Path) -> tuple[object, dict[str, object]]:
-    """Reads `dynamixel.ron` and every other `*.ron` in `directory` (stem -> value)."""
-    map_path = directory / MAP_FILE
-    if not map_path.is_file():
-        raise LoadError(f"{map_path}: missing {MAP_FILE}")
-    tables: dict[str, object] = {}
-    for path in sorted(directory.glob("*.ron")):
-        if path.name == MAP_FILE:
-            continue
-        tables[path.stem] = parse_ron(path.read_text(encoding="utf-8"), path.name)
-    model_map = parse_ron(map_path.read_text(encoding="utf-8"), MAP_FILE)
+    """`read_inputs` for callers that want every file or nothing: raises LoadError naming each failure."""
+    report = Report()
+    model_map, tables = read_inputs(directory, report)
+    if report.diagnostics:
+        raise LoadError(report.diagnostics)
     return model_map, tables
 
 
 # --------------------------------------------------------------------------
 # Checking
 # --------------------------------------------------------------------------
-
-
-class Report:
-    """Errors of one run, each `(file, location, message)`."""
-
-    def __init__(self) -> None:
-        self.errors: list[tuple[str, str, str]] = []
-
-    def add(self, file: str, location: str, message: str) -> None:
-        self.errors.append((file, location, message))
-
-    def lines(self) -> list[str]:
-        return [f"{f}: {loc}: {msg}" if loc else f"{f}: {msg}" for f, loc, msg in self.errors]
 
 
 def _is_record(value: object) -> bool:
@@ -390,6 +902,12 @@ def _row_location(row: dict) -> str:
     address = row.get("address", "?")
     name = row.get("data_name", "?")
     return f'row {address} "{name}"'
+
+
+def _register(row: dict) -> str | None:
+    """The row's `data_name` when it is a string."""
+    name = row.get("data_name")
+    return name if isinstance(name, str) else None
 
 
 def table_rows(table: object) -> list[dict]:
@@ -413,75 +931,181 @@ def check_table_shape(stem: str, table: object, report: Report) -> None:
     """`control_table` is a non-empty list of rows with `address`, `size` and `data_name`."""
     file = f"{stem}.ron"
     if not _is_record(table):
-        report.add(file, "", "the file is not a record `( … )`")
+        found = _describe(table)
+        report.add("table-not-record", file, "", f"the file is not a record `( … )`, found {found}", found=found)
         return
     rows = table.get("control_table")
     if rows is None:
-        report.add(file, "", "missing `control_table`")
+        report.add("control-table-missing", file, "", "missing `control_table`", field="control_table")
         return
     if not isinstance(rows, list) or not rows:
-        report.add(file, "`control_table`", "must be a non-empty list of rows")
+        found = _describe(rows)
+        report.add(
+            "control-table-shape",
+            file,
+            "`control_table`",
+            f"must be a non-empty list of rows, found {found}",
+            field="control_table",
+            found=found,
+        )
         return
     for i, row in enumerate(rows):
         if not _is_record(row):
-            report.add(file, f"`control_table` item {i}", "not a row record")
+            found = _describe(row)
+            report.add(
+                "row-not-record",
+                file,
+                f"`control_table` item {i}",
+                f"not a row record, found {found}",
+                field="control_table",
+                index=i,
+                found=found,
+            )
             continue
         loc = _row_location(row)
+        register = _register(row)
         address, size, name = row.get("address"), row.get("size"), row.get("data_name")
-        if not isinstance(address, int) or not 0 <= address <= 0xFFFF:
-            report.add(file, loc, "`address` must be an integer 0–65535")
-        if not isinstance(size, int) or not 1 <= size <= 0xFF:
-            report.add(file, loc, "`size` must be an integer 1–255")
+        if not _is_int(address) or not 0 <= address <= 0xFFFF:
+            report.add(
+                "row-address-invalid",
+                file,
+                loc,
+                f"`address` must be an integer 0–65535, found {address!r}",
+                register=register,
+                field="address",
+                found=address,
+                allowed=(0, 0xFFFF),
+            )
+        if not _is_int(size) or not 1 <= size <= 0xFF:
+            report.add(
+                "row-size-invalid",
+                file,
+                loc,
+                f"`size` must be an integer 1–255, found {size!r}",
+                register=register,
+                field="size",
+                found=size,
+                allowed=(1, 0xFF),
+            )
         if not isinstance(name, str) or not name:
-            report.add(file, loc, "`data_name` must be a non-empty string")
+            report.add(
+                "row-name-invalid",
+                file,
+                loc,
+                f"`data_name` must be a non-empty string, found {name!r}",
+                register=register,
+                field="data_name",
+                found=name,
+            )
 
 
-def check_url(file: str, location: str, url: object, report: Report) -> None:
+# The keys of a table (ron-schema §1, fr9-schema).
+TABLE_KEYS = (
+    "source",
+    "protocols",
+    "instructions",
+    "operating_modes",
+    "type_info",
+    "unit_info",
+    "control_table",
+    "unit_source",
+    "torque_control_mode",
+)
+
+
+def check_table_keys(stem: str, table: dict, report: Report) -> None:
+    """No key outside TABLE_KEYS: an unknown key (a typo, say) is reported, never ignored."""
+    unknown = sorted(set(table) - set(TABLE_KEYS))
+    if unknown:
+        report.add("table-unknown-key", f"{stem}.ron", "", f"unknown key(s) {', '.join(unknown)}", found=unknown)
+
+
+def check_url(file: str, location: str, url: object, report: Report, field: str, **context: object) -> None:
     """An e-Manual URL: a string starting with `https://emanual.robotis.com/`."""
     if not isinstance(url, str):
-        report.add(file, location, "must be a URL string")
+        report.add(
+            "url-not-string", file, location, f"must be a URL string, found {url!r}", field=field, found=url, **context
+        )
     elif not url.startswith(EMANUAL_PREFIX):
-        report.add(file, location, f"URL {url!r} is not on {EMANUAL_PREFIX}")
+        report.add(
+            "url-not-emanual",
+            file,
+            location,
+            f"URL {url!r} is not on {EMANUAL_PREFIX}",
+            field=field,
+            found=url,
+            expected=EMANUAL_PREFIX,
+            **context,
+        )
 
 
 def check_source(stem: str, table: dict, today: datetime.date, report: Report) -> None:
     """`source: Unverified` or `source: Verified(url, verified)` (FR-001, FR-002)."""
     file = f"{stem}.ron"
+    expected = "`Unverified` or `Verified(url: …, verified: …)`"
     if "source" not in table:
-        report.add(file, "", "missing `source` (Unverified or Verified(url, verified))")
+        report.add(
+            "source-missing", file, "", f"missing `source`, expected {expected}", field="source", expected=expected
+        )
         return
     source = table["source"]
     if source == Ident("Unverified"):
         return
-    check_verified(file, "source", source, today, report, "must be `Unverified` or `Verified(url: …, verified: …)`")
+    check_verified(file, "source", source, today, report, expected)
 
 
-def check_verified(file: str, key: str, value: object, today: datetime.date, report: Report, shape: str) -> None:
+def check_verified(file: str, key: str, value: object, today: datetime.date, report: Report, expected: str) -> None:
     """A `Verified(url: …, verified: …)` value under `key`: e-Manual URL, real ISO date, not in the future."""
+    loc = f"`{key}`"
     if not (isinstance(value, Tagged) and value.name == "Verified" and _is_record(value.args)):
-        report.add(file, f"`{key}`", f"{shape}, found {value!r}")
+        report.add(
+            "source-shape", file, loc, f"must be {expected}, found {value!r}", field=key, found=value, expected=expected
+        )
         return
     args = value.args
     extra = sorted(set(args) - {"url", "verified"})
     if extra:
-        report.add(file, f"`{key}`", f"unknown field(s) {', '.join(extra)}")
+        report.add("source-unknown-field", file, loc, f"unknown field(s) {', '.join(extra)}", field=key, found=extra)
     if "url" not in args:
-        report.add(file, f"`{key}`", "missing `url`")
+        report.add("source-url-missing", file, loc, "missing `url`", field=f"{key}.url")
     else:
-        check_url(file, f"`{key}` url", args["url"], report)
+        check_url(file, f"`{key}` url", args["url"], report, f"{key}.url")
     date = args.get("verified")
+    field = f"{key}.verified"
     if date is None:
-        report.add(file, f"`{key}`", "missing `verified` date")
+        report.add("source-date-missing", file, loc, "missing `verified` date", field=field)
     elif not isinstance(date, str) or not DATE_RE.match(date):
-        report.add(file, f"`{key}` verified", f"{date!r} is not an ISO date YYYY-MM-DD")
+        report.add(
+            "source-date-not-iso",
+            file,
+            f"`{key}` verified",
+            f"{date!r} is not an ISO date YYYY-MM-DD",
+            field=field,
+            found=date,
+        )
     else:
         try:
             day = datetime.date.fromisoformat(date)
         except ValueError:
-            report.add(file, f"`{key}` verified", f"{date!r} is not a real date")
+            report.add(
+                "source-date-not-real",
+                file,
+                f"`{key}` verified",
+                f"{date!r} is not a real date",
+                field=field,
+                found=date,
+            )
         else:
             if day > today:
-                report.add(file, f"`{key}` verified", f"{date} is in the future (today is {today.isoformat()})")
+                report.add(
+                    "source-date-future",
+                    file,
+                    f"`{key}` verified",
+                    f"{date} is in the future (today is {today.isoformat()})",
+                    field=field,
+                    found=date,
+                    today=today.isoformat(),
+                )
 
 
 INSTRUCTIONS = (
@@ -504,63 +1128,183 @@ def _protocol_names(table: dict) -> list[str] | None:
 def check_instructions(stem: str, table: dict, report: Report) -> None:
     """`instructions` on verified tables only, one entry or more per protocol (data-model "Instruction entry")."""
     file = f"{stem}.ron"
-    is_verified = isinstance(table.get("source"), Tagged)
+    source = table.get("source")
+    is_verified = isinstance(source, Tagged)
     entries = table.get("instructions")
     if entries is None:
         if is_verified:
-            report.add(file, "`instructions`", "missing; a verified table lists its instructions per protocol")
+            report.add(
+                "instructions-missing", file, "`instructions`", "missing on a verified table", field="instructions"
+            )
         return
     if not is_verified:
-        report.add(file, "`instructions`", "allowed on verified tables only")
+        report.add(
+            "instructions-on-unverified",
+            file,
+            "`instructions`",
+            f"present while `source` is {_shown(source)}",
+            field="instructions",
+            source=source,
+        )
         return
     if not isinstance(entries, list) or not entries:
-        report.add(file, "`instructions`", "must be a non-empty list of entries")
+        found = _describe(entries)
+        report.add(
+            "instructions-shape",
+            file,
+            "`instructions`",
+            f"must be a non-empty list of entries, found {found}",
+            field="instructions",
+            found=found,
+        )
         return
     protocols = _protocol_names(table)
     seen: dict[str, list[object]] = {}
     for i, entry in enumerate(entries):
         loc = f"`instructions` entry {i}"
         if not _is_record(entry):
-            report.add(file, loc, "must be a record `(protocol: …, source: …, list: […])`")
+            found = _describe(entry)
+            report.add(
+                "instruction-entry-not-record",
+                file,
+                loc,
+                f"must be a record `(protocol: …, source: …, list: […])`, found {found}",
+                field="instructions",
+                index=i,
+                found=found,
+            )
             continue
         unknown = sorted(set(entry) - {"protocol", "source", "list", "from_fw"})
         if unknown:
-            report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+            report.add(
+                "instruction-entry-unknown-field",
+                file,
+                loc,
+                f"unknown field(s) {', '.join(unknown)}",
+                field="instructions",
+                index=i,
+                found=unknown,
+            )
         protocol = entry.get("protocol")
         name = protocol.name if isinstance(protocol, Ident) else None
         if name not in PROTOCOLS:
-            report.add(file, loc, f"`protocol` must be P1 or P2, found {protocol!r}")
+            report.add(
+                "instruction-protocol-invalid",
+                file,
+                loc,
+                f"`protocol` must be P1 or P2, found {protocol!r}",
+                field="protocol",
+                index=i,
+                found=protocol,
+                allowed=PROTOCOLS,
+            )
         elif protocols is not None and name not in protocols:
-            report.add(file, loc, f"`protocol` {name} is not in the table's `protocols`")
+            report.add(
+                "instruction-protocol-not-in-table",
+                file,
+                loc,
+                f"`protocol` {name} is not in the table's `protocols` [{', '.join(protocols)}]",
+                field="protocol",
+                index=i,
+                found=name,
+                allowed=protocols,
+            )
         if "source" not in entry:
-            report.add(file, loc, "missing `source` (the protocol page URL)")
+            report.add(
+                "instruction-source-missing",
+                file,
+                loc,
+                "missing `source` (the protocol page URL)",
+                field="source",
+                index=i,
+            )
         else:
-            check_url(file, f"{loc} `source`", entry["source"], report)
+            check_url(file, f"{loc} `source`", entry["source"], report, "instructions.source", index=i)
         names = entry.get("list")
         if not isinstance(names, list) or not names:
-            report.add(file, loc, "`list` must be a non-empty list of instruction names")
+            found = _describe(names)
+            report.add(
+                "instruction-list-shape",
+                file,
+                loc,
+                f"`list` must be a non-empty list of instruction names, found {found}",
+                field="list",
+                index=i,
+                found=found,
+            )
         else:
             listed: list[str] = []
             for item in names:
                 if not isinstance(item, Ident) or item.name not in INSTRUCTIONS:
-                    report.add(file, loc, f"unknown instruction {item!r}")
+                    report.add(
+                        "instruction-unknown",
+                        file,
+                        loc,
+                        f"unknown instruction {item!r}",
+                        field="list",
+                        index=i,
+                        found=item,
+                        allowed=INSTRUCTIONS,
+                    )
                     continue
                 if item.name in listed:
-                    report.add(file, loc, f"{item.name} listed twice")
+                    report.add(
+                        "instruction-duplicate",
+                        file,
+                        loc,
+                        f"{item.name} listed twice",
+                        field="list",
+                        index=i,
+                        found=item.name,
+                    )
                 listed.append(item.name)
                 if name == "P1" and item.name not in P1_INSTRUCTIONS:
-                    report.add(file, loc, f"{item.name} is not a Protocol 1.0 instruction")
+                    report.add(
+                        "instruction-not-p1",
+                        file,
+                        loc,
+                        f"{item.name} is not a Protocol 1.0 instruction",
+                        field="list",
+                        index=i,
+                        found=item.name,
+                        allowed=P1_INSTRUCTIONS,
+                    )
         from_fw = entry.get("from_fw")
-        if from_fw is not None and (not isinstance(from_fw, int) or not 0 <= from_fw <= 255):
-            report.add(file, loc, f"`from_fw` must be an integer 0–255, found {from_fw!r}")
+        if from_fw is not None and (not _is_int(from_fw) or not 0 <= from_fw <= 255):
+            report.add(
+                "instruction-from-fw-invalid",
+                file,
+                loc,
+                f"`from_fw` must be an integer 0–255, found {from_fw!r}",
+                field="from_fw",
+                index=i,
+                found=from_fw,
+                allowed=(0, 255),
+            )
         if name in PROTOCOLS:
             if from_fw in seen.setdefault(name, []):
                 shown = "none" if from_fw is None else from_fw
-                report.add(file, loc, f"two {name} entries with the same `from_fw` ({shown})")
+                report.add(
+                    "instruction-from-fw-duplicate",
+                    file,
+                    loc,
+                    f"two {name} entries with the same `from_fw` ({shown})",
+                    field="from_fw",
+                    index=i,
+                    protocol=name,
+                    found=from_fw,
+                )
             seen[name].append(from_fw)
     for protocol in protocols or []:
         if protocol in PROTOCOLS and protocol not in seen:
-            report.add(file, "`instructions`", f"no entry for {protocol}, which is in `protocols`")
+            report.add(
+                "instructions-protocol-missing",
+                file,
+                "`instructions`",
+                f"no entry for {protocol}, which is in `protocols`",
+                field="instructions",
+                protocol=protocol,
+            )
 
 
 ACCESS_VALUES = ("R", "RW")
@@ -607,23 +1351,49 @@ def check_protocols(stem: str, table: dict, report: Report) -> None:
     file = f"{stem}.ron"
     protocols = table.get("protocols")
     if protocols is None:
-        report.add(file, "", "missing `protocols` ([P1], [P2] or [P1, P2])")
+        report.add(
+            "protocols-missing", file, "", "missing `protocols`, expected [P1], [P2] or [P1, P2]", field="protocols"
+        )
         return
     if not isinstance(protocols, list):
-        report.add(file, "`protocols`", f"must be a list such as [P1, P2], found {protocols!r}")
+        report.add(
+            "protocols-not-list",
+            file,
+            "`protocols`",
+            f"must be a list such as [P1, P2], found {protocols!r}",
+            field="protocols",
+            found=protocols,
+        )
         return
     if not protocols:
-        report.add(file, "`protocols`", "must not be empty")
+        found = _describe(protocols)
+        report.add(
+            "protocols-empty", file, "`protocols`", f"must not be empty, found {found}", field="protocols", found=found
+        )
         return
     seen: list[str] = []
     for item in protocols:
         name = item.name if isinstance(item, Ident) else None
         if name not in PROTOCOLS:
-            report.add(file, "`protocols`", f"unknown protocol {item!r} (P1 or P2)")
+            report.add(
+                "protocol-unknown",
+                file,
+                "`protocols`",
+                f"unknown protocol {item!r} (P1 or P2)",
+                field="protocols",
+                found=item,
+                allowed=PROTOCOLS,
+            )
         elif name in seen:
-            report.add(file, "`protocols`", f"{name} listed twice")
+            report.add("protocol-duplicate", file, "`protocols`", f"{name} listed twice", field="protocols", found=name)
         else:
             seen.append(name)
+
+
+ROW_FIELD_CAUSES = (
+    ("access", ACCESS_VALUES, "row-access-missing", "row-access-invalid"),
+    ("area", AREA_VALUES, "row-area-missing", "row-area-invalid"),
+)
 
 
 def check_row_fields(stem: str, table: dict, report: Report) -> None:
@@ -631,18 +1401,40 @@ def check_row_fields(stem: str, table: dict, report: Report) -> None:
     file = f"{stem}.ron"
     for row in table_rows(table):
         loc = _row_location(row)
-        for key, allowed in (("access", ACCESS_VALUES), ("area", AREA_VALUES)):
+        register = row["data_name"]
+        for key, allowed, missing, invalid in ROW_FIELD_CAUSES:
             if key not in row:
-                report.add(file, loc, f"missing `{key}`")
+                report.add(missing, file, loc, f"missing `{key}`", register=register, field=key)
             elif not (isinstance(row[key], Ident) and row[key].name in allowed):
-                report.add(file, loc, f"`{key}` must be {' or '.join(allowed)}, found {row[key]}")
+                report.add(
+                    invalid,
+                    file,
+                    loc,
+                    f"`{key}` must be {' or '.join(allowed)}, found {row[key]}",
+                    register=register,
+                    field=key,
+                    found=row[key],
+                    allowed=allowed,
+                )
         unknown = sorted(set(row) - {"address", "size", "data_name", "access", "area", "range"})
         if unknown:
-            report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+            report.add(
+                "row-unknown-field",
+                file,
+                loc,
+                f"unknown field(s) {', '.join(unknown)}",
+                register=register,
+                found=unknown,
+            )
 
 
 def _has(row: dict, access: str | None, area: str | None) -> bool:
     return (access is None or row.get("access") == Ident(access)) and (area is None or row.get("area") == Ident(area))
+
+
+def _attributes(row: dict) -> tuple[object, object]:
+    """The row's (access, area) as names, None where absent."""
+    return _name(row.get("access")), _name(row.get("area"))
 
 
 def mode_rows(table: object) -> list[dict]:
@@ -656,37 +1448,79 @@ def check_mode_source(stem: str, table: dict, report: Report) -> None:
     names = [r["data_name"] for r in rows]
     op, cm = names.count("Operating Mode"), names.count("Control Mode")
     pair = "CW Angle Limit" in names and "CCW Angle Limit" in names
-    any_cw = "CW Angle Limit" in names or "CCW Angle Limit" in names
-    if op > 1:
-        report.add(file, "", f"{op} `Operating Mode` rows; a table has at most one")
-    if cm > 1:
-        report.add(file, "", f"{cm} `Control Mode` rows; a table has at most one")
+    angle_limits = [n for n in ("CW Angle Limit", "CCW Angle Limit") if n in names]
+    for name, count in (("Operating Mode", op), ("Control Mode", cm)):
+        if count > 1:
+            report.add(
+                "mode-row-duplicate",
+                file,
+                "",
+                f"{count} `{name}` rows; a table has at most one",
+                register=name,
+                count=count,
+            )
     if op and cm:
-        report.add(file, "", "both an `Operating Mode` and a `Control Mode` row (two mode sources)")
-    if op and any_cw:
-        report.add(file, "", "an `Operating Mode` row beside CW/CCW Angle Limit rows (two mode sources)")
+        report.add(
+            "mode-rows-both",
+            file,
+            "",
+            "both an `Operating Mode` and a `Control Mode` row (two mode sources)",
+            found=["Operating Mode", "Control Mode"],
+        )
+    if op and angle_limits:
+        report.add(
+            "mode-row-beside-angle-limits",
+            file,
+            "",
+            f"an `Operating Mode` row beside {' and '.join(angle_limits)} rows (two mode sources)",
+            register="Operating Mode",
+            found=angle_limits,
+        )
     if cm and stem != "xl320":
-        report.add(file, "", "`Control Mode` is accepted only in xl320.ron (contract 4.3); raise a second one first")
+        report.add(
+            "control-mode-outside-xl320", file, "", "a `Control Mode` row outside xl320.ron", register="Control Mode"
+        )
     if not op and not cm and not pair:
         report.add(
-            file, "", "no mode source: no `Operating Mode` or `Control Mode` row and no CW/CCW Angle Limit pair"
+            "mode-source-missing",
+            file,
+            "",
+            "no mode source: no `Operating Mode` or `Control Mode` row and no CW/CCW Angle Limit pair",
         )
     for row in mode_rows(table):
         if row["size"] != 1 or not _has(row, "RW", "EEPROM"):
+            found = (row["size"], *_attributes(row))
             report.add(
+                "mode-row-attributes",
                 file,
                 _row_location(row),
-                f"the mode register must be size 1, RW, EEPROM (found size {row['size']}, "
-                f"{row.get('access', '-')}, {row.get('area', '-')})",
+                f"the mode register must be size 1, RW, EEPROM, "
+                f"found size {found[0]}, {_shown(found[1])}, {_shown(found[2])}",
+                register=row["data_name"],
+                found=found,
+                expected=(1, "RW", "EEPROM"),
             )
     modes = table.get("operating_modes")
-    has_mode_row = bool(op or cm)
+    mode_name = "Operating Mode" if op else "Control Mode" if cm else None
     if modes is None:
-        if has_mode_row:
-            report.add(file, "`operating_modes`", "missing; a table with a mode row lists what each mode value means")
+        if mode_name:
+            report.add(
+                "operating-modes-missing",
+                file,
+                "`operating_modes`",
+                f"missing beside the `{mode_name}` row",
+                register=mode_name,
+                field="operating_modes",
+            )
         return
-    if not has_mode_row:
-        report.add(file, "`operating_modes`", "present without an `Operating Mode` or `Control Mode` row")
+    if not mode_name:
+        report.add(
+            "operating-modes-without-mode-row",
+            file,
+            "`operating_modes`",
+            "present without an `Operating Mode` or `Control Mode` row",
+            field="operating_modes",
+        )
     check_operating_modes(file, modes, report, "unit_source" in table)
 
 
@@ -697,65 +1531,142 @@ def _mode_values(modes: dict, key: str) -> set[int]:
     return {v for v in values if isinstance(v, int) and not isinstance(v, bool)}
 
 
+def _check_mode_list(file: str, loc: str, key: str, values: object, report: Report) -> list[int]:
+    """One list of `operating_modes`: reports a non-list and each value outside 0–255; returns the valid values."""
+    field = f"operating_modes.{key}"
+    if not isinstance(values, list):
+        report.add(
+            "mode-list-not-list",
+            file,
+            loc,
+            f"`{key}` must be a list of mode values, found {values!r}",
+            field=field,
+            found=values,
+        )
+        return []
+    valid: list[int] = []
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+            report.add(
+                "mode-value-invalid",
+                file,
+                loc,
+                f"`{key}`: {value!r} is not a mode value 0–255",
+                field=field,
+                found=value,
+                allowed=(0, 255),
+            )
+        else:
+            valid.append(value)
+    return valid
+
+
 def check_operating_modes(file: str, modes: object, report: Report, has_unit_source: bool = False) -> None:
     loc = "`operating_modes`"
     if not _is_record(modes):
-        report.add(file, loc, "must be `(bounded: [...], unbounded: [...], no_position: [...])`")
+        found = _describe(modes)
+        report.add(
+            "operating-modes-not-record",
+            file,
+            loc,
+            f"must be `(bounded: [...], unbounded: [...], no_position: [...])`, found {found}",
+            field="operating_modes",
+            found=found,
+        )
         return
     for key in MODE_LISTS:
         if key not in modes:
-            report.add(file, loc, f"missing `{key}`")
+            report.add("operating-modes-key-missing", file, loc, f"missing `{key}`", field=f"operating_modes.{key}")
     unknown = sorted(set(modes) - set(MODE_LISTS) - set(MODE_REFINED))
     if unknown:
-        report.add(file, loc, f"unknown key(s) {', '.join(unknown)}")
+        report.add(
+            "operating-modes-unknown-key",
+            file,
+            loc,
+            f"unknown key(s) {', '.join(unknown)}",
+            field="operating_modes",
+            found=unknown,
+        )
     refined = [key for key in MODE_REFINED if key in modes]
     if refined:
         if not has_unit_source:
-            report.add(file, loc, "per-mode lists (current, velocity, pwm, current_position) need `unit_source`")
+            report.add(
+                "per-mode-lists-need-unit-source",
+                file,
+                loc,
+                f"per-mode lists {', '.join(refined)} without `unit_source`",
+                field="operating_modes",
+                found=refined,
+            )
         for key in MODE_REFINED:
             if key not in modes:
-                report.add(file, loc, f"missing `{key}`; the per-mode lists come all four or none")
+                report.add(
+                    "per-mode-list-missing",
+                    file,
+                    loc,
+                    f"missing `{key}` beside {', '.join(refined)}",
+                    field=f"operating_modes.{key}",
+                    found=refined,
+                )
     for key in refined:
-        values = modes[key]
-        if not isinstance(values, list):
-            report.add(file, loc, f"`{key}` must be a list of mode values, found {values!r}")
-            continue
-        for value in values:
-            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
-                report.add(file, loc, f"`{key}`: {value!r} is not a mode value 0–255")
+        _check_mode_list(file, loc, key, modes[key], report)
     if len(refined) == len(MODE_REFINED):
         split = {key: _mode_values(modes, key) for key in MODE_REFINED}
         for key, parent in MODE_REFINED.items():
             outside = sorted(split[key] - _mode_values(modes, parent))
             if outside:
-                report.add(file, loc, f"`{key}` value(s) {outside} not in `{parent}`")
+                report.add(
+                    "per-mode-value-outside-parent",
+                    file,
+                    loc,
+                    f"`{key}` value(s) {outside} not in `{parent}`",
+                    field=f"operating_modes.{key}",
+                    found=outside,
+                    parent=parent,
+                )
         seen: dict[int, str] = {}
         for key in ("current", "velocity", "pwm"):
             for value in sorted(split[key]):
                 if value in seen:
-                    report.add(file, loc, f"value {value} in both `{seen[value]}` and `{key}`")
+                    report.add(
+                        "per-mode-value-twice",
+                        file,
+                        loc,
+                        f"value {value} in both `{seen[value]}` and `{key}`",
+                        field=f"operating_modes.{key}",
+                        found=value,
+                        lists=[seen[value], key],
+                    )
                 seen.setdefault(value, key)
         uncovered = sorted(_mode_values(modes, "no_position") - set(seen))
         if uncovered:
-            report.add(file, loc, f"`no_position` value(s) {uncovered} in none of `current`, `velocity`, `pwm`")
+            report.add(
+                "per-mode-value-uncovered",
+                file,
+                loc,
+                f"`no_position` value(s) {uncovered} in none of `current`, `velocity`, `pwm`",
+                field="operating_modes.no_position",
+                found=uncovered,
+            )
     where: dict[int, list[str]] = {}
     for key in MODE_LISTS:
-        values = modes.get(key)
-        if values is None:
+        if key not in modes:
             continue
-        if not isinstance(values, list):
-            report.add(file, loc, f"`{key}` must be a list of mode values, found {values!r}")
-            continue
-        for value in values:
-            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
-                report.add(file, loc, f"`{key}`: {value!r} is not a mode value 0–255")
-                continue
+        for value in _check_mode_list(file, loc, key, modes[key], report):
             if key not in where.setdefault(value, []):
                 where[value].append(key)
     for value, keys in sorted(where.items()):
         if len(keys) > 1:
             both = " and ".join(f"`{k}`" for k in keys)
-            report.add(file, loc, f"value {value} in both {both}")
+            report.add(
+                "mode-value-twice",
+                file,
+                loc,
+                f"value {value} in both {both}",
+                field="operating_modes",
+                found=value,
+                lists=keys,
+            )
 
 
 def check_roles(stem: str, table: dict, info: MapInfo, report: Report) -> None:
@@ -767,45 +1678,80 @@ def check_roles(stem: str, table: dict, info: MapInfo, report: Report) -> None:
         by_name.setdefault(row["data_name"], []).append(row)
     for name, (access, area) in ROLES.items():
         if name not in by_name:
-            report.add(file, "", f"missing role row `{name}`")
+            report.add("role-missing", file, "", f"missing role row `{name}`", register=name)
             continue
         for row in by_name[name]:
             if not _has(row, access, area):
+                found = _attributes(row)
                 report.add(
+                    "role-attributes",
                     file,
                     _row_location(row),
-                    f"role `{name}` must be {access}/{area}, found {row.get('access', '-')}/{row.get('area', '-')}",
+                    f"role `{name}` must be {access}/{area}, found {_shown(found[0])}/{_shown(found[1])}",
+                    register=name,
+                    found=found,
+                    expected=(access, area),
                 )
     for row in by_name.get("Model Number", []):
         if (row["address"], row["size"]) != (0, 2):
-            report.add(file, _row_location(row), "`Model Number` must be at address 0, size 2")
+            report.add(
+                "model-number-place",
+                file,
+                _row_location(row),
+                f"`Model Number` must be at address 0, size 2, found address {row['address']}, size {row['size']}",
+                register="Model Number",
+                found=(row["address"], row["size"]),
+                expected=(0, 2),
+            )
     complete = [form for form in LIMIT_FORMS if all(n in by_name for n in form)]
     for form in LIMIT_FORMS:
         present = [n for n in form if n in by_name]
         if len(present) == 1:
             missing = next(n for n in form if n not in by_name)
-            report.add(file, "", f"half a limit pair: `{present[0]}` without `{missing}`")
+            report.add(
+                "limit-pair-half",
+                file,
+                "",
+                f"half a limit pair: `{present[0]}` without `{missing}`",
+                register=present[0],
+                missing=missing,
+            )
     if len(complete) == 2:
-        report.add(file, "", "both limit forms (Min/Max Position Limit and CW/CCW Angle Limit); exactly one is allowed")
+        shown = " and ".join(" + ".join(form) for form in complete)
+        report.add(
+            "limit-forms-both", file, "", f"both limit forms, {shown}", found=[n for form in complete for n in form]
+        )
     elif not complete:
-        report.add(file, "", "no complete limit pair (Min/Max Position Limit or CW/CCW Angle Limit)")
+        report.add(
+            "limit-pair-missing", file, "", "no complete limit pair (Min/Max Position Limit or CW/CCW Angle Limit)"
+        )
     for form in complete:
         for name in form:
             for row in by_name[name]:
                 if not _has(row, "RW", "EEPROM"):
+                    found = _attributes(row)
                     report.add(
+                        "limit-attributes",
                         file,
                         _row_location(row),
-                        f"limit `{name}` must be RW/EEPROM, found {row.get('access', '-')}/{row.get('area', '-')}",
+                        f"limit `{name}` must be RW/EEPROM, found {_shown(found[0])}/{_shown(found[1])}",
+                        register=name,
+                        found=found,
+                        expected=("RW", "EEPROM"),
                     )
     if info.under(stem, "p1"):
         role_names = set(ROLES) | set(MODE_NAMES) | {n for form in LIMIT_FORMS for n in form} | {FAULT_ROLE}
         for row in rows:
             if row["data_name"] in role_names and row["address"] > 255:
                 report.add(
+                    "p1-address-above-255",
                     file,
                     _row_location(row),
-                    "role or mode row above address 255 in a table mapped under `p1` (Protocol 1 addresses are one byte)",
+                    f"role or mode row at address {row['address']}, above 255, in a table mapped under `p1`",
+                    register=row["data_name"],
+                    field="address",
+                    found=row["address"],
+                    allowed=(0, 255),
                 )
     constants: dict[str, dict] = {}
     for row in rows:
@@ -813,9 +1759,13 @@ def check_roles(stem: str, table: dict, info: MapInfo, report: Report) -> None:
         if ident in constants:
             first = constants[ident]
             report.add(
+                "register-constant-duplicate",
                 file,
                 _row_location(row),
                 f"gives the register constant `{ident}`, like {_row_location(first)}",
+                register=row["data_name"],
+                found=ident,
+                other=first["data_name"],
             )
         else:
             constants[ident] = row
@@ -826,29 +1776,77 @@ def check_type_info(file: str, scale: object, report: Report) -> None:
     """Scale sanity (xtask check 15): max > min for values and radians, zero within min..=max."""
     loc = "`type_info`"
     if scale is None:
-        report.add(file, loc, "missing (the position scale)")
+        report.add("type-info-missing", file, loc, "missing (the position scale)", field="type_info")
         return
     if not _is_record(scale):
-        report.add(file, loc, "must be a record")
+        found = _describe(scale)
+        report.add(
+            "type-info-not-record", file, loc, f"must be a record, found {found}", field="type_info", found=found
+        )
         return
+    unknown = sorted(set(scale) - set(TYPE_INFO_KEYS))
+    if unknown:
+        report.add(
+            "type-info-unknown-key", file, loc, f"unknown key(s) {', '.join(unknown)}", field="type_info", found=unknown
+        )
     missing = [k for k in TYPE_INFO_KEYS if k not in scale]
     if missing:
-        report.add(file, loc, f"missing {', '.join(missing)}")
+        report.add(
+            "type-info-key-missing", file, loc, f"missing {', '.join(missing)}", field="type_info", missing=missing
+        )
         return
     zero, lo, hi = (scale[k] for k in TYPE_INFO_KEYS[:3])
     rmin, rmax = scale["min_radian"], scale["max_radian"]
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in (zero, lo, hi)):
-        report.add(file, loc, "the three position values must be integers")
+        report.add(
+            "type-info-position-not-int",
+            file,
+            loc,
+            f"the zero, min and max position values must be integers, found {zero!r}, {lo!r}, {hi!r}",
+            field="type_info",
+            found=(zero, lo, hi),
+        )
         return
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (rmin, rmax)):
-        report.add(file, loc, "`min_radian` and `max_radian` must be numbers")
+        report.add(
+            "type-info-radian-not-number",
+            file,
+            loc,
+            f"`min_radian` and `max_radian` must be numbers, found {rmin!r}, {rmax!r}",
+            field="type_info",
+            found=(rmin, rmax),
+        )
         return
     if hi <= lo:
-        report.add(file, loc, f"value_of_max_radian_position ({hi}) must be above value_of_min_radian_position ({lo})")
+        report.add(
+            "type-info-max-not-above-min",
+            file,
+            loc,
+            f"value_of_max_radian_position ({hi}) must be above value_of_min_radian_position ({lo})",
+            field="type_info",
+            max=hi,
+            min=lo,
+        )
     if rmax <= rmin:
-        report.add(file, loc, f"max_radian ({rmax}) must be above min_radian ({rmin})")
+        report.add(
+            "type-info-max-radian-not-above-min",
+            file,
+            loc,
+            f"max_radian ({rmax}) must be above min_radian ({rmin})",
+            field="type_info",
+            max=rmax,
+            min=rmin,
+        )
     if not lo <= zero <= hi:
-        report.add(file, loc, f"value_of_zero_radian_position ({zero}) must lie within {lo}..={hi}")
+        report.add(
+            "type-info-zero-outside",
+            file,
+            loc,
+            f"value_of_zero_radian_position ({zero}) must lie within {lo}..={hi}",
+            field="type_info",
+            found=zero,
+            allowed=(lo, hi),
+        )
 
 
 # --------------------------------------------------------------------------
@@ -905,7 +1903,9 @@ UNIT_INFO_FR9_KEYS = ("modes", "profile", "zero_is_unlimited", "range", "bounded
 UNITS = ("deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2")
 SIGN_TYPES = ("unsigned", "twos_complement")
 LEGACY_SIGN_TYPES = ("signed", "unsigned")
-DIRECTION_BIT_RE = re.compile(r"^direction_bit_(\d+)$")
+# DECISION: at most three ASCII digits, so `int()` never meets a huge or non-ASCII number; a longer
+# `direction_bit_…` is an unknown sign type, reported as such.
+DIRECTION_BIT_RE = re.compile(r"^direction_bit_([0-9]{1,3})$")
 MODES_P1 = ("joint", "wheel", "multi_turn", "torque_control")
 PROFILES = ("velocity_based", "time_based")
 TORQUE_CONTROL_KEYS = ("register", "on", "goal")
@@ -932,23 +1932,48 @@ def raw_bounds(size: int, sign_type: str | None) -> tuple[int, int]:
     return -(1 << (bits - 1)), (1 << bits) - 1
 
 
-def check_range(file: str, loc: str, value: object, size: int, sign_type: str | None, report: Report) -> None:
+def check_range(
+    file: str, loc: str, value: object, size: int, sign_type: str | None, report: Report, **context: object
+) -> None:
     """`(min: INT, max: INT)`, `min <= max`, both raw values of the register."""
     if not _is_record(value) or set(value) != {"min", "max"}:
-        report.add(file, loc, f"`range` must be `(min: INT, max: INT)`, found {value!r}")
+        report.add(
+            "range-shape", file, loc, f"`range` must be `(min: INT, max: INT)`, found {value!r}", found=value, **context
+        )
         return
     lo, hi = value["min"], value["max"]
     if not (_is_int(lo) and _is_int(hi)):
-        report.add(file, loc, "`range` min and max must be integers")
+        report.add(
+            "range-not-int",
+            file,
+            loc,
+            f"`range` min and max must be integers, found {lo!r} and {hi!r}",
+            found=(lo, hi),
+            **context,
+        )
         return
     if lo > hi:
-        report.add(file, loc, f"`range` min {lo} is above max {hi}")
+        report.add("range-min-above-max", file, loc, f"`range` min {lo} is above max {hi}", min=lo, max=hi, **context)
+    # DECISION: a size outside 1–255 is already a `row-size-invalid` diagnostic and has no raw bounds, so the fit
+    # is not judged (computing bounds for it failed, or blew up for a huge size).
+    if not 1 <= size <= 0xFF:
+        return
     first, last = raw_bounds(size, sign_type)
     if sign_type is None and lo < 0:
         last = (1 << (8 * size - 1)) - 1
     if lo < first or hi > last:
         shown = f" as {sign_type}" if sign_type else ""
-        report.add(file, loc, f"`range` {lo}..={hi} does not fit a {size}-byte register{shown} ({first}..={last})")
+        report.add(
+            "range-does-not-fit",
+            file,
+            loc,
+            f"`range` {lo}..={hi} does not fit a {size}-byte register{shown} ({first}..={last})",
+            found=(lo, hi),
+            allowed=(first, last),
+            size=size,
+            sign_type=sign_type,
+            **context,
+        )
 
 
 def mode_source_is_angle_limits(table: dict) -> bool:
@@ -960,9 +1985,7 @@ def check_unit_source(stem: str, table: dict, today: datetime.date, report: Repo
     """`unit_source`, when present, is `Verified(url, verified)`; returns whether it is present."""
     if "unit_source" not in table:
         return False
-    check_verified(
-        f"{stem}.ron", "unit_source", table["unit_source"], today, report, "must be `Verified(url: …, verified: …)`"
-    )
+    check_verified(f"{stem}.ron", "unit_source", table["unit_source"], today, report, "`Verified(url: …, verified: …)`")
     return True
 
 
@@ -973,60 +1996,158 @@ def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> Non
     if entries is None:
         return
     if not isinstance(entries, list):
-        report.add(file, "`unit_info`", "must be a list of entries")
+        found = _describe(entries)
+        report.add(
+            "unit-info-not-list",
+            file,
+            "`unit_info`",
+            f"must be a list of entries, found {found}",
+            field="unit_info",
+            found=found,
+        )
         return
     rows = {r["data_name"]: r for r in table_rows(table)}
     has_drive_mode = "Drive Mode" in rows
     angle_limits = mode_source_is_angle_limits(table)
     has_torque_mode = "torque_control_mode" in table
     seen: list[tuple[str, str | None, str | None, int]] = []
-    valid: list[dict] = []
+    valid: list[tuple[int, dict]] = []
     for i, item in enumerate(entries):
         loc = f"`unit_info` entry {i}"
         if not _is_record(item):
-            report.add(file, loc, "must be a record `{ data_name: …, value: …, unit: …, sign_type: … }`")
+            found = _describe(item)
+            report.add(
+                "unit-entry-not-record",
+                file,
+                loc,
+                f"must be a record `{{ data_name: …, value: …, unit: …, sign_type: … }}`, found {found}",
+                field="unit_info",
+                index=i,
+                found=found,
+            )
             continue
         name = item.get("data_name")
         if isinstance(name, str) and name:
-            loc = f'`unit_info` "{name}"'
+            loc = f'`unit_info` entry {i} "{name}"'
         else:
-            report.add(file, loc, "`data_name` must be a non-empty string")
+            report.add(
+                "unit-entry-name-invalid",
+                file,
+                loc,
+                f"`data_name` must be a non-empty string, found {name!r}",
+                field="data_name",
+                index=i,
+                found=name,
+            )
+        context: dict = {"register": name if isinstance(name, str) and name else None, "index": i}
         for key in UNIT_INFO_KEYS[1:]:
             if key not in item:
-                report.add(file, loc, f"missing `{key}`")
+                report.add("unit-entry-key-missing", file, loc, f"missing `{key}`", field=key, **context)
         value, unit, sign = item.get("value"), item.get("unit"), item.get("sign_type")
         if "value" in item and not (_is_number(value) and value > 0):
-            report.add(file, loc, f"`value` must be a number above 0, found {value!r}")
+            report.add(
+                "unit-entry-value-invalid",
+                file,
+                loc,
+                f"`value` must be a number above 0, found {value!r}",
+                field="value",
+                found=value,
+                **context,
+            )
         if "unit" in item and not (isinstance(unit, str) and unit):
-            report.add(file, loc, f"`unit` must be a non-empty string, found {unit!r}")
+            report.add(
+                "unit-entry-unit-invalid",
+                file,
+                loc,
+                f"`unit` must be a non-empty string, found {unit!r}",
+                field="unit",
+                found=unit,
+                **context,
+            )
+        unknown = sorted(set(item) - set(UNIT_INFO_KEYS) - set(UNIT_INFO_FR9_KEYS))
         if not strict:
             fr9 = sorted(set(item) & set(UNIT_INFO_FR9_KEYS))
             if fr9:
-                report.add(file, loc, f"{', '.join(fr9)} need `unit_source` (the FR-9 data is verified per table)")
-            unknown = sorted(set(item) - set(UNIT_INFO_KEYS) - set(UNIT_INFO_FR9_KEYS))
+                report.add(
+                    "unit-entry-fr9-needs-unit-source",
+                    file,
+                    loc,
+                    f"{', '.join(fr9)} without `unit_source`",
+                    found=fr9,
+                    **context,
+                )
             if unknown:
-                report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+                report.add(
+                    "unit-entry-unknown-field",
+                    file,
+                    loc,
+                    f"unknown field(s) {', '.join(unknown)}",
+                    found=unknown,
+                    **context,
+                )
             if "sign_type" in item and sign not in LEGACY_SIGN_TYPES and not _is_fr9_sign(sign):
-                report.add(file, loc, f"unknown `sign_type` {sign!r}")
+                report.add(
+                    "unit-entry-sign-unknown",
+                    file,
+                    loc,
+                    f"unknown `sign_type` {sign!r}",
+                    field="sign_type",
+                    found=sign,
+                    allowed=(*LEGACY_SIGN_TYPES, *SIGN_TYPES, "direction_bit_N"),
+                    **context,
+                )
             continue
-        unknown = sorted(set(item) - set(UNIT_INFO_KEYS) - set(UNIT_INFO_FR9_KEYS))
         if unknown:
-            report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+            report.add(
+                "unit-entry-unknown-field",
+                file,
+                loc,
+                f"unknown field(s) {', '.join(unknown)}",
+                found=unknown,
+                **context,
+            )
         row = rows.get(name) if isinstance(name, str) else None
         if isinstance(name, str) and name and row is None:
-            report.add(file, loc, "names no row of this table")
+            report.add("unit-entry-no-row", file, loc, "names no row of this table", **context)
         if isinstance(unit, str) and unit not in UNITS:
-            report.add(file, loc, f"`unit` {unit!r} is not one of {', '.join(UNITS)}")
+            report.add(
+                "unit-entry-unit-unknown",
+                file,
+                loc,
+                f"`unit` {unit!r} is not one of {', '.join(UNITS)}",
+                field="unit",
+                found=unit,
+                allowed=UNITS,
+                **context,
+            )
         if "sign_type" in item:
             if not _is_fr9_sign(sign):
                 report.add(
-                    file, loc, f"`sign_type` must be unsigned, twos_complement or direction_bit_N, found {sign!r}"
+                    "unit-entry-sign-invalid",
+                    file,
+                    loc,
+                    f"`sign_type` must be unsigned, twos_complement or direction_bit_N, found {sign!r}",
+                    field="sign_type",
+                    found=sign,
+                    **context,
                 )
                 sign = None
-            elif row is not None:
+            elif row is not None and 1 <= row["size"] <= 0xFF:
                 match = DIRECTION_BIT_RE.match(sign)
-                if match and not 1 <= int(match.group(1)) < 8 * row["size"]:
-                    report.add(file, loc, f"`{sign}`: bit {match.group(1)} is outside a {row['size']}-byte register")
+                last_bit = 8 * row["size"] - 1
+                if match and not 1 <= int(match.group(1)) <= last_bit:
+                    bit = int(match.group(1))
+                    report.add(
+                        "unit-entry-direction-bit-outside",
+                        file,
+                        loc,
+                        f"`{sign}`: bit {bit} is outside a {row['size']}-byte register (1..={last_bit})",
+                        field="sign_type",
+                        found=bit,
+                        size=row["size"],
+                        allowed=(1, last_bit),
+                        **context,
+                    )
                     sign = None
         else:
             sign = None
@@ -1034,33 +2155,106 @@ def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> Non
         mode_keys: list[str | None] = [None]
         if "modes" in item:
             if not angle_limits:
-                report.add(file, loc, "`modes` only in a table whose mode source is the CW/CCW Angle Limit pair")
+                report.add(
+                    "unit-entry-modes-need-angle-limits",
+                    file,
+                    loc,
+                    "`modes` in a table whose mode source is not the CW/CCW Angle Limit pair",
+                    field="modes",
+                    **context,
+                )
             if not isinstance(modes, list) or not modes or not all(isinstance(m, str) for m in modes):
-                report.add(file, loc, f"`modes` must be a non-empty list of {', '.join(MODES_P1)}")
+                report.add(
+                    "unit-entry-modes-invalid",
+                    file,
+                    loc,
+                    f"`modes` must be a non-empty list of {', '.join(MODES_P1)}, found {modes!r}",
+                    field="modes",
+                    found=modes,
+                    **context,
+                )
             else:
                 mode_keys = []
                 for mode in modes:
                     if mode not in MODES_P1:
-                        report.add(file, loc, f"unknown mode {mode!r} (one of {', '.join(MODES_P1)})")
+                        report.add(
+                            "unit-entry-mode-unknown",
+                            file,
+                            loc,
+                            f"unknown mode {mode!r} (one of {', '.join(MODES_P1)})",
+                            field="modes",
+                            found=mode,
+                            allowed=MODES_P1,
+                            **context,
+                        )
                     elif mode == "torque_control" and not has_torque_mode:
-                        report.add(file, loc, "mode `torque_control` without `torque_control_mode`")
+                        report.add(
+                            "unit-entry-mode-needs-torque-control",
+                            file,
+                            loc,
+                            "mode `torque_control` without `torque_control_mode`",
+                            field="modes",
+                            found=mode,
+                            **context,
+                        )
                     if mode in mode_keys:
-                        report.add(file, loc, f"mode {mode!r} listed twice")
+                        report.add(
+                            "unit-entry-mode-duplicate",
+                            file,
+                            loc,
+                            f"mode {mode!r} listed twice",
+                            field="modes",
+                            found=mode,
+                            **context,
+                        )
                     else:
                         mode_keys.append(mode)
         profile = item.get("profile")
         if "profile" in item:
             if profile not in PROFILES:
-                report.add(file, loc, f"`profile` must be one of {', '.join(PROFILES)}, found {profile!r}")
+                report.add(
+                    "unit-entry-profile-invalid",
+                    file,
+                    loc,
+                    f"`profile` must be one of {', '.join(PROFILES)}, found {profile!r}",
+                    field="profile",
+                    found=profile,
+                    allowed=PROFILES,
+                    **context,
+                )
             if not has_drive_mode:
-                report.add(file, loc, "`profile` only in a table with a `Drive Mode` row")
+                report.add(
+                    "unit-entry-profile-needs-drive-mode",
+                    file,
+                    loc,
+                    "`profile` in a table without a `Drive Mode` row",
+                    field="profile",
+                    **context,
+                )
         if "zero_is_unlimited" in item and item["zero_is_unlimited"] not in (Ident("true"), Ident("false")):
-            report.add(file, loc, f"`zero_is_unlimited` must be true or false, found {item['zero_is_unlimited']!r}")
+            report.add(
+                "unit-entry-zero-is-unlimited-invalid",
+                file,
+                loc,
+                f"`zero_is_unlimited` must be true or false, found {item['zero_is_unlimited']!r}",
+                field="zero_is_unlimited",
+                found=item["zero_is_unlimited"],
+                **context,
+            )
         if "range" in item and row is not None:
-            check_range(file, loc, item["range"], row["size"], sign, report)
+            check_range(file, loc, item["range"], row["size"], sign, report, field="range", **context)
         from_fw = item.get("from_fw")
         if "from_fw" in item and not (_is_int(from_fw) and 0 <= from_fw <= 255):
-            report.add(file, loc, f"`from_fw` must be an integer 0–255, found {from_fw!r}")
+            report.add(
+                "unit-entry-from-fw-invalid",
+                file,
+                loc,
+                f"`from_fw` must be an integer 0–255, found {from_fw!r}",
+                field="from_fw",
+                found=from_fw,
+                allowed=(0, 255),
+                **context,
+            )
         if isinstance(name, str):
             selector = profile if isinstance(profile, str) else None
             for mode in mode_keys:
@@ -1068,29 +2262,57 @@ def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> Non
                     (j for n, m, p, j in seen if n == name and _overlaps(m, mode) and _overlaps(p, selector)), None
                 )
                 if clash is not None:
+                    detail = (f", mode {mode}" if mode else "") + (f", profile {selector}" if selector else "")
                     report.add(
+                        "unit-entry-overlap",
                         file,
                         loc,
-                        f"same register, mode and profile as `unit_info` entry {clash}"
-                        " (an entry without `modes` or `profile` applies in all of them)",
+                        f"same register, mode and profile as `unit_info` entry {clash}{detail}",
+                        other=clash,
+                        mode=mode,
+                        profile=selector,
+                        **context,
                     )
                 else:
                     seen.append((name, mode, selector, i))
-            valid.append(item)
-    for item in valid:
+            valid.append((i, item))
+    for i, item in valid:
         bound = item.get("bounded_by")
         if bound is None:
             continue
-        loc = f'`unit_info` "{item["data_name"]}"'
+        loc = f'`unit_info` entry {i} "{item["data_name"]}"'
+        context = {"register": item["data_name"] or None, "field": "bounded_by", "index": i}
         if not isinstance(bound, str) or bound not in rows:
-            report.add(file, loc, f"`bounded_by` {bound!r} names no row of this table")
+            report.add(
+                "bounded-by-no-row",
+                file,
+                loc,
+                f"`bounded_by` {bound!r} names no row of this table",
+                found=bound,
+                **context,
+            )
             continue
         if bound == item["data_name"]:
-            report.add(file, loc, "`bounded_by` names the register itself")
+            report.add(
+                "bounded-by-self",
+                file,
+                loc,
+                f"`bounded_by` {bound!r} names the register itself",
+                found=bound,
+                **context,
+            )
             continue
         scale = (item.get("value"), item.get("unit"))
-        if not any(e["data_name"] == bound and (e.get("value"), e.get("unit")) == scale for e in valid):
-            report.add(file, loc, f"`bounded_by` {bound!r} has no `unit_info` entry of the same value and unit")
+        if not any(e["data_name"] == bound and (e.get("value"), e.get("unit")) == scale for _j, e in valid):
+            report.add(
+                "bounded-by-scale-mismatch",
+                file,
+                loc,
+                f"`bounded_by` {bound!r} has no `unit_info` entry of value {scale[0]!r} and unit {scale[1]!r}",
+                found=bound,
+                expected=scale,
+                **context,
+            )
 
 
 def _overlaps(a: str | None, b: str | None) -> bool:
@@ -1110,9 +2332,16 @@ def check_row_ranges(stem: str, table: dict, strict: bool, report: Report) -> No
             continue
         loc = _row_location(row)
         if not strict:
-            report.add(file, loc, "`range` needs `unit_source` (the FR-9 data is verified per table)")
+            report.add(
+                "row-range-needs-unit-source",
+                file,
+                loc,
+                "`range` without `unit_source`",
+                register=row["data_name"],
+                field="range",
+            )
             continue
-        check_range(file, loc, row["range"], row["size"], None, report)
+        check_range(file, loc, row["range"], row["size"], None, report, register=row["data_name"], field="range")
 
 
 def check_torque_control_mode(stem: str, table: dict, strict: bool, info: MapInfo, report: Report) -> None:
@@ -1123,42 +2352,119 @@ def check_torque_control_mode(stem: str, table: dict, strict: bool, info: MapInf
     if spec is None:
         return
     if not strict:
-        report.add(file, loc, "needs `unit_source` (the FR-9 data is verified per table)")
+        report.add(
+            "torque-control-needs-unit-source", file, loc, "present without `unit_source`", field="torque_control_mode"
+        )
     if not mode_source_is_angle_limits(table):
-        report.add(file, loc, "only in a table whose mode source is the CW/CCW Angle Limit pair")
+        report.add(
+            "torque-control-needs-angle-limits",
+            file,
+            loc,
+            "present in a table whose mode source is not the CW/CCW Angle Limit pair",
+            field="torque_control_mode",
+        )
     if not _is_record(spec):
-        report.add(file, loc, "must be `(register: STRING, on: INT, goal: STRING)`")
+        found = _describe(spec)
+        report.add(
+            "torque-control-not-record",
+            file,
+            loc,
+            f"must be `(register: STRING, on: INT, goal: STRING)`, found {found}",
+            field="torque_control_mode",
+            found=found,
+        )
         return
     for key in TORQUE_CONTROL_KEYS:
         if key not in spec:
-            report.add(file, loc, f"missing `{key}`")
+            report.add("torque-control-key-missing", file, loc, f"missing `{key}`", field=f"torque_control_mode.{key}")
     unknown = sorted(set(spec) - set(TORQUE_CONTROL_KEYS))
     if unknown:
-        report.add(file, loc, f"unknown field(s) {', '.join(unknown)}")
+        report.add(
+            "torque-control-unknown-key",
+            file,
+            loc,
+            f"unknown field(s) {', '.join(unknown)}",
+            field="torque_control_mode",
+            found=unknown,
+        )
     on = spec.get("on")
     if "on" in spec and not (_is_int(on) and 0 <= on <= 255):
-        report.add(file, loc, f"`on` must be a register value 0–255, found {on!r}")
+        report.add(
+            "torque-control-on-invalid",
+            file,
+            loc,
+            f"`on` must be a register value 0–255, found {on!r}",
+            field="torque_control_mode.on",
+            found=on,
+            allowed=(0, 255),
+        )
     rows = {r["data_name"]: r for r in table_rows(table)}
     for key, size in (("register", 1), ("goal", None)):
         name = spec.get(key)
         if key not in spec:
             continue
+        field = f"torque_control_mode.{key}"
         row = rows.get(name) if isinstance(name, str) else None
         if row is None:
-            report.add(file, loc, f"`{key}` {name!r} names no row of this table")
+            report.add(
+                "torque-control-no-row",
+                file,
+                loc,
+                f"`{key}` {name!r} names no row of this table",
+                field=field,
+                found=name,
+            )
             continue
         if not _has(row, "RW", "RAM") or (size is not None and row["size"] != size):
             want = f"size {size}, RW, RAM" if size else "RW, RAM"
-            report.add(file, loc, f"`{key}` row must be {want}; {_row_location(row)} is not")
+            found = (row["size"], *_attributes(row))
+            report.add(
+                "torque-control-row-attributes",
+                file,
+                loc,
+                f"`{key}` row must be {want}; "
+                f"{_row_location(row)} is size {found[0]}, {_shown(found[1])}, {_shown(found[2])}",
+                register=row["data_name"],
+                field=field,
+                found=found,
+                expected=(size, "RW", "RAM"),
+            )
         if info.under(stem, "p1") and row["address"] > 255:
-            report.add(file, loc, f"`{key}` row above address 255 in a table mapped under `p1`")
+            # DECISION: the same cause as a role row above 255 (one rule, xtask check 14); `field` tells them apart.
+            report.add(
+                "p1-address-above-255",
+                file,
+                loc,
+                f"`{key}` row at address {row['address']}, above 255, in a table mapped under `p1`",
+                register=row["data_name"],
+                field=field,
+                found=row["address"],
+                allowed=(0, 255),
+            )
         span = row.get("range")
         bounded = _is_record(span) and _is_int(span.get("min")) and _is_int(span.get("max"))
         if key == "register" and _is_int(on) and bounded:
             if not span["min"] <= on <= span["max"]:
-                report.add(file, loc, f"`on` {on} is outside the `register` row range {span['min']}..={span['max']}")
+                report.add(
+                    "torque-control-on-outside-range",
+                    file,
+                    loc,
+                    f"`on` {on} is outside the `register` row range {span['min']}..={span['max']}",
+                    register=row["data_name"],
+                    field="torque_control_mode.on",
+                    found=on,
+                    allowed=(span["min"], span["max"]),
+                )
     if "register" in spec and spec.get("register") == spec.get("goal"):
-        report.add(file, loc, "`register` and `goal` name the same row")
+        name = spec.get("register")
+        report.add(
+            "torque-control-same-row",
+            file,
+            loc,
+            f"`register` and `goal` both name {name!r}",
+            register=name if isinstance(name, str) else None,
+            field="torque_control_mode",
+        )
 
 
 def flag_text(table: object) -> str:
@@ -1219,17 +2525,47 @@ def read_map(model_map: object, report: Report) -> MapInfo:
     """Collects which file sits under which model number and list; reports shape errors."""
     info = MapInfo()
     if not _is_record(model_map):
-        report.add(MAP_FILE, "", "the map is not a record `( models: { … } )`")
+        found = _describe(model_map)
+        report.add(
+            "map-not-record", MAP_FILE, "", f"the map is not a record `( models: {{ … }} )`, found {found}", found=found
+        )
         return info
+    unknown = sorted(set(model_map) - {"models", "not_mapped"})
+    if unknown:
+        report.add("map-unknown-key", MAP_FILE, "", f"unknown key(s) {', '.join(unknown)}", found=unknown)
     models = model_map.get("models")
     if not isinstance(models, dict) or any(not isinstance(k, int) for k in models):
-        report.add(MAP_FILE, "`models`", "must be a map `{ NUMBER: ( … ) }`")
+        found = _describe(models)
+        report.add(
+            "models-not-map",
+            MAP_FILE,
+            "`models`",
+            f"must be a map `{{ NUMBER: ( … ) }}`, found {found}",
+            field="models",
+            found=found,
+        )
         return info
     for number, entry in models.items():
         if not 0 <= number <= 0xFFFF:
-            report.add(MAP_FILE, f"model {number}", "model number must be 0–65535")
+            report.add(
+                "model-number-invalid",
+                MAP_FILE,
+                f"model {number}",
+                f"model number must be 0–65535, found {number}",
+                model=number,
+                found=number,
+                allowed=(0, 0xFFFF),
+            )
         if not _is_record(entry):
-            report.add(MAP_FILE, f"model {number}", "entry must be a record `( … )`")
+            found = _describe(entry)
+            report.add(
+                "model-entry-not-record",
+                MAP_FILE,
+                f"model {number}",
+                f"entry must be a record `( … )`, found {found}",
+                model=number,
+                found=found,
+            )
             continue
         info.models[number] = entry
         for key in LIST_KEYS:
@@ -1254,7 +2590,9 @@ DIGITS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight"
 
 def module_ident(stem: str) -> str:
     """`2xl430_w250` -> `two_xl430_w250`, as xtask names the generated module."""
-    if stem[:1].isdigit():
+    # DECISION: ASCII digits only, as xtask's `char::to_digit(10)`; `str.isdigit()` also takes `²`, which
+    # `int()` then refuses.
+    if stem and stem[0] in "0123456789":
         return f"{DIGITS[int(stem[0])]}_{stem[1:]}"
     return stem
 
@@ -1264,62 +2602,179 @@ def type_ident(stem: str) -> str:
     return "".join(part[:1].upper() + part[1:] for part in module_ident(stem).split("_"))
 
 
-def _refs(entry: dict, key: str, loc: str, report: Report) -> list[tuple[int, str]] | None:
+def _refs(entry: dict, key: str, number: int, loc: str, report: Report) -> list[tuple[int, str]] | None:
     """A `p1`/`p2` list as (from_fw, file) pairs, or None when malformed."""
     refs = entry.get(key)
     if not isinstance(refs, list):
-        report.add(MAP_FILE, loc, f"`{key}` must be a list of `(from_fw: …, file: …)`")
+        report.add(
+            "model-list-not-list",
+            MAP_FILE,
+            loc,
+            f"`{key}` must be a list of `(from_fw: …, file: …)`, found {refs!r}",
+            model=number,
+            field=key,
+            found=refs,
+        )
         return None
     out = []
     for ref in refs:
         if not (_is_record(ref) and isinstance(ref.get("from_fw"), int) and isinstance(ref.get("file"), str)):
-            report.add(MAP_FILE, loc, f"`{key}`: {ref!r} is not `(from_fw: INT, file: STRING)`")
+            report.add(
+                "model-ref-invalid",
+                MAP_FILE,
+                loc,
+                f"`{key}`: {ref!r} is not `(from_fw: INT, file: STRING)`",
+                model=number,
+                field=key,
+                found=ref,
+            )
             return None
+        unknown = sorted(set(ref) - {"from_fw", "file"})
+        if unknown:
+            report.add(
+                "model-ref-unknown-key",
+                MAP_FILE,
+                loc,
+                f"`{key}`: unknown field(s) {', '.join(unknown)} in the ref to {ref['file']}.ron",
+                model=number,
+                field=key,
+                table=ref["file"],
+                found=unknown,
+            )
         out.append((ref["from_fw"], ref["file"]))
     return out
+
+
+# The keys of a model entry; the legacy `tables` key has its own cause (`model-legacy-tables`).
+MODEL_KEYS = ("family", "name", "also", "p1", "p2", "default", "tables")
 
 
 def check_map(tables: dict[str, object], info: MapInfo, report: Report) -> None:
     """Model map rules (data-model "Model entry", "Table ref", "Map validation"; ron-schema §2)."""
     for number, entry in sorted(info.models.items()):
         loc = f"model {number}"
+        unknown = sorted(set(entry) - set(MODEL_KEYS))
+        if unknown:
+            report.add(
+                "model-unknown-key", MAP_FILE, loc, f"unknown key(s) {', '.join(unknown)}", model=number, found=unknown
+            )
         family = entry.get("family")
         if family not in FAMILIES:
-            report.add(MAP_FILE, loc, f"`family` must be one of {', '.join(FAMILIES)}, found {family!r}")
-        if not isinstance(entry.get("name"), str) or not entry.get("name"):
-            report.add(MAP_FILE, loc, "`name` must be a non-empty string")
+            report.add(
+                "model-family-invalid",
+                MAP_FILE,
+                loc,
+                f"`family` must be one of {', '.join(FAMILIES)}, found {family!r}",
+                model=number,
+                field="family",
+                found=family,
+                allowed=FAMILIES,
+            )
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            report.add(
+                "model-name-invalid",
+                MAP_FILE,
+                loc,
+                f"`name` must be a non-empty string, found {name!r}",
+                model=number,
+                field="name",
+                found=name,
+            )
         if "also" in entry:
             also = entry["also"]
             if not isinstance(also, list) or not also:
-                report.add(MAP_FILE, loc, f"`also` must be a non-empty list of product names, found {also!r}")
+                report.add(
+                    "model-also-shape",
+                    MAP_FILE,
+                    loc,
+                    f"`also` must be a non-empty list of product names, found {also!r}",
+                    model=number,
+                    field="also",
+                    found=also,
+                )
             elif not all(isinstance(n, str) and n for n in also) or len(set(also)) != len(also):
-                report.add(MAP_FILE, loc, f"`also` must list distinct non-empty product names, found {also!r}")
+                report.add(
+                    "model-also-names",
+                    MAP_FILE,
+                    loc,
+                    f"`also` must list distinct non-empty product names, found {also!r}",
+                    model=number,
+                    field="also",
+                    found=also,
+                )
         lists: dict[str, list[tuple[int, str]]] = {}
-        for key in ("p1", "p2"):
+        for key in LIST_KEYS:
             if key in entry:
-                refs = _refs(entry, key, loc, report)
+                refs = _refs(entry, key, number, loc, report)
                 if refs is not None:
                     lists[key] = refs
         if "p1" not in entry and "p2" not in entry:
-            report.add(MAP_FILE, loc, "no `p1` or `p2` list")
+            report.add("model-lists-missing", MAP_FILE, loc, "no `p1` or `p2` list", model=number)
         for key, refs in lists.items():
             protocol = key.upper()
             if not refs:
-                report.add(MAP_FILE, loc, f"`{key}` is empty")
+                report.add("model-list-empty", MAP_FILE, loc, f"`{key}` is empty", model=number, field=key)
                 continue
             if refs[0][0] != 0:
-                report.add(MAP_FILE, loc, f"`{key}`: the first `from_fw` must be 0, found {refs[0][0]}")
-            if any(not 0 <= fw <= 255 for fw, _f in refs):
-                report.add(MAP_FILE, loc, f"`{key}`: `from_fw` must be 0–255")
+                report.add(
+                    "model-first-from-fw",
+                    MAP_FILE,
+                    loc,
+                    f"`{key}`: the first `from_fw` must be 0, found {refs[0][0]}",
+                    model=number,
+                    field=key,
+                    found=refs[0][0],
+                    expected=0,
+                )
+            outside = [fw for fw, _f in refs if not 0 <= fw <= 255]
+            if outside:
+                report.add(
+                    "model-from-fw-range",
+                    MAP_FILE,
+                    loc,
+                    f"`{key}`: `from_fw` must be 0–255, found {', '.join(map(str, outside))}",
+                    model=number,
+                    field=key,
+                    found=outside,
+                    allowed=(0, 255),
+                )
             if any(a[0] >= b[0] for a, b in zip(refs, refs[1:])):
-                report.add(MAP_FILE, loc, f"`{key}`: `from_fw` must strictly increase")
+                order = [fw for fw, _f in refs]
+                report.add(
+                    "model-from-fw-order",
+                    MAP_FILE,
+                    loc,
+                    f"`{key}`: `from_fw` must strictly increase, found {', '.join(map(str, order))}",
+                    model=number,
+                    field=key,
+                    found=order,
+                )
             for _fw, stem in refs:
                 if stem not in tables:
-                    report.add(MAP_FILE, loc, f"`{key}` names {stem}.ron, which does not exist")
+                    report.add(
+                        "model-file-missing",
+                        MAP_FILE,
+                        loc,
+                        f"`{key}` names {stem}.ron, which does not exist",
+                        model=number,
+                        field=key,
+                        table=stem,
+                    )
                     continue
                 names = _protocol_names(tables[stem]) if _is_record(tables[stem]) else None
                 if names is not None and protocol not in names:
-                    report.add(MAP_FILE, loc, f"`{key}` names {stem}.ron, whose `protocols` lack {protocol}")
+                    report.add(
+                        "model-file-protocol",
+                        MAP_FILE,
+                        loc,
+                        f"`{key}` names {stem}.ron, whose `protocols` [{', '.join(names)}] lack {protocol}",
+                        model=number,
+                        field=key,
+                        table=stem,
+                        found=names,
+                        expected=protocol,
+                    )
             places = set()
             for _fw, stem in refs:
                 table = tables.get(stem)
@@ -1328,57 +2783,141 @@ def check_map(tables: dict[str, object], info: MapInfo, report: Report) -> None:
                         places.add((row["address"], row["size"]))
             if len(places) > 1:
                 shown = ", ".join(f"({a}, {s})" for a, s in sorted(places))
-                report.add(MAP_FILE, loc, f"`{key}`: `Firmware Version` sits at different places: {shown}")
+                report.add(
+                    "model-firmware-version-places",
+                    MAP_FILE,
+                    loc,
+                    f"`{key}`: `Firmware Version` sits at different places: {shown}",
+                    model=number,
+                    register="Firmware Version",
+                    field=key,
+                    found=sorted(places),
+                )
         both = "p1" in entry and "p2" in entry
         default = entry.get("default")
         if both and default is None:
-            report.add(MAP_FILE, loc, "`default: P2` is required when both `p1` and `p2` exist")
+            report.add(
+                "model-default-missing",
+                MAP_FILE,
+                loc,
+                "no `default` while both `p1` and `p2` exist",
+                model=number,
+                field="default",
+            )
         elif both and default != Ident("P2"):
-            report.add(MAP_FILE, loc, f"`default` must be P2, found {default}")
+            report.add(
+                "model-default-invalid",
+                MAP_FILE,
+                loc,
+                f"`default` must be P2, found {_shown(default)}",
+                model=number,
+                field="default",
+                found=default,
+                expected="P2",
+            )
         elif not both and default is not None:
-            report.add(MAP_FILE, loc, "`default` is allowed only when both `p1` and `p2` exist")
+            report.add(
+                "model-default-unexpected",
+                MAP_FILE,
+                loc,
+                f"`default` {_shown(default)} with only one of `p1` and `p2`",
+                model=number,
+                field="default",
+                found=default,
+            )
         listed = {stem for refs in lists.values() for _fw, stem in refs}
         for stem in sorted(listed):
             names = _protocol_names(tables[stem]) if _is_record(tables.get(stem)) else None
             if names and "P1" in names and "P2" in names and not both:
                 report.add(
-                    MAP_FILE, loc, f"{stem}.ron lists both protocols, so the model needs both `p1` and `p2` lists"
+                    "model-needs-both-lists",
+                    MAP_FILE,
+                    loc,
+                    f"{stem}.ron lists both protocols, so the model needs both `p1` and `p2` lists",
+                    model=number,
+                    table=stem,
                 )
         if "tables" in entry:
-            report.add(MAP_FILE, loc, "the legacy `tables` key was removed in T2; use `p1`/`p2` (ron-schema §2)")
+            report.add("model-legacy-tables", MAP_FILE, loc, "legacy `tables` key", model=number, field="tables")
     for stem, places in sorted(info.refs.items()):
         numbers = sorted({n for n, _k in places})
         if len(numbers) > 1:
             report.add(
+                "file-under-two-numbers",
                 MAP_FILE,
                 "",
-                f"{stem}.ron is mapped under model numbers {' and '.join(map(str, numbers))}; a file sits under one number",
+                f"{stem}.ron is mapped under model numbers {' and '.join(map(str, numbers))}; "
+                "a file sits under one number",
+                table=stem,
+                found=numbers,
             )
     seen_types: dict[str, str] = {}
     for stem in sorted(info.refs):
         ident = type_ident(stem)
         if ident in seen_types:
-            report.add(MAP_FILE, "", f"{seen_types[ident]}.ron and {stem}.ron both give the type `{ident}`")
+            report.add(
+                "type-ident-duplicate",
+                MAP_FILE,
+                "",
+                f"{seen_types[ident]}.ron and {stem}.ron both give the type `{ident}`",
+                table=stem,
+                other=seen_types[ident],
+                found=ident,
+            )
         else:
             seen_types[ident] = stem
         module = module_ident(stem)
         if module == "tests" or module in RUST_KEYWORDS:
-            report.add(MAP_FILE, "", f"{stem}.ron gives the module name `{module}`, which is `tests` or a Rust keyword")
+            report.add(
+                "module-ident-reserved",
+                MAP_FILE,
+                "",
+                f"{stem}.ron gives the module name `{module}`, which is `tests` or a Rust keyword",
+                table=stem,
+                found=module,
+            )
 
 
 def check_not_mapped(model_map: object, tables: dict[str, object], info: MapInfo, report: Report) -> None:
     """Every table is mapped or in `not_mapped`, never both, never neither (FR-011, xtask checks 6–7)."""
     records = model_map.get("not_mapped", []) if _is_record(model_map) else []
     if not isinstance(records, list):
-        report.add(MAP_FILE, "`not_mapped`", "must be a list of `(file: …, reason: …)`")
+        found = _describe(records)
+        report.add(
+            "not-mapped-not-list",
+            MAP_FILE,
+            "`not_mapped`",
+            f"must be a list of `(file: …, reason: …)`, found {found}",
+            field="not_mapped",
+            found=found,
+        )
         records = []
     for i, record in enumerate(records):
         loc = f"`not_mapped` item {i}"
         if not (_is_record(record) and isinstance(record.get("file"), str)):
-            report.add(MAP_FILE, loc, "must be `(file: STRING, reason: NoModelNumber | SameNumberAs(N))`")
+            found = _describe(record)
+            report.add(
+                "not-mapped-record-invalid",
+                MAP_FILE,
+                loc,
+                f"must be `(file: STRING, reason: NoModelNumber | SameNumberAs(N))`, found {found}",
+                field="not_mapped",
+                index=i,
+                found=found,
+            )
             continue
         stem = record["file"]
         loc = f"`not_mapped` {stem}"
+        unknown = sorted(set(record) - {"file", "reason"})
+        if unknown:
+            report.add(
+                "not-mapped-unknown-key",
+                MAP_FILE,
+                loc,
+                f"unknown field(s) {', '.join(unknown)}",
+                table=stem,
+                found=unknown,
+            )
         reason = record.get("reason")
         if reason == Ident("NoModelNumber"):
             text = "no model number"
@@ -1393,32 +2932,56 @@ def check_not_mapped(model_map: object, tables: dict[str, object], info: MapInfo
             number = reason.args[0]
             text = f"same number as {number}"
             if number not in info.models:
-                report.add(MAP_FILE, loc, f"SameNumberAs({number}) names a number that is not in `models`")
+                report.add(
+                    "not-mapped-number-unknown",
+                    MAP_FILE,
+                    loc,
+                    f"SameNumberAs({number}) names a number that is not in `models`",
+                    model=number,
+                    table=stem,
+                )
         else:
             report.add(
-                MAP_FILE, loc, f"reason must be NoModelNumber or SameNumberAs(N), found {reason!r} (unverified is never a reason)"
+                "not-mapped-reason-invalid",
+                MAP_FILE,
+                loc,
+                f"reason must be NoModelNumber or SameNumberAs(N), found {reason!r}",
+                field="reason",
+                table=stem,
+                found=reason,
             )
             continue
         if stem not in tables:
-            report.add(MAP_FILE, loc, f"{stem}.ron does not exist")
+            report.add("not-mapped-file-missing", MAP_FILE, loc, f"{stem}.ron does not exist", table=stem)
         elif info.mapped(stem):
-            report.add(MAP_FILE, loc, f"{stem}.ron is mapped and also in `not_mapped`")
+            numbers = sorted({n for n, _k in info.refs[stem]})
+            report.add(
+                "not-mapped-also-mapped",
+                MAP_FILE,
+                loc,
+                f"{stem}.ron is mapped (model {', '.join(map(str, numbers))}) and also in `not_mapped`",
+                table=stem,
+                models=numbers,
+            )
         if stem in info.not_mapped:
-            report.add(MAP_FILE, loc, f"{stem} is listed twice in `not_mapped`")
+            report.add("not-mapped-duplicate", MAP_FILE, loc, f"{stem} is listed twice in `not_mapped`", table=stem)
         info.not_mapped.setdefault(stem, text)
     for stem in tables:
         if not info.mapped(stem) and stem not in info.not_mapped:
-            report.add(f"{stem}.ron", "", "not mapped and not in `not_mapped` of dynamixel.ron")
+            report.add(
+                "table-unlisted", f"{stem}.ron", "", "not mapped and not in `not_mapped` of dynamixel.ron", table=stem
+            )
 
 
 def run_checks(model_map: object, tables: dict[str, object], today: datetime.date) -> tuple[Report, MapInfo]:
-    """Runs every rule; returns the errors and the map summary."""
+    """Runs every rule; returns the diagnostics and the map summary."""
     report = Report()
     info = read_map(model_map, report)
     for stem, table in tables.items():
         check_table_shape(stem, table, report)
         if not _is_record(table):
             continue
+        check_table_keys(stem, table, report)
         check_source(stem, table, today, report)
         check_protocols(stem, table, report)
         check_instructions(stem, table, report)
@@ -1477,23 +3040,43 @@ def render(
     out.append(
         f"summary: {len(tables)} tables, {verified} verified, {unverified} unverified, "
         f"{mapped} mapped, {len(tables) - mapped} not mapped, {len(duals)} dual-protocol, "
-        f"{len(report.errors)} errors"
+        f"{len(report.diagnostics)} errors"
     )
     return "\n".join(out) + "\n"
 
 
-def _iso_date(text: str) -> datetime.date:
+class UsageError(Exception):
+    """A command line argparse rejects; its text is argparse's message."""
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    """An ArgumentParser that raises UsageError instead of printing and exiting."""
+
+    def error(self, message: str) -> NoReturn:
+        raise UsageError(message)
+
+
+def _today(text: str | None, report: Report) -> datetime.date | None:
+    """The `--today` date, today when absent; None (and a diagnostic) when it is not a real ISO date."""
+    # DECISION: checked here rather than by an argparse `type`, whose errors all reach `error()` as one text,
+    # so a wrong format and an impossible date keep their own causes.
+    if text is None:
+        return datetime.date.today()
     if not DATE_RE.match(text):
-        raise argparse.ArgumentTypeError(f"not an ISO date YYYY-MM-DD: {text!r}")
+        report.add(
+            "today-not-iso", "", "", f"--today {text!r} is not an ISO date YYYY-MM-DD", field="--today", found=text
+        )
+        return None
     try:
         return datetime.date.fromisoformat(text)
-    except ValueError as err:
-        raise argparse.ArgumentTypeError(f"not a real date: {text!r} ({err})") from None
+    except ValueError:
+        report.add("today-not-a-date", "", "", f"--today {text!r} is not a real date", field="--today", found=text)
+        return None
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="check_tables.py",
+    parser = _ArgumentParser(
+        prog=PROG,
         description="Check the control tables and the model map (no network).",
     )
     parser.add_argument(
@@ -1504,7 +3087,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--today",
-        type=_iso_date,
         default=None,
         help="the 'not in the future' bound for verified dates (default: today)",
     )
@@ -1517,29 +3099,73 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+class Outcome(NamedTuple):
+    """One run: its exit code, what it prints on stdout and stderr, and its diagnostics."""
+
+    code: int
+    out: str
+    err: str
+    diagnostics: list[Diagnostic]
+
+
+def run(argv: list[str] | None = None) -> Outcome:
+    """Runs the check on `argv` without printing."""
+    # DECISION: `run` returns what `main` prints plus the diagnostics as data, so tests check the cause code
+    # and fields of each finding (NFR-12) rather than parsing the printed text.
     parser = build_parser()
+    report = Report()
     try:
         args = parser.parse_args(argv)
+    except UsageError as err:
+        report.add("usage", "", "", str(err))
+        return _stopped(report, parser.format_usage())
     except SystemExit as exc:
-        return int(exc.code or 0)
-    if args.today is None:
-        args.today = datetime.date.today()
-    try:
-        model_map, tables = load(args.dir)
-    except (LoadError, RonError, OSError) as err:
-        print(f"error: {err}", file=sys.stderr)
-        return 2
+        return Outcome(int(exc.code or 0), "", "", [])
+    today = _today(args.today, report)
+    # DECISION: a `--dir` that is no directory is a bad argument (exit 2), apart from a missing map in a real
+    # directory (exit 3): the fix is the command line, not the directory's content.
+    if not args.dir.is_dir():
+        report.add("dir-not-found", "", "", f"--dir {args.dir} is not a directory", field="--dir", path=str(args.dir))
+    if report.diagnostics:
+        return _stopped(report)
+    model_map, tables = read_inputs(args.dir, report)
+    # DECISION: the rules need every file (a table left out would read as unmapped or missing), so they run
+    # only when all files load; every file that failed is reported first, not only the first one.
+    if report.diagnostics:
+        return _stopped(report)
     unknown = [stem for stem in args.stems if stem not in tables]
     if unknown:
-        print(f"error: no table named {', '.join(unknown)} in {args.dir}", file=sys.stderr)
-        return 2
-    report, info = run_checks(model_map, tables, args.today)
+        report.add(
+            "stem-unknown",
+            "",
+            "",
+            f"no table named {', '.join(unknown)} in {args.dir}",
+            found=unknown,
+            dir=str(args.dir),
+        )
+        return _stopped(report)
+    report, info = run_checks(model_map, tables, today)
     selected = args.stems or list(tables)
-    sys.stdout.write(render(tables, selected, report, info, args.markdown))
-    for line in report.lines():
-        print(line, file=sys.stderr)
-    return 1 if report.errors else 0
+    out = render(tables, selected, report, info, args.markdown)
+    return Outcome(report.exit_code(), out, "".join(f"{line}\n" for line in report.lines()), report.diagnostics)
+
+
+def _stopped(report: Report, before: str = "") -> Outcome:
+    """The outcome of a run stopped before the rules: `before` and the diagnostics on stderr only."""
+    return Outcome(report.exit_code(), "", before + "".join(f"{line}\n" for line in report.lines()), report.diagnostics)
+
+
+def main(argv: list[str] | None = None) -> int:
+    # DECISION: text the terminal cannot encode (a file name that is not UTF-8) prints as backslash escapes
+    # rather than ending the run in a traceback.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
+    outcome = run(argv)
+    sys.stdout.write(outcome.out)
+    sys.stderr.write(outcome.err)
+    return outcome.code
 
 
 if __name__ == "__main__":

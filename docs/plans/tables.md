@@ -20,4 +20,4 @@ the constitution's principles are in `AGENTS.md`.
 
 From the read-only audit of 2026-11-09 (line numbers at `dev` 49bdc7a).
 
-- [ ] T210 `check_tables.py`: give every check a stable cause code and its fields as data (file, location, model, register, field, deciding values) next to today's `(file, location, message)` tuples (`:372-382`); add the found value where it is missing (`:434` size, `:781` Model Number); one exit code per failure class (exit 2 covers three causes today, `:11-12`); advice apart from the facts. Tests in `test_check_tables.py` check the cause code and fields, not only the message. FR-6.14, NFR-12
+- [x] T210 `check_tables.py`: give every check a stable cause code and its fields as data (file, location, model, register, field, deciding values) next to today's `(file, location, message)` tuples (`:372-382`); add the found value where it is missing (`:434` size, `:781` Model Number); one exit code per failure class (exit 2 covers three causes today, `:11-12`); advice apart from the facts. Tests in `test_check_tables.py` check the cause code and fields, not only the message. FR-6.14, NFR-12
