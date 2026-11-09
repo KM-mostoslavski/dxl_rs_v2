@@ -608,6 +608,30 @@ mod ax12a {
         assert_quiet(&bus, mark);
     }
 
+    /// Plan D4: a ratio is rounded to the nearest raw step of Max
+    /// Torque(14) before it is checked, so a negative ratio within half a
+    /// step is written as raw 0, and one below it does not fit.
+    #[test]
+    fn small_negative_ratio_rounds_to_zero() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let mark = mark(&bus);
+        ack(&mut bus, 1);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.set_max_torque(Load::from_ratio(-0.0004)), Ok(()));
+        assert_eq!(
+            ax.set_max_torque(Load::from_ratio(-0.0006)),
+            Err(ValidationError::DoesNotFit {
+                raw: -1,
+                size: 2,
+                request: on(Instruction::Write, 1, "Max Torque", 14, 2),
+            }
+            .into())
+        );
+        assert_eq!(sent_since(&bus, mark), p1_write(1, 14, &[0, 0]));
+        assert_done(&bus);
+    }
+
     /// Plan D8: `Faulted` passes the torque check once an acknowledged
     /// `disable_torque()` confirmed torque off, like `Off`; the fault
     /// stays.
@@ -2234,6 +2258,34 @@ mod mx64 {
         assert_eq!(mx.set_acceleration_limit(Acceleration::ZERO), is_on());
         assert_eq!(mx.write_limit(Raw(AccelerationLimit), 100), is_on());
         assert_quiet(&bus, enabled);
+    }
+
+    /// Plan D4, D10: the value is rounded to the nearest raw step before
+    /// it is checked, as every typed value is, so a negative acceleration
+    /// within half a step is written as raw 0, and one below it does not
+    /// fit the unsigned register.
+    #[test]
+    fn small_negative_acceleration_rounds_to_zero() {
+        let time = MockTime::new();
+        let mut bus = mx64(&time, 3);
+        let mark = mark(&bus);
+        ack(&mut bus, 1);
+        let mut mx = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(-0.5 * STEP + 0.01)),
+            Ok(())
+        );
+        assert_eq!(
+            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(-0.5 * STEP - 0.01)),
+            Err(ValidationError::DoesNotFit {
+                raw: -1,
+                size: 4,
+                request: on(Instruction::Write, 1, "Acceleration Limit", 40, 4),
+            }
+            .into())
+        );
+        assert_eq!(sent_since(&bus, mark), p2_write(1, 40, &0u32.to_le_bytes()));
+        assert_done(&bus);
     }
 
     /// Plan D5, D10: Acceleration Limit is not cached, so a write of it

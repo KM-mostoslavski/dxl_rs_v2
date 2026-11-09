@@ -11,7 +11,8 @@ use super::scale::RegisterScale;
 /// MX-64(2.0) Acceleration Limit(40): "214.577 Rev/min²"
 /// (<https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/>), so a model whose
 /// table gives no unit has no typed form, only raw. Acceleration Limit is a
-/// magnitude: a negative value does not fit it.
+/// magnitude: a value that rounds below raw 0 (below minus half a raw step)
+/// does not fit it; a smaller negative value rounds to 0.
 ///
 /// Any `f32` can be stored. NaN and infinity are refused when converted to
 /// a raw value, and a value outside the register's e-Manual range is

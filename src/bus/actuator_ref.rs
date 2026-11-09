@@ -936,7 +936,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// # Errors
     ///
     /// As [`write_limit`](Self::write_limit); `Unsupported` on models
-    /// without it; `DoesNotFit` for a negative ratio.
+    /// without it; `DoesNotFit` for a ratio below minus half a raw step (a
+    /// smaller negative one is written as 0).
     pub fn set_max_torque(&mut self, limit: Load) -> Result<(), Error> {
         self.write_limit(MaxTorque, limit)
     }
@@ -953,7 +954,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// As [`write_limit`](Self::write_limit); `Unsupported` on models
     /// without it; `NoUnit` where the table gives it no unit (write
-    /// `Raw(AccelerationLimit)`); `DoesNotFit` for a negative acceleration.
+    /// `Raw(AccelerationLimit)`); `DoesNotFit` for an acceleration below
+    /// minus half a raw step (a smaller negative one is written as 0).
     pub fn set_acceleration_limit(&mut self, limit: Acceleration) -> Result<(), Error> {
         self.write_limit(AccelerationLimit, limit)
     }
