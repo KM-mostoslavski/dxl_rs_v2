@@ -653,8 +653,8 @@ pub(crate) fn torque_switch(
     if !angle_limits {
         fail("only an angle-limit table (no mode register) may have one".to_string());
     }
-    let register = find(table, &mode.register);
-    match register {
+    let mut switch = None;
+    match find(table, &mode.register) {
         None => fail(format!("register {:?} names no row", mode.register)),
         Some(row) if row.size != 1 || row.access != Access::RW || row.area != Area::Ram => {
             fail(format!(
@@ -663,15 +663,31 @@ pub(crate) fn torque_switch(
             ));
         }
         Some(row) => match row.range {
-            Some(range) if (range.min..=range.max).contains(&i64::from(mode.on)) => {}
-            Some(range) => fail(format!(
-                "on {} is outside {:?}'s range {}..={}",
-                mode.on, mode.register, range.min, range.max
-            )),
             None => fail(format!(
                 "register {:?} needs a range, so values other than on are known",
                 mode.register
             )),
+            Some(range) => {
+                if !(range.min..=range.max).contains(&i64::from(mode.on)) {
+                    fail(format!(
+                        "on {} is outside {:?}'s range {}..={}",
+                        mode.on, mode.register, range.min, range.max
+                    ));
+                }
+                match (u8::try_from(range.min), u8::try_from(range.max)) {
+                    (Ok(min), Ok(max)) => {
+                        switch = Some(TorqueSwitch {
+                            row: row.clone(),
+                            on: mode.on,
+                            values: (min, max),
+                        });
+                    }
+                    _ => fail(format!(
+                        "register {:?}'s range {}..={} is outside u8 (0..=255)",
+                        mode.register, range.min, range.max
+                    )),
+                }
+            }
         },
     }
     match find(table, &mode.goal) {
@@ -687,13 +703,7 @@ pub(crate) fn torque_switch(
     if errors.len() > before {
         return None;
     }
-    let row = register?.clone();
-    let range = row.range?;
-    Some(TorqueSwitch {
-        on: mode.on,
-        values: (u8::try_from(range.min).ok()?, u8::try_from(range.max).ok()?),
-        row,
-    })
+    switch
 }
 
 /// The modes of `entry`.
@@ -1305,6 +1315,14 @@ mod tests {
                     r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque")"#,
                 ),
             &["only an angle-limit table"],
+        );
+    }
+
+    #[test]
+    fn check21_switch_range_outside_u8() {
+        assert_fails(
+            Table::mx_p1().row_range("Torque Ctrl Mode Enable", -1, 1),
+            &["register \"Torque Ctrl Mode Enable\"'s range -1..=1 is outside u8 (0..=255)"],
         );
     }
 
