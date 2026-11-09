@@ -37,8 +37,9 @@ pub enum Sign {
 /// Read-only quantities ([`Voltage`](crate::Voltage),
 /// [`Temperature`](crate::Temperature), [`Load`](crate::Load)) convert from
 /// raw only. Writable ones ([`Velocity`](crate::Velocity),
-/// [`SpeedLimit`](crate::SpeedLimit), [`Current`](crate::Current)) also
-/// convert back, rounding to the nearest raw step, and never truncate.
+/// [`SpeedLimit`](crate::SpeedLimit), [`Current`](crate::Current),
+/// [`Pwm`](crate::Pwm)) also convert back, rounding to the nearest raw
+/// step, and never truncate.
 ///
 /// Values are `f32`: a raw value up to ±2^20 converts to SI and back to
 /// itself; beyond it, a round trip may land one step off.

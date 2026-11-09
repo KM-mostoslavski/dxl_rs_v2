@@ -51,5 +51,5 @@ pub use transport::Transport;
 pub use transport::{Mismatch, MockTime, MockTransport};
 pub use units::{
     ComplianceMargin, ComplianceSlope, Current, Gain, HardwareErrors, Load, Position,
-    PositionScale, RegisterScale, Sign, SpeedLimit, Temperature, Tick, Velocity, Voltage,
+    PositionScale, Pwm, RegisterScale, Sign, SpeedLimit, Temperature, Tick, Velocity, Voltage,
 };

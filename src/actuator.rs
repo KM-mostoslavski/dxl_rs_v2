@@ -12,12 +12,13 @@ use crate::units::{Limits, Position, PositionScale, RegisterScale};
 mod roles;
 
 pub use roles::{
-    HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
-    HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasLedBlue,
-    HasLedGreen, HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain,
+    HasCcwComplianceMargin, HasCcwComplianceSlope, HasCurrentLimit, HasCwComplianceMargin,
+    HasCwComplianceSlope, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+    HasLed, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit, HasMaxTorque,
+    HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
     HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-    HasTorqueCtrlModeEnable, RoleRegister,
+    HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+    HasTorqueCtrlModeEnable, HasVelocityLimit, RoleRegister,
 };
 #[allow(
     unused_imports,

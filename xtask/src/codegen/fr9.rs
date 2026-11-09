@@ -8,14 +8,22 @@
 //! register whose table gives no unit, or a unit that is not the role's
 //! quantity, gets no scale: raw only (FR-9.2).
 //!
-//! A direction-bit load is the one exception to `value × factor`: the
-//! e-Manual gives its step as "about 0.1%" and its full magnitude as 100 %
-//! (AX-12A Max Torque(14): "Data 1,023 (0x3FF) means that DYNAMIXEL will
-//! use 100% of the maximum torque",
+//! A load whose full magnitude the e-Manual fixes is the one exception to
+//! `value × factor`: the e-Manual gives its step as "about 0.1%" and its
+//! full magnitude as 100 % (AX-12A Max Torque(14): "Data 1,023 (0x3FF)
+//! means that DYNAMIXEL will use 100% of the maximum torque",
 //! <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>, 2026-11-03), so a
 //! step is 1/1023 of the maximum and raw 1023 reads as exactly 1.0
-//! (specs/008-typed-registers-core). Check 22 refuses a table whose
-//! "about" step is more than 5 % off that.
+//! (specs/008-typed-registers-core). The full magnitude is the magnitude
+//! below a direction bit (Present Load), or the top of an unsigned load's
+//! range (Max Torque). Check 22 refuses a table whose "about" step is more
+//! than 5 % off that.
+//!
+//! A position-limit role is a `Position`, converted with the model's
+//! `type_info` scale like Goal Position: it gets no register scale, and its
+//! raw range is the table's position range. Check 22 refuses a row range or
+//! `unit_info` entry of its row that gives another range, a unit that is not
+//! an angle, or a step more than 5 % off the `type_info` step.
 
 use std::f64::consts::PI;
 
@@ -49,9 +57,10 @@ const P1_MODES: [(&str, Modes); 4] = [
     ("wheel", WHEEL),
 ];
 
-/// How far a direction-bit load's table step may sit from 1 / full
-/// magnitude, as a share of it.
-const LOAD_STEP_TOLERANCE: f64 = 0.05;
+/// How far a table's "about" step may sit from the step codegen uses in its
+/// place (1 / a load's full magnitude, a position's `type_info` step), as a
+/// share of it.
+const STEP_TOLERANCE: f64 = 0.05;
 
 /// The units `unit_info` may give.
 const UNITS: [&str; 8] = ["deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2"];
@@ -69,6 +78,11 @@ pub(crate) enum Quantity {
     Temperature,
     /// `Load`, a ratio.
     Load,
+    /// `Pwm`, a ratio.
+    Pwm,
+    /// `Position`, rad through the model's `type_info` scale: no register
+    /// scale of its own.
+    Position,
     /// `Tick`, s per raw step.
     Tick,
     /// `ComplianceMargin`, rad per raw step.
@@ -84,8 +98,8 @@ impl Quantity {
             (Self::Velocity, "rpm") => Some(2.0 * PI / 60.0),
             (Self::Current, "mA") | (Self::Tick, "ms") => Some(1e-3),
             (Self::Voltage, "V") | (Self::Temperature, "°C") => Some(1.0),
-            (Self::Load, "%") => Some(1e-2),
-            (Self::Angle, "deg") => Some(PI / 180.0),
+            (Self::Load | Self::Pwm, "%") => Some(1e-2),
+            (Self::Angle | Self::Position, "deg") => Some(PI / 180.0),
             _ => None,
         }
     }
@@ -145,7 +159,7 @@ const fn role(
 
 /// Every role. Moving Speed serves two: in wheel mode it is the goal
 /// velocity, in every other mode a speed limit.
-pub(crate) const ROLES: [RoleDef; 25] = [
+pub(crate) const ROLES: [RoleDef; 31] = [
     role(
         "PresentTemperature",
         "present_temperature",
@@ -320,6 +334,48 @@ pub(crate) const ROLES: [RoleDef; 25] = [
         "HasTemperatureLimit",
         Quantity::Temperature,
         &[("Temperature Limit", ALL)],
+    ),
+    role(
+        "MinPositionLimit",
+        "min_position_limit",
+        "HasMinPositionLimit",
+        Quantity::Position,
+        &[("Min Position Limit", ALL), ("CW Angle Limit", ALL)],
+    ),
+    role(
+        "MaxPositionLimit",
+        "max_position_limit",
+        "HasMaxPositionLimit",
+        Quantity::Position,
+        &[("Max Position Limit", ALL), ("CCW Angle Limit", ALL)],
+    ),
+    role(
+        "VelocityLimit",
+        "velocity_limit",
+        "HasVelocityLimit",
+        Quantity::Velocity,
+        &[("Velocity Limit", ALL)],
+    ),
+    role(
+        "CurrentLimit",
+        "current_limit",
+        "HasCurrentLimit",
+        Quantity::Current,
+        &[("Current Limit", ALL)],
+    ),
+    role(
+        "PwmLimit",
+        "pwm_limit",
+        "HasPwmLimit",
+        Quantity::Pwm,
+        &[("PWM Limit", ALL)],
+    ),
+    role(
+        "MaxTorque",
+        "max_torque",
+        "HasMaxTorque",
+        Quantity::Load,
+        &[("Max Torque", ALL)],
     ),
 ];
 
@@ -757,6 +813,11 @@ fn role_of(
     if table.unit_source.is_none() {
         return role;
     }
+    if def.quantity == Quantity::Position {
+        // DECISION: a position-limit range comes only under unit_source, like every FR-9 range: an unverified table's type_info is not checked against its limit rows.
+        role.row_range = Some(position_range(file, table, def, row, errors));
+        return role;
+    }
     role.row_range = row.range.map(|r| (r.min, r.max));
     if def.quantity == Quantity::Raw {
         return role;
@@ -806,19 +867,18 @@ fn role_of(
         let Some(sign) = SignKind::parse(&entry.sign_type) else {
             continue;
         };
-        let si_per_raw = match (def.quantity, sign) {
-            (Quantity::Load, SignKind::DirectionBit(n)) => {
-                let exact = load_step(n);
+        let range = entry.range.map(|r| (r.min, r.max));
+        let full = load_full_magnitude(sign, range);
+        let si_per_raw = match (def.quantity, full) {
+            (Quantity::Load, Some((top, what))) => {
+                let exact = 1.0 / top as f64;
                 let table_step = entry.value * factor;
-                if (table_step / exact - 1.0).abs() > LOAD_STEP_TOLERANCE {
+                if (table_step / exact - 1.0).abs() > STEP_TOLERANCE {
                     errors.push(Diagnostic::new(
                         file,
                         format!(
-                            "unit_info {:?}: step {} {} is not about 100 % / {} (the magnitude below direction bit {n})",
-                            entry.data_name,
-                            entry.value,
-                            entry.unit,
-                            (1u32 << n) - 1
+                            "unit_info {:?}: step {} {} is not about 100 % / {top} ({what})",
+                            entry.data_name, entry.value, entry.unit,
                         ),
                     ));
                     continue;
@@ -835,7 +895,7 @@ fn role_of(
             sign,
             size: row.size,
             zero_is_unlimited: entry.zero_is_unlimited,
-            range: entry.range.map(|r| (r.min, r.max)),
+            range,
             profile: entry.profile.clone(),
         });
         if role.bounded_by.is_none() {
@@ -852,10 +912,94 @@ fn role_of(
     role
 }
 
-/// The ratio step of a load whose magnitude sits below direction bit `n`:
-/// the full magnitude, 2^n − 1, is 100 %.
-pub(crate) fn load_step(n: u8) -> f64 {
-    1.0 / f64::from((1u32 << n) - 1)
+/// The raw full magnitude of a load scale under `sign` with raw `range`,
+/// which the e-Manual makes 100 %, and where it comes from; `None` when
+/// neither fixes it, so the table's step holds as given.
+pub(crate) fn load_full_magnitude(
+    sign: SignKind,
+    range: Option<(i64, i64)>,
+) -> Option<(i64, String)> {
+    match (sign, range) {
+        (SignKind::DirectionBit(n), _) => Some((
+            (1i64 << n) - 1,
+            format!("the magnitude below direction bit {n}"),
+        )),
+        // DECISION: an unsigned load's range top is 100 % (AX-12A Max Torque(14): 1,023 is 100 %), so a saved Max Torque ratio restores the same raw value.
+        (SignKind::Unsigned, Some((0, top))) if top > 0 => {
+            Some((top, "the top of its range".to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// The raw range of a position-limit role served by `row`: the table's
+/// position range (`type_info`), which its `Position` converts through.
+/// Check 22: the row's own range and every `unit_info` entry of the row give
+/// that range, a unit of angle and about the `type_info` step.
+fn position_range(
+    file: &str,
+    table: &ControlTable,
+    def: &RoleDef,
+    row: &Row,
+    errors: &mut Vec<Diagnostic>,
+) -> (i64, i64) {
+    let scale = &table.type_info;
+    let range = (
+        i64::from(scale.value_of_min_radian_position),
+        i64::from(scale.value_of_max_radian_position),
+    );
+    let step =
+        (f64::from(scale.max_radian) - f64::from(scale.min_radian)) / (range.1 - range.0) as f64;
+    // DECISION: a limit row's own range, unit and step must agree with type_info, so the Position conversion and the e-Manual range never disagree in one table.
+    let mut fail = |message: String| errors.push(Diagnostic::new(file, message));
+    let other_range = |(min, max): (i64, i64)| {
+        format!(
+            "range {min}..={max} is not the table's position range {}..={} (type_info), which the {} role converts through",
+            range.0, range.1, def.field
+        )
+    };
+    if let Some(r) = row.range
+        && (r.min, r.max) != range
+    {
+        fail(format!(
+            "row {:?}: {}",
+            row.data_name,
+            other_range((r.min, r.max))
+        ));
+    }
+    for entry in table
+        .unit_info
+        .iter()
+        .filter(|e| e.data_name == row.data_name)
+    {
+        let Some(factor) = def.quantity.factor(&entry.unit) else {
+            fail(format!(
+                "unit_info {:?}: unit {:?} is not the {} role's quantity ({:?})",
+                entry.data_name, entry.unit, def.field, def.quantity
+            ));
+            continue;
+        };
+        if let Some(r) = entry.range
+            && (r.min, r.max) != range
+        {
+            fail(format!(
+                "unit_info {:?}: {}",
+                entry.data_name,
+                other_range((r.min, r.max))
+            ));
+        }
+        let table_step = entry.value * factor;
+        if (table_step / step - 1.0).abs() > STEP_TOLERANCE {
+            fail(format!(
+                "unit_info {:?}: step {} {} is not about the type_info step {:.4} deg",
+                entry.data_name,
+                entry.value,
+                entry.unit,
+                step.to_degrees()
+            ));
+        }
+    }
+    range
 }
 
 /// The roles of `roles` by field.
@@ -926,7 +1070,11 @@ mod tests {
         assert!(close(Quantity::Current.factor("mA").unwrap(), 0.001));
         assert!(close(Quantity::Tick.factor("ms").unwrap(), 0.001));
         assert!(close(Quantity::Load.factor("%").unwrap(), 0.01));
+        assert!(close(Quantity::Pwm.factor("%").unwrap(), 0.01));
         assert!(close(Quantity::Angle.factor("deg").unwrap(), PI / 180.0));
+        assert!(close(Quantity::Position.factor("deg").unwrap(), PI / 180.0));
+        assert_eq!(Quantity::Position.factor("rpm"), None);
+        assert_eq!(Quantity::Pwm.factor("mA"), None);
         assert_eq!(Quantity::Voltage.factor("V"), Some(1.0));
         assert_eq!(Quantity::Temperature.factor("°C"), Some(1.0));
         assert_eq!(Quantity::Velocity.factor("%"), None);
@@ -938,7 +1086,7 @@ mod tests {
 
     #[test]
     fn role_list_matches_core() {
-        assert_eq!(ROLES.len(), 25);
+        assert_eq!(ROLES.len(), 31);
         let fields: Vec<&str> = ROLES.iter().map(|r| r.field).collect();
         let mut sorted = fields.clone();
         sorted.sort_unstable();
@@ -973,6 +1121,8 @@ mod tests {
                 "ccw_compliance_margin",
                 "cw_compliance_slope",
                 "ccw_compliance_slope",
+                "min_position_limit",
+                "max_position_limit",
             ]
         );
         let speed = roles["speed_limit"];
@@ -1084,7 +1234,7 @@ mod tests {
                 .iter()
                 .all(|r| r.scales.is_empty() && r.untyped.is_empty() && r.row_range.is_none())
         );
-        assert_eq!(m.typed.len(), 12);
+        assert_eq!(m.typed.len(), 14);
     }
 
     #[test]
@@ -1272,8 +1422,14 @@ mod tests {
 
     #[test]
     fn load_step_is_full_magnitude() {
-        assert!(close(load_step(10), 1.0 / 1023.0));
-        assert!(close(load_step(1), 1.0));
+        let full = |sign, range| load_full_magnitude(sign, range).map(|(top, _)| top);
+        assert_eq!(full(SignKind::DirectionBit(10), None), Some(1023));
+        assert_eq!(full(SignKind::DirectionBit(1), Some((0, 3))), Some(1));
+        assert_eq!(full(SignKind::Unsigned, Some((0, 1023))), Some(1023));
+        assert_eq!(full(SignKind::Unsigned, Some((1, 1023))), None);
+        assert_eq!(full(SignKind::Unsigned, Some((0, 0))), None);
+        assert_eq!(full(SignKind::Unsigned, None), None);
+        assert_eq!(full(SignKind::TwosComplement, Some((0, 1023))), None);
         let m =
             model(Table::ax_fr9().without_unit("Present Load").unit(
                 r#"data_name: "Present Load", value: 0.1, unit: "%", sign_type: "unsigned""#,
@@ -1282,6 +1438,173 @@ mod tests {
             by_field(&m.typed)["present_load"].scales[0].si_per_raw,
             0.001
         ));
+    }
+
+    /// [`Table::xm_fr9`] with PWM Limit and the units of the limits, as the
+    /// XM430-W350 page gives them.
+    fn xm_limits() -> Table {
+        Table::xm_fr9()
+            .with_row(36, 2, "PWM Limit", "RW", "EEPROM")
+            .unit(r#"data_name: "PWM Limit", value: 0.113, unit: "%", sign_type: "unsigned", range: (min: 0, max: 885)"#)
+            .unit(r#"data_name: "Min Position Limit", value: 0.088, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 4095)"#)
+    }
+
+    /// [`Table::ax_fr9`] with Max Torque and the units of the limits, as the
+    /// AX-12A page gives them.
+    fn ax_limits() -> Table {
+        Table::ax_fr9()
+            .with_row(14, 2, "Max Torque", "RW", "EEPROM")
+            .unit(r#"data_name: "CW Angle Limit", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 1023)"#)
+            .unit(r#"data_name: "Max Torque", value: 0.1, unit: "%", sign_type: "unsigned", range: (min: 0, max: 1023)"#)
+    }
+
+    #[test]
+    fn limit_roles_and_scales() {
+        let m = model(xm_limits());
+        let roles = by_field(&m.typed);
+        for (field, name, address) in [
+            ("min_position_limit", "Min Position Limit", 52),
+            ("max_position_limit", "Max Position Limit", 48),
+        ] {
+            let limit = roles[field];
+            assert_eq!(
+                (limit.row.data_name.as_str(), limit.row.address),
+                (name, address)
+            );
+            assert!(
+                limit.scales.is_empty() && limit.untyped.is_empty(),
+                "{field}"
+            );
+            assert_eq!(limit.row_range, Some((0, 4095)), "{field}");
+            assert_eq!((limit.bounded_by.as_ref(), limit.from_fw), (None, 0));
+        }
+        let velocity = roles["velocity_limit"];
+        assert_eq!((velocity.row.address, velocity.row.size), (44, 4));
+        let [scale] = velocity.scales.as_slice() else {
+            panic!("{:?}", velocity.scales);
+        };
+        assert!(close(scale.si_per_raw, 0.229 * PI / 30.0));
+        assert_eq!((scale.modes, scale.sign), (ALL, SignKind::Unsigned));
+        let current = roles["current_limit"];
+        assert_eq!(current.row.address, 38);
+        assert!(close(current.scales[0].si_per_raw, 0.00269));
+        let pwm = roles["pwm_limit"];
+        assert_eq!((pwm.row.address, pwm.row.size), (36, 2));
+        assert!(close(pwm.scales[0].si_per_raw, 0.00113));
+        assert_eq!(pwm.scales[0].range, Some((0, 885)));
+        assert_eq!(pwm.def.quantity, Quantity::Pwm);
+        assert!(!roles.contains_key("max_torque"));
+    }
+
+    #[test]
+    fn p1_angle_limits_and_max_torque() {
+        let m = model(ax_limits());
+        let roles = by_field(&m.typed);
+        for (field, name, address) in [
+            ("min_position_limit", "CW Angle Limit", 6),
+            ("max_position_limit", "CCW Angle Limit", 8),
+        ] {
+            let limit = roles[field];
+            assert_eq!(
+                (limit.row.data_name.as_str(), limit.row.address),
+                (name, address)
+            );
+            assert!(limit.scales.is_empty(), "{field}");
+            assert_eq!(limit.row_range, Some((0, 1023)), "{field}");
+        }
+        let torque = roles["max_torque"];
+        assert_eq!((torque.row.address, torque.row.size), (14, 2));
+        let [scale] = torque.scales.as_slice() else {
+            panic!("{:?}", torque.scales);
+        };
+        assert!(close(scale.si_per_raw, 1.0 / 1023.0));
+        assert_eq!(
+            (scale.sign, scale.range, scale.modes),
+            (SignKind::Unsigned, Some((0, 1023)), ALL)
+        );
+        for field in ["velocity_limit", "current_limit", "pwm_limit"] {
+            assert!(!roles.contains_key(field), "{field}");
+        }
+    }
+
+    #[test]
+    fn limits_without_unit_source_or_range() {
+        let m = model(Table::xm());
+        let roles = by_field(&m.typed);
+        for field in ["min_position_limit", "max_position_limit"] {
+            assert_eq!(roles[field].row_range, None, "{field}");
+        }
+        let m = model(
+            ax_limits()
+                .without_range("CW Compliance Slope")
+                .omit_field("unit_source"),
+        );
+        let roles = by_field(&m.typed);
+        assert!(roles["max_torque"].scales.is_empty());
+        assert_eq!(roles["min_position_limit"].row_range, None);
+        let m = model(
+            ax_limits()
+                .without_unit("Max Torque")
+                .unit(r#"data_name: "Max Torque", value: 0.1, unit: "%", sign_type: "unsigned""#),
+        );
+        assert!(close(
+            by_field(&m.typed)["max_torque"].scales[0].si_per_raw,
+            0.001
+        ));
+    }
+
+    #[test]
+    fn check22_position_limits() {
+        assert_fails(
+            Table::ax_fr9().unit(
+                r#"data_name: "CW Angle Limit", value: 0.29, unit: "rpm", sign_type: "unsigned""#,
+            ),
+            &[
+                "unit_info \"CW Angle Limit\": unit \"rpm\" is not the min_position_limit role's quantity (Position)",
+            ],
+        );
+        assert_fails(
+            Table::ax_fr9().unit(
+                r#"data_name: "CCW Angle Limit", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 4095)"#,
+            ),
+            &[
+                "unit_info \"CCW Angle Limit\": range 0..=4095 is not the table's position range 0..=1023 (type_info)",
+                "max_position_limit role",
+            ],
+        );
+        assert_fails(
+            Table::ax_fr9().unit(
+                r#"data_name: "CW Angle Limit", value: 0.088, unit: "deg", sign_type: "unsigned""#,
+            ),
+            &[
+                "unit_info \"CW Angle Limit\": step 0.088 deg is not about the type_info step 0.2933 deg",
+            ],
+        );
+        assert_fails(
+            Table::ax_fr9().row_range("CW Angle Limit", 0, 4095),
+            &["row \"CW Angle Limit\": range 0..=4095 is not the table's position range 0..=1023"],
+        );
+        let ranged = model(Table::ax_fr9().row_range("CW Angle Limit", 0, 1023));
+        assert_eq!(
+            by_field(&ranged.typed)["min_position_limit"].row_range,
+            Some((0, 1023))
+        );
+    }
+
+    #[test]
+    fn check22_max_torque_and_pwm_limit() {
+        assert_fails(
+            ax_limits().without_unit("Max Torque").unit(
+                r#"data_name: "Max Torque", value: 0.2, unit: "%", sign_type: "unsigned", range: (min: 0, max: 1023)"#,
+            ),
+            &["unit_info \"Max Torque\": step 0.2 % is not about 100 % / 1023 (the top of its range)"],
+        );
+        assert_fails(
+            xm_limits().without_unit("PWM Limit").unit(
+                r#"data_name: "PWM Limit", value: 0.113, unit: "rpm", sign_type: "unsigned""#,
+            ),
+            &["unit_info \"PWM Limit\": unit \"rpm\" is not the pwm_limit role's quantity (Pwm)"],
+        );
     }
 
     #[test]

@@ -145,7 +145,10 @@ fn convert(quantity: Quantity, raw: i64) -> String {
         Quantity::Voltage => format!("scale.voltage({raw}).volts()"),
         Quantity::Temperature => format!("scale.temperature({raw}).celsius()"),
         Quantity::Load => format!("scale.load({raw}).ratio()"),
-        Quantity::Tick | Quantity::Angle | Quantity::Raw => format!("scale.si_of({raw})"),
+        Quantity::Pwm => format!("scale.pwm({raw}).ratio()"),
+        Quantity::Tick | Quantity::Angle | Quantity::Position | Quantity::Raw => {
+            format!("scale.si_of({raw})")
+        }
     }
 }
 
@@ -161,8 +164,11 @@ fn range_value(range: Option<(i64, i64)>) -> String {
 fn scale_checks(role: &GenRole, scale: &GenScale) -> String {
     let mode = fr9::mode_names(scale.modes)[0];
     let factor = role.def.quantity.factor(&scale.unit).unwrap_or(1.0);
-    let step = match (role.def.quantity, scale.sign) {
-        (Quantity::Load, SignKind::DirectionBit(n)) => fr9::load_step(n),
+    let step = match (
+        role.def.quantity,
+        fr9::load_full_magnitude(scale.sign, scale.range),
+    ) {
+        (Quantity::Load, Some((top, _))) => 1.0 / top as f64,
         _ => scale.value * factor,
     };
     let mut out = format!(
@@ -864,6 +870,44 @@ mod tests {
         }
         assert!(c.contains("fnmx_roles()"));
         assert!(c.contains("fnxm_roles()"));
+    }
+
+    #[test]
+    fn limit_role_tests() {
+        let r = resolved(
+            &Map::new()
+                .model(12, "ax", "AX-12A")
+                .p1(&[(0, "ax")])
+                .model(1020, "x-series", "XM430-W350")
+                .p2(&[(0, "xm")]),
+            &[
+                (
+                    "ax",
+                    Table::ax_fr9()
+                        .with_row(14, 2, "Max Torque", "RW", "EEPROM")
+                        .unit(r#"data_name: "Max Torque", value: 0.1, unit: "%", sign_type: "unsigned", range: (min: 0, max: 1023)"#),
+                ),
+                (
+                    "xm",
+                    Table::xm_fr9()
+                        .with_row(36, 2, "PWM Limit", "RW", "EEPROM")
+                        .unit(r#"data_name: "PWM Limit", value: 0.113, unit: "%", sign_type: "unsigned", range: (min: 0, max: 885)"#),
+                ),
+            ],
+        );
+        let c = compact(&render_tests(&r).unwrap());
+        for part in [
+            "(Role::MinPositionLimit,<AxasHasMinPositionLimit>::ROLE,Ax::CW_ANGLE_LIMIT,Some(0..=1023)),",
+            "(Role::MaxPositionLimit,<XmasHasMaxPositionLimit>::ROLE,Xm::MAX_POSITION_LIMIT,Some(0..=4095))",
+            "letrole=<AxasHasMaxTorque>::ROLE;",
+            "assert!(close(scale.load(100).ratio(),0.097751714));assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=1023));",
+            "letrole=<XmasHasPwmLimit>::ROLE;",
+            "assert!(close(scale.pwm(100).ratio(),0.113));assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=885));",
+            "assert!(close(scale.velocity(100).rad_per_s(),2.3980825));",
+            "assert!(close(scale.current(100).amps(),0.269));",
+        ] {
+            assert!(c.contains(part), "{part}");
+        }
     }
 
     #[test]

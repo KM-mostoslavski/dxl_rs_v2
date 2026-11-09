@@ -191,6 +191,7 @@ impl Error {
                 "an electrical shock, or too little power for its motor"
             }
             Self::Validation(V::ActuatorIsOff { .. }) => "enable torque before setting a goal",
+            Self::Validation(V::ActuatorIsOn { .. }) => "disable torque before writing EEPROM",
             Self::Validation(V::ActuatorFaulted { .. }) => "clear the fault before enabling torque",
             Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
             Self::Validation(V::NoUnit { .. }) => "use the register's raw form",
@@ -607,6 +608,7 @@ impl fmt::Display for FeatureHint {
 ///         | V::PacketTooLarge { .. }
 ///         | V::DataLength { .. }
 ///         | V::ActuatorIsOff { .. }
+///         | V::ActuatorIsOn { .. }
 ///         | V::ActuatorFaulted { .. }
 ///         | V::NotFinite { .. }
 ///         | V::DoesNotFit { .. }
@@ -679,6 +681,16 @@ pub enum ValidationError {
     ActuatorIsOff {
         /// The actuator the goal was for.
         id: Id,
+    },
+
+    /// An EEPROM register was to be written while the actuator's torque is
+    /// on: the actuator refuses EEPROM writes then, so nothing is sent.
+    #[error("id {}: torque on, {register} not written", id.get())]
+    ActuatorIsOn {
+        /// The actuator the write was for.
+        id: Id,
+        /// The EEPROM register's name, as the control table writes it.
+        register: &'static str,
     },
 
     /// Torque was to be enabled on a faulted actuator.
@@ -2305,6 +2317,13 @@ mod tests {
                 "id 4: torque off",
             ),
             (
+                ValidationError::ActuatorIsOn {
+                    id: id(6),
+                    register: "Max Voltage Limit",
+                },
+                "id 6: torque on, Max Voltage Limit not written",
+            ),
+            (
                 ValidationError::ActuatorFaulted { id: id(4) },
                 "id 4: faulted",
             ),
@@ -2797,6 +2816,14 @@ mod tests {
             (
                 ValidationError::ActuatorIsOff { id: id(1) }.into(),
                 "enable torque before setting a goal",
+            ),
+            (
+                ValidationError::ActuatorIsOn {
+                    id: id(1),
+                    register: "Min Voltage Limit",
+                }
+                .into(),
+                "disable torque before writing EEPROM",
             ),
             (
                 ValidationError::ActuatorFaulted { id: id(1) }.into(),

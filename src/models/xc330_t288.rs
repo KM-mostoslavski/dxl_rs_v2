@@ -2,11 +2,12 @@
 // Source: control_tables/xc330_t288.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-    HasLed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
-    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
-    HasTemperatureLimit, LimitRegisters, ModeSource, ModeValues, Model, ModelData, Protocols,
-    RoleRegister, Roles,
+    Actuator, Cache, Describe, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+    HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+    HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
+    HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit,
+    HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeSource, ModeValues, Model,
+    ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -75,6 +76,11 @@ impl Xc330T288 {
             min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
             max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
             temperature_limit: Some(<Self as HasTemperatureLimit>::ROLE),
+            min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
+            max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
+            velocity_limit: Some(<Self as HasVelocityLimit>::ROLE),
+            current_limit: Some(<Self as HasCurrentLimit>::ROLE),
+            pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -387,6 +393,66 @@ impl HasTemperatureLimit for Xc330T288 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Temperature Limit",
         register: Self::TEMPERATURE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Min Position Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMinPositionLimit for Xc330T288 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Min Position Limit",
+        register: Self::MIN_POSITION_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Max Position Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMaxPositionLimit for Xc330T288 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Max Position Limit",
+        register: Self::MAX_POSITION_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Velocity Limit: raw only, no unit in the table.
+impl HasVelocityLimit for Xc330T288 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Velocity Limit",
+        register: Self::VELOCITY_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Current Limit: raw only, no unit in the table.
+impl HasCurrentLimit for Xc330T288 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Current Limit",
+        register: Self::CURRENT_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// PWM Limit: raw only, no unit in the table.
+impl HasPwmLimit for Xc330T288 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "PWM Limit",
+        register: Self::PWM_LIMIT,
         scales: &[],
         bounded_by: None,
         from_fw: 0,

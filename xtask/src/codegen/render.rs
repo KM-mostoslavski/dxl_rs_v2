@@ -265,6 +265,11 @@ fn unit_phrase(value: f64, unit: &str, modes: fr9::Modes, profile: Option<&str>)
 fn role_doc(role: &GenRole) -> String {
     let mut doc = if role.def.quantity == Quantity::Raw {
         format!("/// {}: in register units, no scale.", role.row.data_name)
+    } else if role.def.quantity == Quantity::Position {
+        format!(
+            "/// {}: a position, converted with the model's position scale (`type_info`).",
+            role.row.data_name
+        )
     } else if role.scales.is_empty() && role.untyped.is_empty() {
         format!(
             "/// {}: raw only, no unit in the table.",
@@ -300,16 +305,22 @@ fn role_doc(role: &GenRole) -> String {
             role.def.field.replace('_', " ")
         );
     }
-    for scale in &role.scales {
-        if role.def.quantity == Quantity::Load
-            && let SignKind::DirectionBit(n) = scale.sign
-        {
-            let _ = write!(
-                doc,
-                "\n/// One raw step is 1/{} of the maximum: the full magnitude below direction bit {n} is 100 %.",
-                (1u32 << n) - 1
-            );
-        }
+    for scale in role
+        .scales
+        .iter()
+        .filter(|_| role.def.quantity == Quantity::Load)
+    {
+        let Some((top, _)) = fr9::load_full_magnitude(scale.sign, scale.range) else {
+            continue;
+        };
+        let full = match scale.sign {
+            SignKind::DirectionBit(n) => format!("the full magnitude below direction bit {n}"),
+            _ => format!("raw {top}, the top of its range,"),
+        };
+        let _ = write!(
+            doc,
+            "\n/// One raw step is 1/{top} of the maximum: {full} is 100 %."
+        );
     }
     if let Some((min, max)) = role.row_range {
         let _ = write!(doc, "\n/// Raw range {min} to {max}.");
@@ -759,8 +770,9 @@ mod tests {
             "limits:LimitRegisters::MinMax{min:Self::MIN_POSITION_LIMIT,max:Self::MAX_POSITION_LIMIT}",
             "hardware_error:Some(Self::HARDWARE_ERROR_STATUS)",
             "mode:ModeSource::Register{register:Self::OPERATING_MODE,values:ModeValues{bounded:&[3],unbounded:&[4,5],no_position:&[0,1,16],current:&[],velocity:&[],pwm:&[],current_position:&[]}}",
-            "roles:Roles{hardware_error_status:Some(<SelfasHasHardwareErrorStatus>::ROLE),..Roles::NONE},",
+            "roles:Roles{hardware_error_status:Some(<SelfasHasHardwareErrorStatus>::ROLE),min_position_limit:Some(<SelfasHasMinPositionLimit>::ROLE),max_position_limit:Some(<SelfasHasMaxPositionLimit>::ROLE),..Roles::NONE},",
             "implHasHardwareErrorStatusforXm{constROLE:RoleRegister=RoleRegister{name:\"HardwareErrorStatus\",register:Self::HARDWARE_ERROR_STATUS,scales:&[],bounded_by:None,from_fw:0,row_range:None,};}",
+            "implHasMinPositionLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"MinPositionLimit\",register:Self::MIN_POSITION_LIMIT,scales:&[],bounded_by:None,from_fw:0,row_range:None,};}",
             "protocols:Protocols{p1:true,p2:true}",
             "implActuatorforXm{}",
             "implModelforXm{constDATA:&'staticModelData=&Self::DATA;}",
@@ -776,7 +788,7 @@ mod tests {
         assert_eq!(
             uses(xm),
             [
-                "usecrate::actuator::{Actuator,Cache,Describe,HasHardwareErrorStatus,LimitRegisters,ModeSource,ModeValues,Model,ModelData,Protocols,RoleRegister,Roles}",
+                "usecrate::actuator::{Actuator,Cache,Describe,HasHardwareErrorStatus,HasMaxPositionLimit,HasMinPositionLimit,LimitRegisters,ModeSource,ModeValues,Model,ModelData,Protocols,RoleRegister,Roles}",
                 "usecrate::id::Id",
                 "usecrate::register::{Access,Area,Register}",
                 "usecrate::units::PositionScale",
@@ -809,9 +821,14 @@ mod tests {
         );
         assert!(compact(file(&later, "models/ax.rs")).contains("bulk_read_p1:false,"));
         assert!(uses(ax).contains(
-            &"usecrate::actuator::{Actuator,Cache,Describe,LimitRegisters,ModeSource,Model,ModelData,Protocols,Roles}"
+            &"usecrate::actuator::{Actuator,Cache,Describe,HasMaxPositionLimit,HasMinPositionLimit,LimitRegisters,ModeSource,Model,ModelData,Protocols,RoleRegister,Roles}"
                 .to_string()
         ));
+        assert!(c.contains(
+            "implHasMaxPositionLimitforAx{constROLE:RoleRegister=RoleRegister{name:\"CCWAngleLimit\",register:Self::CCW_ANGLE_LIMIT,scales:&[],bounded_by:None,from_fw:0,row_range:None,};}"
+        ));
+        assert!(ax.lines().any(|l| l
+            == "/// CW Angle Limit: a position, converted with the model's position scale (`type_info`)."));
     }
 
     #[test]
@@ -916,6 +933,54 @@ mod tests {
             assert!(xm.lines().any(|l| l == line), "{line}");
         }
         assert!(!uses(xm)[0].contains("LimitMode"));
+    }
+
+    #[test]
+    fn model_file_with_limit_roles() {
+        let ax = Table::ax_fr9()
+            .with_row(14, 2, "Max Torque", "RW", "EEPROM")
+            .unit(r#"data_name: "Max Torque", value: 0.1, unit: "%", sign_type: "unsigned", range: (min: 0, max: 1023)"#);
+        let files = one("ax", ax);
+        let text = file(&files, "models/ax.rs");
+        let c = compact(text);
+        for part in [
+            "min_position_limit:Some(<SelfasHasMinPositionLimit>::ROLE),max_position_limit:Some(<SelfasHasMaxPositionLimit>::ROLE),max_torque:Some(<SelfasHasMaxTorque>::ROLE),..Roles::NONE}",
+            "implHasMinPositionLimitforAx{constROLE:RoleRegister=RoleRegister{name:\"CWAngleLimit\",register:Self::CW_ANGLE_LIMIT,scales:&[],bounded_by:None,from_fw:0,row_range:Some((0,1023)),};}",
+            "implHasMaxTorqueforAx{constROLE:RoleRegister=RoleRegister{name:\"MaxTorque\",register:Self::MAX_TORQUE,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.0009775171,Sign::Unsigned,2,false)),range:Some((0,1023))}],bounded_by:None,from_fw:0,row_range:None,};}",
+        ] {
+            assert!(c.contains(part), "{part}");
+        }
+        for line in [
+            "/// CW Angle Limit: a position, converted with the model's position scale (`type_info`).",
+            "/// Raw range 0 to 1023.",
+            "/// Max Torque: 0.1 % per raw step in every mode.",
+            "/// One raw step is 1/1023 of the maximum: raw 1023, the top of its range, is 100 %.",
+        ] {
+            assert!(text.lines().any(|l| l == line), "{line}");
+        }
+
+        let xm = Table::xm_fr9()
+            .with_row(36, 2, "PWM Limit", "RW", "EEPROM")
+            .unit(r#"data_name: "PWM Limit", value: 0.113, unit: "%", sign_type: "unsigned", range: (min: 0, max: 885)"#);
+        let files = one("xm", xm);
+        let text = file(&files, "models/xm.rs");
+        let c = compact(text);
+        for part in [
+            "implHasPwmLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"PWMLimit\",register:Self::PWM_LIMIT,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.00113,Sign::Unsigned,2,false)),range:Some((0,885))}],",
+            "implHasVelocityLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"VelocityLimit\",register:Self::VELOCITY_LIMIT,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.023980824,Sign::Unsigned,4,false)),range:None}],",
+            "implHasCurrentLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"CurrentLimit\",register:Self::CURRENT_LIMIT,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.00269,Sign::Unsigned,2,false)),range:None}],",
+            "implHasMaxPositionLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"MaxPositionLimit\",register:Self::MAX_POSITION_LIMIT,scales:&[],bounded_by:None,from_fw:0,row_range:Some((0,4095)),};}",
+        ] {
+            assert!(c.contains(part), "{part}");
+        }
+        for line in [
+            "/// PWM Limit: 0.113 % per raw step in every mode.",
+            "/// Max Position Limit: a position, converted with the model's position scale (`type_info`).",
+            "/// Raw range 0 to 4095.",
+        ] {
+            assert!(text.lines().any(|l| l == line), "{line}");
+        }
+        assert!(!c.contains("implHasMaxTorqueforXm"));
     }
 
     #[test]
