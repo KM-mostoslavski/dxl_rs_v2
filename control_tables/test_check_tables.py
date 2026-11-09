@@ -12,6 +12,8 @@ from __future__ import annotations
 import contextlib
 import errno
 import io
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,7 +26,7 @@ from check_tables import Ident, RonError, Tagged, parse_ron  # noqa: E402
 
 TODAY = "2026-10-28"
 # Parser codes for inputs that crashed the parser before T210 (tested in CrashTests).
-STAGE_3_RON_CODES: set[str] = set()
+STAGE_3_RON_CODES = {"bad-unicode-escape", "number-too-long", "too-deep"}
 
 
 def write_fixture(root: Path, files: dict[str, str]) -> Path:
@@ -525,6 +527,27 @@ class CliTests(FixtureCase):
             result, "read-failed", file="folder.ron", operation="read", path=str(self.dir / "folder.ron"),
             errno=errno.EISDIR,
         )
+
+    def test_a_directory_that_cannot_be_listed_exits_5(self) -> None:
+        locked = self.dir / "locked"
+        locked.mkdir()
+        write_fixture(locked, clean_files())
+        locked.chmod(0o300)
+        try:
+            try:
+                os.listdir(locked)
+            except PermissionError:
+                pass
+            else:
+                self.skipTest("this user can list a directory without read permission (root?)")
+            result = run_check(["--dir", str(locked), "--today", TODAY])
+        finally:
+            locked.chmod(0o700)
+        self.assertEqual(result.code, 5)
+        self.assertDiagnostic(
+            result, "read-failed", file=str(locked), operation="list", path=str(locked), errno=errno.EACCES
+        )
+        self.assertEqual(len(result.diagnostics), 1)
 
     def test_the_highest_failure_class_wins(self) -> None:
         write_fixture(self.dir, {**clean_files(), "broken": "( source: "})
@@ -1910,6 +1933,111 @@ class Fr9Tests(FixtureCase):
             self.check_with(ax=fr9_ax(rows=rows)), "p1-address-above-255", file="ax.ron",
             field="torque_control_mode.goal", register="Goal Torque", found=300, allowed=(0, 255),
         )
+
+
+class CrashTests(FixtureCase):
+    """No input ends the run in a traceback: each becomes a diagnostic with its cause code (FR-6.14)."""
+
+    def test_parser_inputs_that_used_to_crash(self) -> None:
+        cases = (
+            ('( a: "\\u{zz}" )', "bad-unicode-escape"),
+            ('( a: "\\u{110000}" )', "bad-unicode-escape"),
+            ('( a: "\\u{D800}" )', "bad-unicode-escape"),
+            ("( a: " + "1" * 5000 + " )", "number-too-long"),
+            ("( a: " + "[" * 3000 + "]" * 3000 + " )", "too-deep"),
+        )
+        for text, code in cases:
+            with self.subTest(code=code, text=text[:24]):
+                with self.assertRaises(RonError) as ctx:
+                    parse_ron(text, "t.ron")
+                self.assertEqual(ctx.exception.code, code)
+                result = self.check_with(x=text)
+                self.assertEqual(result.code, 4)
+                self.assertDiagnostic(result, "ron-parse", file="x.ron", parser_code=code, line=1)
+        self.assertEqual(parse_ron('"\\u{e9}\\u{1F600}"'), "é\U0001F600")
+        nested = parse_ron("[" * 40 + "]" * 40)
+        for _ in range(39):
+            nested = nested[0]
+        self.assertEqual(nested, [])
+
+    def test_a_range_on_a_row_of_size_0_is_not_a_crash(self) -> None:
+        rows = [r if r[2] != "Position P Gain" else (84, 0, "Position P Gain", "RW", "RAM", (0, 10)) for r in FR9_X_ROWS]
+        result = self.check_with(x=fr9_x(rows=rows))
+        self.assertFails(result, "row-size-invalid", register="Position P Gain", found=0)
+        self.assertEqual([d for d in result.diagnostics if d.code.startswith("range-")], [])
+        entry = '{ data_name: "Position P Gain", value: 1.0, unit: "%", sign_type: "twos_complement", range: (min: 0, max: 1) }'
+        result = self.check_with(x=fr9_x(rows=rows, units=units(entry)))
+        self.assertFails(result, "row-size-invalid", register="Position P Gain", found=0)
+        bit = '{ data_name: "Position P Gain", value: 1.0, unit: "%", sign_type: "direction_bit_4", range: (min: 0, max: 1) }'
+        result = self.check_with(x=fr9_x(rows=rows, units=units(bit)))
+        self.assertEqual([d.code for d in result.diagnostics], ["row-size-invalid"])
+
+    def test_a_direction_bit_with_too_many_digits_is_not_a_crash(self) -> None:
+        sign = "direction_bit_" + "9" * 5000
+        entry = f'{{ data_name: "Goal Current", value: 2.69, unit: "mA", sign_type: "{sign}" }}'
+        self.assertFails(self.check_with(x=fr9_x(units=units(entry))), "unit-entry-sign-invalid", found=sign)
+        self.assertFails(self.check_with(x=table(extra=units(entry))), "unit-entry-sign-unknown", found=sign)
+
+    def test_a_stem_starting_with_a_non_ascii_digit_is_not_a_crash(self) -> None:
+        files = {**clean_files(), "²x": table()}
+        files["dynamixel"] = model_map(
+            {12: entry("ax", ("p1",), family="ax"), 350: entry("xl320", ("p2",)), 1020: entry("x"), 1030: entry("²x")}, []
+        )
+        self.assertPasses(self.check(files))
+        self.assertEqual(check_tables.module_ident("²x"), "²x")
+        self.assertEqual(check_tables.module_ident("2x"), "two_x")
+
+    def test_an_undecodable_file_name_prints_without_a_traceback(self) -> None:
+        write_fixture(self.dir, clean_files())
+        try:
+            (self.dir / os.fsdecode(b"\xff.ron")).write_text(table(), encoding="utf-8")
+        except (OSError, UnicodeError):
+            self.skipTest("the file system refuses a file name that is not UTF-8")
+        script = Path(check_tables.__file__).resolve()
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        done = subprocess.run(
+            [sys.executable, str(script), "--dir", str(self.dir), "--today", TODAY], capture_output=True, env=env
+        )
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertNotIn(b"Traceback", done.stderr)
+        self.assertIn(b"[table-unlisted]", done.stderr)
+        self.assertIn(b"\\udcff.ron: [table-unlisted]", done.stderr)
+
+
+class UnknownKeyTests(FixtureCase):
+    """A key the check does not know is a diagnostic, never skipped in silence (FR-6.14)."""
+
+    def test_unknown_table_key(self) -> None:
+        self.assertFails(
+            self.check_with(x=table(extra="  notes: \"x\",\n  contro_table: [],")), "table-unknown-key", file="x.ron",
+            found=["contro_table", "notes"],
+        )
+
+    def test_unknown_type_info_key(self) -> None:
+        text = table(type_info=None, extra=(
+            "  type_info: { value_of_zero_radian_position: 2048, value_of_max_radian_position: 4095, "
+            "value_of_min_radian_position: 0, min_radian: -3.1, max_radian: 3.1, step: 1 },"
+        ))
+        self.assertFails(self.check_with(x=text), "type-info-unknown-key", file="x.ron", field="type_info", found=["step"])
+
+    def test_unknown_map_keys(self) -> None:
+        good = model_map(NotMappedTests.ENTRIES, [])
+        cases = (
+            (good.replace("  not_mapped: [],", "  not_mapped: [],\n  aliases: [],"), "map-unknown-key",
+             {"found": ["aliases"]}),
+            (good.replace('family: "x-series", name: "XM430-W350"', 'family: "x-series", name: "XM430-W350", p3: []'),
+             "model-unknown-key", {"model": 1020, "found": ["p3"]}),
+            (good.replace('(from_fw: 0, file: "ax")', '(from_fw: 0, file: "ax", note: "x")'), "model-ref-unknown-key",
+             {"model": 12, "field": "p1", "found": ["note"]}),
+            (good.replace("  not_mapped: [],", '  not_mapped: [(file: "extra", reason: NoModelNumber, why: "x")],'),
+             "not-mapped-unknown-key", {"table": "extra", "found": ["why"]}),
+        )
+        for text, cause, fields in cases:
+            with self.subTest(cause=cause):
+                self.assertFails(
+                    self.check({**clean_files(), "extra": table(), "dynamixel": text}), cause, file="dynamixel.ron",
+                    **fields,
+                )
 
 
 class RealTablesTests(unittest.TestCase):

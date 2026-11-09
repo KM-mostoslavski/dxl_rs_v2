@@ -71,7 +71,14 @@ RON_ERROR_CODES = (
     "duplicate-key",
     "expected-field-name",
     "expected-separator",
+    "bad-unicode-escape",
+    "number-too-long",
+    "too-deep",
 )
+# DECISION: nesting is capped well above the tables' own depth (about 6), so a pathological file fails with
+# `too-deep` at a known token instead of exhausting Python's recursion limit.
+MAX_DEPTH = 64
+_HEX_RE = re.compile(r"[0-9A-Fa-f]{1,6}")
 
 
 class RonError(Exception):
@@ -198,7 +205,11 @@ def _tokenize(text: str, file: str) -> list[_Token]:
             if kind == "float":
                 tokens.append(_Token("float", float(raw), pos, end, line, col))
             elif kind == "int":
-                tokens.append(_Token("int", int(raw), pos, end, line, col))
+                try:
+                    number = int(raw)
+                except ValueError:
+                    raise RonError(file, line, col, f"integer of {len(raw)} characters", "number-too-long") from None
+                tokens.append(_Token("int", number, pos, end, line, col))
             elif kind == "ident":
                 tokens.append(_Token("ident", raw, pos, end, line, col))
             elif kind == "punct":
@@ -232,7 +243,13 @@ def _read_string(text: str, start: int, file: str, line: int, col: int) -> tuple
                 close = text.find("}", pos)
                 if close < 0:
                     break
-                out.append(chr(int(text[pos + 2 : close], 16)))
+                digits = text[pos + 2 : close]
+                point = int(digits, 16) if _HEX_RE.fullmatch(digits) else -1
+                if not (0 <= point <= 0x10FFFF) or 0xD800 <= point <= 0xDFFF:
+                    raise RonError(
+                        file, line, col, f"\\u{{{digits}}} is not a Unicode scalar value", "bad-unicode-escape"
+                    )
+                out.append(chr(point))
                 pos = close
             else:
                 raise RonError(file, line, col, f"unknown escape \\{e} in string", "unknown-escape")
@@ -247,6 +264,7 @@ class _Parser:
         self.file = file
         self.tokens = _tokenize(text, file)
         self.i = 0
+        self.depth = 0
 
     def peek(self, ahead: int = 0) -> _Token:
         return self.tokens[min(self.i + ahead, len(self.tokens) - 1)]
@@ -284,6 +302,15 @@ class _Parser:
         return value
 
     def value(self) -> object:
+        self.depth += 1
+        try:
+            if self.depth > MAX_DEPTH:
+                raise self.error(self.peek(), f"nesting deeper than {MAX_DEPTH} levels", "too-deep")
+            return self.plain_value()
+        finally:
+            self.depth -= 1
+
+    def plain_value(self) -> object:
         tok = self.peek()
         if tok.kind in ("str", "int", "float"):
             self.next()
@@ -446,6 +473,7 @@ CAUSES: dict[str, Cause] = {
     "row-address-invalid": RULE,
     "row-size-invalid": RULE,
     "row-name-invalid": RULE,
+    "table-unknown-key": RULE,
     # source and URLs
     "source-missing": RULE,
     "source-shape": RULE,
@@ -531,6 +559,7 @@ CAUSES: dict[str, Cause] = {
     "type-info-missing": RULE,
     "type-info-not-record": RULE,
     "type-info-key-missing": RULE,
+    "type-info-unknown-key": RULE,
     "type-info-position-not-int": RULE,
     "type-info-radian-not-number": RULE,
     "type-info-max-not-above-min": RULE,
@@ -582,9 +611,12 @@ CAUSES: dict[str, Cause] = {
     "torque-control-same-row": RULE,
     # model map
     "map-not-record": RULE,
+    "map-unknown-key": RULE,
     "models-not-map": RULE,
     "model-number-invalid": RULE,
     "model-entry-not-record": RULE,
+    "model-unknown-key": RULE,
+    "model-ref-unknown-key": RULE,
     "model-family-invalid": RULE,
     "model-name-invalid": RULE,
     "model-also-shape": RULE,
@@ -612,6 +644,7 @@ CAUSES: dict[str, Cause] = {
     # not_mapped
     "not-mapped-not-list": RULE,
     "not-mapped-record-invalid": RULE,
+    "not-mapped-unknown-key": RULE,
     "not-mapped-number-unknown": RULE,
     "not-mapped-reason-invalid": Cause(
         EXIT_RULE, "being unverified is never a reason: an unverified table stays mapped and flagged unverified"
@@ -964,6 +997,27 @@ def check_table_shape(stem: str, table: object, report: Report) -> None:
                 field="data_name",
                 found=name,
             )
+
+
+# The keys of a table (ron-schema §1, fr9-schema).
+TABLE_KEYS = (
+    "source",
+    "protocols",
+    "instructions",
+    "operating_modes",
+    "type_info",
+    "unit_info",
+    "control_table",
+    "unit_source",
+    "torque_control_mode",
+)
+
+
+def check_table_keys(stem: str, table: dict, report: Report) -> None:
+    """No key outside TABLE_KEYS: an unknown key (a typo, say) is reported, never ignored."""
+    unknown = sorted(set(table) - set(TABLE_KEYS))
+    if unknown:
+        report.add("table-unknown-key", f"{stem}.ron", "", f"unknown key(s) {', '.join(unknown)}", found=unknown)
 
 
 def check_url(file: str, location: str, url: object, report: Report, field: str, **context: object) -> None:
@@ -1440,7 +1494,8 @@ def check_mode_source(stem: str, table: dict, report: Report) -> None:
                 "mode-row-attributes",
                 file,
                 _row_location(row),
-                f"the mode register must be size 1, RW, EEPROM, found size {found[0]}, {_shown(found[1])}, {_shown(found[2])}",
+                f"the mode register must be size 1, RW, EEPROM, "
+                f"found size {found[0]}, {_shown(found[1])}, {_shown(found[2])}",
                 register=row["data_name"],
                 found=found,
                 expected=(1, "RW", "EEPROM"),
@@ -1729,6 +1784,11 @@ def check_type_info(file: str, scale: object, report: Report) -> None:
             "type-info-not-record", file, loc, f"must be a record, found {found}", field="type_info", found=found
         )
         return
+    unknown = sorted(set(scale) - set(TYPE_INFO_KEYS))
+    if unknown:
+        report.add(
+            "type-info-unknown-key", file, loc, f"unknown key(s) {', '.join(unknown)}", field="type_info", found=unknown
+        )
     missing = [k for k in TYPE_INFO_KEYS if k not in scale]
     if missing:
         report.add(
@@ -1843,7 +1903,9 @@ UNIT_INFO_FR9_KEYS = ("modes", "profile", "zero_is_unlimited", "range", "bounded
 UNITS = ("deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2")
 SIGN_TYPES = ("unsigned", "twos_complement")
 LEGACY_SIGN_TYPES = ("signed", "unsigned")
-DIRECTION_BIT_RE = re.compile(r"^direction_bit_(\d+)$")
+# DECISION: at most three ASCII digits, so `int()` never meets a huge or non-ASCII number; a longer
+# `direction_bit_…` is an unknown sign type, reported as such.
+DIRECTION_BIT_RE = re.compile(r"^direction_bit_([0-9]{1,3})$")
 MODES_P1 = ("joint", "wheel", "multi_turn", "torque_control")
 PROFILES = ("velocity_based", "time_based")
 TORQUE_CONTROL_KEYS = ("register", "on", "goal")
@@ -1892,6 +1954,10 @@ def check_range(
         return
     if lo > hi:
         report.add("range-min-above-max", file, loc, f"`range` min {lo} is above max {hi}", min=lo, max=hi, **context)
+    # DECISION: a size outside 1–255 is already a `row-size-invalid` diagnostic and has no raw bounds, so the fit
+    # is not judged (computing bounds for it failed, or blew up for a huge size).
+    if not 1 <= size <= 0xFF:
+        return
     first, last = raw_bounds(size, sign_type)
     if sign_type is None and lo < 0:
         last = (1 << (8 * size - 1)) - 1
@@ -2066,7 +2132,7 @@ def check_unit_info(stem: str, table: dict, strict: bool, report: Report) -> Non
                     **context,
                 )
                 sign = None
-            elif row is not None:
+            elif row is not None and 1 <= row["size"] <= 0xFF:
                 match = DIRECTION_BIT_RE.match(sign)
                 last_bit = 8 * row["size"] - 1
                 if match and not 1 <= int(match.group(1)) <= last_bit:
@@ -2356,7 +2422,8 @@ def check_torque_control_mode(stem: str, table: dict, strict: bool, info: MapInf
                 "torque-control-row-attributes",
                 file,
                 loc,
-                f"`{key}` row must be {want}; {_row_location(row)} is size {found[0]}, {_shown(found[1])}, {_shown(found[2])}",
+                f"`{key}` row must be {want}; "
+                f"{_row_location(row)} is size {found[0]}, {_shown(found[1])}, {_shown(found[2])}",
                 register=row["data_name"],
                 field=field,
                 found=found,
@@ -2463,6 +2530,9 @@ def read_map(model_map: object, report: Report) -> MapInfo:
             "map-not-record", MAP_FILE, "", f"the map is not a record `( models: {{ … }} )`, found {found}", found=found
         )
         return info
+    unknown = sorted(set(model_map) - {"models", "not_mapped"})
+    if unknown:
+        report.add("map-unknown-key", MAP_FILE, "", f"unknown key(s) {', '.join(unknown)}", found=unknown)
     models = model_map.get("models")
     if not isinstance(models, dict) or any(not isinstance(k, int) for k in models):
         found = _describe(models)
@@ -2520,7 +2590,9 @@ DIGITS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight"
 
 def module_ident(stem: str) -> str:
     """`2xl430_w250` -> `two_xl430_w250`, as xtask names the generated module."""
-    if stem[:1].isdigit():
+    # DECISION: ASCII digits only, as xtask's `char::to_digit(10)`; `str.isdigit()` also takes `²`, which
+    # `int()` then refuses.
+    if stem and stem[0] in "0123456789":
         return f"{DIGITS[int(stem[0])]}_{stem[1:]}"
     return stem
 
@@ -2557,14 +2629,35 @@ def _refs(entry: dict, key: str, number: int, loc: str, report: Report) -> list[
                 found=ref,
             )
             return None
+        unknown = sorted(set(ref) - {"from_fw", "file"})
+        if unknown:
+            report.add(
+                "model-ref-unknown-key",
+                MAP_FILE,
+                loc,
+                f"`{key}`: unknown field(s) {', '.join(unknown)} in the ref to {ref['file']}.ron",
+                model=number,
+                field=key,
+                table=ref["file"],
+                found=unknown,
+            )
         out.append((ref["from_fw"], ref["file"]))
     return out
+
+
+# The keys of a model entry; the legacy `tables` key has its own cause (`model-legacy-tables`).
+MODEL_KEYS = ("family", "name", "also", "p1", "p2", "default", "tables")
 
 
 def check_map(tables: dict[str, object], info: MapInfo, report: Report) -> None:
     """Model map rules (data-model "Model entry", "Table ref", "Map validation"; ron-schema §2)."""
     for number, entry in sorted(info.models.items()):
         loc = f"model {number}"
+        unknown = sorted(set(entry) - set(MODEL_KEYS))
+        if unknown:
+            report.add(
+                "model-unknown-key", MAP_FILE, loc, f"unknown key(s) {', '.join(unknown)}", model=number, found=unknown
+            )
         family = entry.get("family")
         if family not in FAMILIES:
             report.add(
@@ -2753,7 +2846,8 @@ def check_map(tables: dict[str, object], info: MapInfo, report: Report) -> None:
                 "file-under-two-numbers",
                 MAP_FILE,
                 "",
-                f"{stem}.ron is mapped under model numbers {' and '.join(map(str, numbers))}; a file sits under one number",
+                f"{stem}.ron is mapped under model numbers {' and '.join(map(str, numbers))}; "
+                "a file sits under one number",
                 table=stem,
                 found=numbers,
             )
@@ -2814,6 +2908,16 @@ def check_not_mapped(model_map: object, tables: dict[str, object], info: MapInfo
             continue
         stem = record["file"]
         loc = f"`not_mapped` {stem}"
+        unknown = sorted(set(record) - {"file", "reason"})
+        if unknown:
+            report.add(
+                "not-mapped-unknown-key",
+                MAP_FILE,
+                loc,
+                f"unknown field(s) {', '.join(unknown)}",
+                table=stem,
+                found=unknown,
+            )
         reason = record.get("reason")
         if reason == Ident("NoModelNumber"):
             text = "no model number"
@@ -2877,6 +2981,7 @@ def run_checks(model_map: object, tables: dict[str, object], today: datetime.dat
         check_table_shape(stem, table, report)
         if not _is_record(table):
             continue
+        check_table_keys(stem, table, report)
         check_source(stem, table, today, report)
         check_protocols(stem, table, report)
         check_instructions(stem, table, report)
@@ -3051,6 +3156,12 @@ def _stopped(report: Report, before: str = "") -> Outcome:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # DECISION: text the terminal cannot encode (a file name that is not UTF-8) prints as backslash escapes
+    # rather than ending the run in a traceback.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
     outcome = run(argv)
     sys.stdout.write(outcome.out)
     sys.stderr.write(outcome.err)
