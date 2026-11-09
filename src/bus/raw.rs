@@ -57,16 +57,26 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///   next Setup. [`write_limit`](ActuatorRef::write_limit) and the
     ///   limit setters write a limit and keep them true.
     ///
-    /// Any address may hold Torque Enable or Moving Speed, so once the
-    /// write is sent, whatever its reply, torque is no longer confirmed off
-    /// and Moving Speed no longer known to be 0 (plan 2026-11-09 D8, D9):
-    /// limit writes are refused with
-    /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
-    /// until an acknowledged [`disable_torque`](ActuatorRef::disable_torque),
-    /// and a switch to wheel mode with
-    /// [`WheelSpeedUnknown`](crate::ValidationError::WheelSpeedUnknown)
-    /// until an acknowledged
-    /// [`set_speed_limit(SpeedLimit::Unlimited)`](ActuatorRef::set_speed_limit).
+    /// Any address may hold Torque Enable, Moving Speed or an angle limit,
+    /// so once the write is sent, whatever its reply, torque is no longer
+    /// confirmed off, Moving Speed no longer known to be 0 and the limit
+    /// mode the bus holds no longer trusted (plan 2026-11-09 D8, D9):
+    /// - limit writes are refused with
+    ///   [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
+    ///   until an acknowledged
+    ///   [`disable_torque`](ActuatorRef::disable_torque);
+    /// - on AX, RX and MX on Protocol 1, until an acknowledged
+    ///   [`set_position_limits`](ActuatorRef::set_position_limits) writes
+    ///   both angle limits again, a write that leaves CW = CCW Angle Limit
+    ///   = 0 counts as a switch to wheel mode even where the bus holds
+    ///   wheel mode, so it is refused with
+    ///   [`WheelSpeedUnknown`](crate::ValidationError::WheelSpeedUnknown)
+    ///   unless Moving Speed is written 0 after this write:
+    ///   [`set_speed_limit(SpeedLimit::Unlimited)`](ActuatorRef::set_speed_limit),
+    ///   or `write(Raw(SpeedLimit), 0)` where that returns `NoUnit`. Where
+    ///   the bus holds wheel mode both return `NotPositionMode` (Moving
+    ///   Speed is the goal velocity there): write a non-wheel pair with
+    ///   `set_position_limits` first.
     ///
     /// # Errors
     ///

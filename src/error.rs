@@ -730,9 +730,13 @@ pub enum ValidationError {
     /// Moving Speed, the last speed limit, is the goal velocity the next
     /// `enable_torque()` drives (AX-12A Moving Speed(32),
     /// <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>). Only an
-    /// acknowledged unicast write of Moving Speed = 0 makes it known;
-    /// Setup, any other write of it, a raw write and a reboot leave it
-    /// unknown.
+    /// acknowledged unicast write of Moving Speed = 0 makes it known
+    /// (`set_speed_limit(SpeedLimit::Unlimited)`, or
+    /// `write(Raw(SpeedLimit), 0)` where that returns `NoUnit`); Setup, any
+    /// other write of it, a raw write and a reboot leave it unknown. After
+    /// a raw write the bus no longer trusts the wheel mode it holds, so
+    /// CW = CCW = 0 counts as a switch there too, until an acknowledged
+    /// `set_position_limits`.
     #[error("id {}: Moving Speed not known to be 0, wheel mode not set", id.get())]
     WheelSpeedUnknown {
         /// The actuator the write was for.

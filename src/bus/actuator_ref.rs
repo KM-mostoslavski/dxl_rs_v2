@@ -485,11 +485,14 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// So a limit write that switches to wheel mode is refused with
     /// [`WheelSpeedUnknown`](crate::ValidationError::WheelSpeedUnknown)
     /// unless the bus knows Moving Speed is 0: write
-    /// [`SpeedLimit::Unlimited`] (raw 0, stop in wheel mode) first. Only an
-    /// acknowledged write of 0 here (or `write(Raw(SpeedLimit), 0)`) makes
-    /// it known; any other write of Moving Speed, on any tier (a Sync
-    /// Write, which gets no reply, even of 0), a raw write and a reboot
-    /// make it unknown again.
+    /// [`SpeedLimit::Unlimited`] (raw 0, stop in wheel mode) first (or
+    /// `write(Raw(SpeedLimit), 0)` where this returns `NoUnit`). Only an
+    /// acknowledged unicast write of Moving Speed = 0 makes it known: this
+    /// call with [`SpeedLimit::Unlimited`], `write(Raw(SpeedLimit), 0)`, or
+    /// a goal velocity of 0 in wheel mode (`write(Raw(GoalVelocity), 0)`);
+    /// any other write of Moving Speed, on any tier (a Sync Write, which
+    /// gets no reply, even of 0), a raw write and a reboot make it unknown
+    /// again.
     ///
     /// # Errors
     ///
@@ -702,11 +705,20 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// Limit = 0 switches the actuator to wheel mode, where Moving Speed,
     /// the last speed limit, is the goal velocity the next
     /// [`enable_torque`](Self::enable_torque) drives. From any other mode
-    /// (also from an unknown one, after a failed angle-limit write) it is
-    /// refused unless the bus knows Moving Speed is 0: write
-    /// [`SpeedLimit::Unlimited`] first, as
-    /// [`set_speed_limit`](Self::set_speed_limit) says. Leaving wheel mode
-    /// is never refused for it.
+    /// it is refused unless the bus knows Moving Speed is 0: write
+    /// [`SpeedLimit::Unlimited`] first
+    /// ([`set_speed_limit`](Self::set_speed_limit)), or
+    /// `write(Raw(SpeedLimit), 0)` where the table gives Moving Speed no
+    /// unit in the recorded mode (unverified tables; MX-64 on Protocol 1
+    /// with torque control on). With the mode unknown after a failed
+    /// angle-limit write, Moving Speed cannot be written
+    /// ([`LimitsUnknown`]): first write a non-wheel pair with
+    /// [`set_position_limits`](Self::set_position_limits), which makes the
+    /// mode known again, or declare again. A Moving Speed = 0 acknowledged
+    /// before the failed write still counts. After a raw write
+    /// (`raw-registers`) the bus no longer trusts the wheel mode it holds,
+    /// so there too CW = CCW = 0 counts as a switch, until an acknowledged
+    /// `set_position_limits`. Leaving wheel mode is never refused for it.
     ///
     /// The bus follows the write. Acknowledged, a position limit replaces
     /// the limit Setup read, so goals are checked against it; on AX, RX and
@@ -825,9 +837,15 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// positions are checked only against the register size. In wheel mode
     /// Moving Speed, the last speed limit, is the goal velocity the next
     /// [`enable_torque`](Self::enable_torque) drives, so the switch is
-    /// refused with [`WheelSpeedUnknown`] unless an acknowledged
-    /// [`SpeedLimit::Unlimited`] wrote Moving Speed = 0 first; leaving wheel
-    /// mode is not refused. Where the two registers are apart (Y series),
+    /// refused with [`WheelSpeedUnknown`] unless an acknowledged write of
+    /// Moving Speed = 0 came first
+    /// ([`set_speed_limit(SpeedLimit::Unlimited)`](Self::set_speed_limit),
+    /// or `write(Raw(SpeedLimit), 0)` where that returns `NoUnit`); with
+    /// the mode unknown after a failed angle-limit write, write a non-wheel
+    /// pair first, as [`write_limit`](Self::write_limit) says. Leaving
+    /// wheel mode is not refused. After a raw write, CW = CCW = 0 counts as
+    /// a switch even where the bus holds wheel mode, until an acknowledged
+    /// call of this. Where the two registers are apart (Y series),
     /// the one that keeps the pair ordered is written first.
     ///
     /// Failed, the limits (and on Protocol 1 the limit mode) are unknown

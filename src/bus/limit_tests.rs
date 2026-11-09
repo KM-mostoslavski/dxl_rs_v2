@@ -104,6 +104,13 @@ mod ax12a {
         Err(ValidationError::WheelSpeedUnknown { id: id(1) }.into())
     }
 
+    /// Scripts an empty acknowledgement from actuator 1 to each of the
+    /// next `count` packets.
+    #[cfg(feature = "raw-registers")]
+    fn acks(bus: &mut TestBus<'_, P1>, count: usize) {
+        script(bus, &std::vec![p1_status(1, 0, &[]); count]);
+    }
+
     /// Plan D3, D5: Min Voltage Limit(12) and Max Voltage Limit(13) are
     /// adjacent, so the pair is one Write; voltages are not cached.
     #[test]
@@ -701,6 +708,96 @@ mod ax12a {
             speed_unknown()
         );
         assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D9 (`raw-registers`): raw writes put an AX-12A held in wheel
+    /// mode back in joint mode with Moving Speed 512, which the bus does
+    /// not see, so the wheel mode it holds no longer exempts a CW = CCW = 0
+    /// write: pair or single, it counts as a switch and is refused with
+    /// nothing sent. A non-wheel pair, then Moving Speed = 0, gets back.
+    #[cfg(feature = "raw-registers")]
+    #[test]
+    fn raw_write_voids_the_held_wheel_mode() {
+        let time = MockTime::new();
+        let mut bus = declared(&time, 0, 0);
+        let (zero, top) = (at(&mut bus, 0), at(&mut bus, 1023));
+        acks(&mut bus, 3);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.limit_mode(), LimitMode::Wheel);
+        assert_eq!(ax.write_raw(6, &[0, 0, 0xFF, 0x03]), Ok(()));
+        assert_eq!(ax.write_raw(32, &512u16.to_le_bytes()), Ok(()));
+        assert_eq!(ax.disable_torque(), Ok(()));
+        assert_eq!(ax.limit_mode(), LimitMode::Wheel);
+        let quiet = mark(&bus);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.set_position_limits(zero, zero), speed_unknown());
+        assert_eq!(ax.write_limit(Raw(MaxPositionLimit), 0), speed_unknown());
+        assert_eq!(ax.write_limit(MinPositionLimit, zero), speed_unknown());
+        assert_quiet(&bus, quiet);
+        acks(&mut bus, 3);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.set_position_limits(zero, top), Ok(()));
+        assert_eq!(ax.limit_mode(), LimitMode::Bounded);
+        assert_eq!(ax.set_speed_limit(SpeedLimit::Unlimited), Ok(()));
+        assert_eq!(ax.set_position_limits(zero, zero), Ok(()));
+        assert_eq!(ax.limit_mode(), LimitMode::Wheel);
+        assert_eq!(
+            sent_since(&bus, quiet),
+            concat(&[
+                p1_write(1, 6, &[0, 0, 0xFF, 0x03]),
+                p1_write(1, 32, &[0, 0]),
+                p1_write(1, 6, &[0, 0, 0, 0]),
+            ])
+        );
+        assert_done(&bus);
+    }
+
+    /// Plan D5, D9 (`raw-registers`): after a raw write, only an
+    /// acknowledged write of both angle limits makes the wheel mode the
+    /// bus holds the hardware's again. A single limit write does not, so a
+    /// later CW = CCW = 0 pair with Moving Speed live is still refused;
+    /// after the pair, staying in wheel mode passes again, as it does after
+    /// Setup.
+    #[cfg(feature = "raw-registers")]
+    #[test]
+    fn position_pair_trusts_the_wheel_mode_again() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 0, true);
+        let zero = at(&mut bus, 0);
+        /// Drives a wheel-mode goal velocity, so Moving Speed is live, and
+        /// confirms torque off again.
+        fn live(bus: &mut TestBus<'_, P1>) {
+            acks(bus, 3);
+            let mut ax = bus.actuator(id(1)).unwrap();
+            ax.enable_torque().unwrap();
+            ax.write(Raw(GoalVelocity), 300).unwrap();
+            ax.disable_torque().unwrap();
+        }
+        acks(&mut bus, 4);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.write_raw(25, &[1]), Ok(()));
+        assert_eq!(ax.write(Raw(GoalVelocity), 0), Ok(()));
+        assert_eq!(ax.disable_torque(), Ok(()));
+        assert_eq!(ax.write_limit(Raw(MaxPositionLimit), 0), Ok(()));
+        live(&mut bus);
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1)).unwrap().set_position_limits(zero, zero),
+            speed_unknown()
+        );
+        assert_quiet(&bus, quiet);
+        acks(&mut bus, 4);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.enable_torque().unwrap();
+        assert_eq!(ax.write(Raw(GoalVelocity), 0), Ok(()));
+        ax.disable_torque().unwrap();
+        assert_eq!(ax.set_position_limits(zero, zero), Ok(()));
+        live(&mut bus);
+        acks(&mut bus, 1);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.set_position_limits(zero, zero), Ok(()));
+        assert_eq!(ax.limit_mode(), LimitMode::Wheel);
+        assert_done(&bus);
     }
 
     /// Plan D9, AX-12A Moving Speed(32): a limit write that switches to
@@ -1915,7 +2012,9 @@ mod mx64_p1 {
 
     /// Plan D9: on MX-64 Protocol 1 with Torque Ctrl Mode Enable on, CW =
     /// CCW = 0 still counts as a switch to wheel mode, which takes over
-    /// once the switch is off: refused until Moving Speed(32) is 0.
+    /// once the switch is off: refused until Moving Speed(32) is 0. The
+    /// typed speed limit has no unit in that mode, so the raw form writes
+    /// the 0, as the docs of `write_limit` say.
     #[test]
     fn torque_control_mode_still_guards_the_wheel_switch() {
         let time = MockTime::new();
@@ -1925,10 +2024,17 @@ mod mx64_p1 {
         ack(&mut bus, 1);
         bus.actuator(id(1)).unwrap().disable_torque().unwrap();
         let start = mark(&bus);
+        let mut mx = bus.actuator(id(1)).unwrap();
         assert_eq!(
-            bus.actuator(id(1)).unwrap().set_position_limits(zero, zero),
+            mx.set_position_limits(zero, zero),
             Err(crate::ValidationError::WheelSpeedUnknown { id: id(1) }.into())
         );
+        assert!(matches!(
+            mx.set_speed_limit(crate::units::SpeedLimit::Unlimited),
+            Err(crate::Error::Validation(
+                crate::ValidationError::NoUnit { .. }
+            ))
+        ));
         assert_quiet(&bus, start);
         script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
         let mut mx = bus.actuator(id(1)).unwrap();

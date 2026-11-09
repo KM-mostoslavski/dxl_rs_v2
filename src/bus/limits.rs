@@ -116,13 +116,16 @@ fn is_position_pair(kind: &ActuatorKind, site: &Site, other: &Site) -> bool {
 /// `enable_torque` drives (AX-12A Moving Speed(32),
 /// <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>), and with torque
 /// off there the typed API can no longer zero it. Leaving wheel mode, and
-/// every model whose mode is a register, pass.
+/// every model whose mode is a register, pass. The wheel mode the cache
+/// holds counts only while `marks` trust it: a raw write since may have
+/// left the hardware in another mode.
 fn check_wheel(kind: &ActuatorKind, marks: Marks, limits: Limits) -> Result<(), ValidationError> {
-    // DECISION: on MX-64 Protocol 1 with torque control on, CW = CCW = 0 counts as a switch too (wheel mode takes over once the switch is off), and with the mode unknown since a failed angle-limit write it counts as a switch: neither is known to be wheel mode already.
+    // DECISION: on MX-64 Protocol 1 with torque control on, CW = CCW = 0 counts as a switch too (wheel mode takes over once the switch is off), and with the mode unknown since a failed angle-limit write, or untrusted since a raw write or reboot, it counts as a switch: none is known to be wheel mode already.
     let follows = !matches!(kind.data().mode, ModeSource::Register { .. });
     let to_wheel = LimitMode::from_angle_limits(limits) == LimitMode::Wheel;
-    let in_wheel =
-        kind.cache().mode() == LimitMode::Wheel && kind.cache().check_mode_known().is_ok();
+    let in_wheel = marks.mode_trusted()
+        && kind.cache().mode() == LimitMode::Wheel
+        && kind.cache().check_mode_known().is_ok();
     if follows && to_wheel && !in_wheel && !marks.speed_zero() {
         Err(ValidationError::WheelSpeedUnknown { id: kind.id() })
     } else {
@@ -391,7 +394,15 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         // DECISION: every error of the exchange counts as sent: the bus cannot tell whether the actuator applied the write, so the cache it touches is forgotten.
         let ok = result.is_ok();
         match second {
-            Some(second) => follow(self.kind, self.bound, &[first, second], ok),
+            Some(second) => {
+                follow(self.kind, self.bound, &[first, second], ok);
+                // DECISION: only an acknowledged write of both position limits trusts the cached limit mode again after a raw write (plan D9): the pair alone determines the mode the hardware now has; a single limit is merged with the cached other one, which the raw write may have made stale.
+                let pair = is_position_pair(self.kind, &first.site, &second.site)
+                    || is_position_pair(self.kind, &second.site, &first.site);
+                if ok && pair {
+                    self.marks.limits_written();
+                }
+            }
             None => follow(self.kind, self.bound, &[first], ok),
         }
         result

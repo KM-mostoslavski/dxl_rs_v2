@@ -85,9 +85,14 @@
 //! bus check is the only guard. On those models an angle-limit write that
 //! switches to wheel mode is refused with
 //! [`ValidationError::WheelSpeedUnknown`] until an acknowledged unicast
-//! write of Moving Speed = 0 (`set_speed_limit(SpeedLimit::Unlimited)`),
-//! which any other write of Moving Speed on any tier undoes. Every read
-//! tier reads them.
+//! write of Moving Speed = 0 (`set_speed_limit(SpeedLimit::Unlimited)`, or
+//! `write(Raw(SpeedLimit), 0)` where that returns `NoUnit`), which any
+//! other write of Moving Speed on any tier undoes. With the mode unknown
+//! after a failed angle-limit write Moving Speed cannot be written: write
+//! a non-wheel pair with `set_position_limits` first. After a raw write,
+//! CW = CCW = 0 counts as a switch even where the bus holds wheel mode,
+//! until an acknowledged `set_position_limits`. Every read tier reads
+//! them.
 //!
 //! Torque Enable is not a field: a sync write gets no reply, so the bus
 //! could not keep its torque state true to the hardware. Use

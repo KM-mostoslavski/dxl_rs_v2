@@ -18,7 +18,9 @@ pub(crate) type Bound = Option<u32>;
 /// What the bus has confirmed about one actuator since Setup, beside its
 /// torque state, from replies it got and writes it sent (plan 2026-11-09
 /// D8, D9). Both marks are clear after Setup: the bus reads neither Torque
-/// Enable nor Moving Speed there (FR-2.7, FR-9.6).
+/// Enable nor Moving Speed there (FR-2.7, FR-9.6). The limit mode the
+/// cache holds is the hardware's after Setup, until a raw write or a
+/// reboot that may have changed the angle limits.
 // DECISION: the D8/D9 marks live in a slot array of their own beside the torque states, not in TorqueState (pub, its slice lent by torque_states()) nor in Cache (no spare byte left), so both keep their size_of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Marks {
@@ -28,13 +30,20 @@ pub(crate) struct Marks {
     /// Moving Speed is known to be 0: an acknowledged unicast write of 0,
     /// and no other write of it since (D9).
     speed_zero: bool,
+    /// A raw write or a reboot reached the actuator since Setup or since
+    /// the last acknowledged write of both position limits, so the limit
+    /// mode the cache holds may not be the hardware's (D9).
+    // DECISION: the flag is negative ("a raw write since"), so CLEAR stays the after-Setup state and Setup, clear() and DynBus need no change.
+    raw_since: bool,
 }
 
 impl Marks {
-    /// Nothing confirmed, as after Setup.
+    /// Nothing confirmed, as after Setup; the limit mode Setup read is the
+    /// hardware's.
     pub(crate) const CLEAR: Self = Self {
         torque_off: false,
         speed_zero: false,
+        raw_since: false,
     };
 
     /// Whether torque is confirmed off (D8).
@@ -45,6 +54,13 @@ impl Marks {
     /// Whether Moving Speed is known to be 0 (D9).
     pub(crate) const fn speed_zero(self) -> bool {
         self.speed_zero
+    }
+
+    /// Whether the limit mode the cache holds is the hardware's: no raw
+    /// write or reboot since Setup or since the last acknowledged write of
+    /// both position limits (D9).
+    pub(crate) const fn mode_trusted(self) -> bool {
+        !self.raw_since
     }
 
     /// After a Torque Enable = 0 write: confirmed off when `ran`, the reply
@@ -65,10 +81,20 @@ impl Marks {
         self.speed_zero = zero;
     }
 
+    /// After an acknowledged write of both position limits: the limit mode
+    /// the cache follows them with is the hardware's again.
+    pub(crate) fn limits_written(&mut self) {
+        self.raw_since = false;
+    }
+
     /// After a write that may touch any register (a raw write) or a
-    /// reboot: nothing is confirmed any more.
+    /// reboot: nothing is confirmed any more, the limit mode the cache
+    /// holds included.
     pub(crate) fn forget(&mut self) {
-        *self = Self::CLEAR;
+        *self = Self {
+            raw_since: true,
+            ..Self::CLEAR
+        };
     }
 }
 
@@ -220,10 +246,11 @@ mod tests {
         assert_eq!(size_of::<[TorqueState; 32]>(), 32);
     }
 
-    /// Every mark set, as no Setup leaves it.
+    /// Every flag set, as no Setup leaves it.
     const ALL: Marks = Marks {
         torque_off: true,
         speed_zero: true,
+        raw_since: true,
     };
 
     #[test]
@@ -244,11 +271,13 @@ mod tests {
     }
 
     /// Plan D8, D9: each mark moves on its own; a raw write or a reboot
-    /// forgets both.
+    /// forgets both and the limit mode, which a write of both position
+    /// limits trusts again.
     #[test]
     fn marks_move_one_at_a_time() {
         let mut marks = Marks::default();
         assert_eq!(marks, Marks::CLEAR);
+        assert!(marks.mode_trusted());
         marks.torque_off_written(true);
         marks.speed_written(true);
         assert!(marks.torque_off() && marks.speed_zero());
@@ -260,7 +289,24 @@ mod tests {
         marks.torque_off_written(false);
         assert!(!marks.torque_off());
         let mut marks = ALL;
+        marks.limits_written();
+        assert!(marks.mode_trusted() && marks.torque_off() && marks.speed_zero());
         marks.forget();
+        assert!(!marks.torque_off() && !marks.speed_zero() && !marks.mode_trusted());
+        marks.torque_off_written(true);
+        marks.speed_written(true);
+        assert!(!marks.mode_trusted());
+        marks.limits_written();
+        assert_eq!(
+            marks,
+            Marks {
+                raw_since: false,
+                ..ALL
+            }
+        );
+        let mut marks = Marks::CLEAR;
+        marks.forget();
+        marks.limits_written();
         assert_eq!(marks, Marks::CLEAR);
     }
 
