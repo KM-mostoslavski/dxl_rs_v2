@@ -1,2 +1,5 @@
 /target
 /docs/.structurizr/
+
+# Python bytecode from the control_tables tools and tests
+__pycache__/
