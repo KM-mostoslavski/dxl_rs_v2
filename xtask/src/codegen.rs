@@ -81,15 +81,117 @@ pub enum Failure {
         /// Unmapped tables, as on success.
         warnings: Vec<Diagnostic>,
     },
-    /// No `rustfmt` on the `PATH` to format `src/<file>` with.
-    RustfmtNotFound {
+    /// `rustfmt` did not format a generated file.
+    Rustfmt(RustfmtFailure),
+    /// A file system operation failed.
+    Io(IoFailure),
+}
+
+impl From<RustfmtFailure> for Failure {
+    fn from(failure: RustfmtFailure) -> Self {
+        Self::Rustfmt(failure)
+    }
+}
+
+/// Why `rustfmt` did not format the generated file `src/<file>`; foreign
+/// errors are kept typed.
+#[derive(Debug)]
+pub enum RustfmtFailure {
+    /// No `rustfmt` on the `PATH`.
+    NotFound {
         /// The generated file, relative to `src/`.
         file: String,
     },
-    /// `rustfmt` failed on a generated file.
-    Rustfmt(String),
-    /// A file system operation failed.
-    Io(IoFailure),
+    /// Starting `rustfmt` failed for another reason.
+    Spawn {
+        /// The generated file, relative to `src/`.
+        file: String,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// The started `rustfmt` has no stdin pipe.
+    NoStdin {
+        /// The generated file, relative to `src/`.
+        file: String,
+    },
+    /// Waiting for `rustfmt` to finish failed.
+    Wait {
+        /// The generated file, relative to `src/`.
+        file: String,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// Writing the generated text to `rustfmt`'s stdin failed.
+    Write {
+        /// The generated file, relative to `src/`.
+        file: String,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// The thread writing `rustfmt`'s stdin panicked.
+    WriterPanicked {
+        /// The generated file, relative to `src/`.
+        file: String,
+    },
+    /// `rustfmt` refused the generated code.
+    Rejected {
+        /// The generated file, relative to `src/`.
+        file: String,
+        /// Its exit status.
+        status: std::process::ExitStatus,
+        /// Its stderr, trailing whitespace trimmed.
+        stderr: String,
+    },
+    /// `rustfmt`'s output is not UTF-8.
+    NonUtf8 {
+        /// The generated file, relative to `src/`.
+        file: String,
+        /// The error, holding the output.
+        source: std::string::FromUtf8Error,
+    },
+}
+
+impl RustfmtFailure {
+    /// What to check, when the facts point at a usual cause.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            Self::NotFound { .. } => Some("run `rustup component add rustfmt`"),
+            Self::Rejected { .. } => Some(
+                "the generated code is not valid Rust: check that each table file stem forms a Rust identifier",
+            ),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for RustfmtFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound { file } => write!(f, "rustfmt not found to format src/{file}"),
+            Self::Spawn { file, source } => {
+                write!(f, "cannot start rustfmt for src/{file}: {source}")
+            }
+            Self::NoStdin { file } => write!(f, "rustfmt for src/{file} has no stdin pipe"),
+            Self::Wait { file, source } => {
+                write!(f, "cannot wait for rustfmt on src/{file}: {source}")
+            }
+            Self::Write { file, source } => {
+                write!(f, "cannot write src/{file} to rustfmt's stdin: {source}")
+            }
+            Self::WriterPanicked { file } => write!(
+                f,
+                "the thread writing src/{file} to rustfmt's stdin panicked"
+            ),
+            Self::Rejected {
+                file,
+                status,
+                stderr,
+            } => write!(f, "rustfmt rejected src/{file} ({status}): {stderr}"),
+            Self::NonUtf8 { file, source } => {
+                write!(f, "rustfmt output for src/{file} is not UTF-8: {source}")
+            }
+        }
+    }
 }
 
 impl From<IoFailure> for Failure {
@@ -219,9 +321,9 @@ impl Failure {
     /// What to check, when the facts point at a usual cause.
     pub fn hint(&self) -> Option<&'static str> {
         match self {
-            Self::RustfmtNotFound { .. } => Some("run `rustup component add rustfmt`"),
+            Self::Rustfmt(failure) => failure.hint(),
             Self::Io(failure) => failure.hint(),
-            Self::Checks { .. } | Self::Rustfmt(_) => None,
+            Self::Checks { .. } => None,
         }
     }
 
@@ -238,13 +340,7 @@ impl Failure {
                     push_lines(&mut out, "warning", warning, warning.hint());
                 }
             }
-            Self::RustfmtNotFound { file } => push_lines(
-                &mut out,
-                "error",
-                &format_args!("rustfmt not found to format src/{file}"),
-                self.hint(),
-            ),
-            Self::Rustfmt(message) => push_lines(&mut out, "error", message, self.hint()),
+            Self::Rustfmt(failure) => push_lines(&mut out, "error", failure, self.hint()),
             Self::Io(failure) => push_lines(&mut out, "error", failure, self.hint()),
         }
         out
@@ -1043,7 +1139,10 @@ mod tests {
         let result = run_with(root.path(), |rel, text| {
             output::format_with("rustfmt-does-not-exist", rel, text)
         });
-        assert!(matches!(result, Err(Failure::RustfmtNotFound { .. })));
+        assert!(matches!(
+            result,
+            Err(Failure::Rustfmt(RustfmtFailure::NotFound { .. }))
+        ));
         root.assert_unchanged(&snapshot);
     }
 
@@ -1132,10 +1231,6 @@ mod tests {
                 "warning: control_tables/c.ron: not in dynamixel.ron (models or not_mapped), skipped",
                 "hint: list it under a model number's p1 or p2 in dynamixel.ron, or in not_mapped with a reason",
             ]
-        );
-        assert_eq!(
-            Failure::Rustfmt("rustfmt failed".into()).lines(),
-            ["error: rustfmt failed"]
         );
         let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
         assert_eq!(

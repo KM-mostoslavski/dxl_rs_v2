@@ -6,7 +6,7 @@ use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use super::{Failure, IoFailure, MODULE_DIR, Report, entries};
+use super::{Failure, IoFailure, MODULE_DIR, Report, RustfmtFailure, entries};
 
 /// Formats `text`, the generated file `src/<rel>`, with `rustfmt`.
 pub(crate) fn format(rel: &str, text: &str) -> Result<String, Failure> {
@@ -15,34 +15,60 @@ pub(crate) fn format(rel: &str, text: &str) -> Result<String, Failure> {
 
 /// Formats `text` with `program` (a rustfmt binary) fed on stdin.
 pub(crate) fn format_with(program: &str, rel: &str, text: &str) -> Result<String, Failure> {
-    let failed = |detail: &dyn std::fmt::Display| {
-        Failure::Rustfmt(format!("rustfmt failed on src/{rel}: {detail}"))
-    };
+    let file = || rel.to_string();
     let mut child = Command::new(program)
         .args(["--edition", "2024", "--emit", "stdout"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => Failure::RustfmtNotFound {
-                file: rel.to_string(),
+        .map_err(|source| match source.kind() {
+            ErrorKind::NotFound => RustfmtFailure::NotFound { file: file() },
+            _ => RustfmtFailure::Spawn {
+                file: file(),
+                source,
             },
-            _ => failed(&e),
         })?;
-    let mut stdin = child.stdin.take().ok_or_else(|| failed(&"no stdin"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| RustfmtFailure::NoStdin { file: file() })?;
     let input = text.to_string();
     let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
-    let output = child.wait_with_output().map_err(|e| failed(&e))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|source| RustfmtFailure::Wait {
+            file: file(),
+            source,
+        })?;
     match writer.join() {
         Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(failed(&e)),
-        Err(_) => return Err(failed(&"stdin writer panicked")),
+        Ok(Err(source)) => {
+            return Err(RustfmtFailure::Write {
+                file: file(),
+                source,
+            }
+            .into());
+        }
+        Err(_) => return Err(RustfmtFailure::WriterPanicked { file: file() }.into()),
     }
     if !output.status.success() {
-        return Err(failed(&String::from_utf8_lossy(&output.stderr).trim_end()));
+        return Err(RustfmtFailure::Rejected {
+            file: file(),
+            status: output.status,
+            stderr: String::from_utf8_lossy(&output.stderr)
+                .trim_end()
+                .to_string(),
+        }
+        .into());
     }
-    String::from_utf8(output.stdout).map_err(|e| failed(&e))
+    String::from_utf8(output.stdout).map_err(|source| {
+        RustfmtFailure::NonUtf8 {
+            file: file(),
+            source,
+        }
+        .into()
+    })
 }
 
 /// Writes `files` (path relative to `src`, contents) under `src`.
@@ -140,18 +166,33 @@ mod tests {
     }
 
     #[test]
-    fn rustfmt_error_names_file() {
-        let Err(Failure::Rustfmt(message)) = format("models/x.rs", "fn {") else {
-            panic!("expected a rustfmt failure");
+    fn rustfmt_rejection_keeps_status_and_stderr() {
+        let failure = format("models/x.rs", "fn {").unwrap_err();
+        let Failure::Rustfmt(RustfmtFailure::Rejected {
+            file,
+            status,
+            stderr,
+        }) = &failure
+        else {
+            panic!("{failure:?}");
         };
-        assert!(message.contains("src/models/x.rs"), "{message}");
+        assert_eq!(file, "models/x.rs");
+        assert!(!status.success());
+        assert!(stderr.contains("<stdin>"), "{stderr}");
+        assert_eq!(
+            failure.lines(),
+            [
+                format!("error: rustfmt rejected src/models/x.rs ({status}): {stderr}"),
+                "hint: the generated code is not valid Rust: check that each table file stem forms a Rust identifier".to_string(),
+            ]
+        );
     }
 
     #[test]
     fn missing_rustfmt() {
         let failure = format_with("rustfmt-does-not-exist", "models.rs", "").unwrap_err();
         assert!(
-            matches!(&failure, Failure::RustfmtNotFound { file } if file == "models.rs"),
+            matches!(&failure, Failure::Rustfmt(RustfmtFailure::NotFound { file }) if file == "models.rs"),
             "{failure:?}"
         );
         assert_eq!(
@@ -160,6 +201,60 @@ mod tests {
                 "error: rustfmt not found to format src/models.rs",
                 "hint: run `rustup component add rustfmt`",
             ]
+        );
+    }
+
+    #[test]
+    fn rustfmt_that_cannot_start() {
+        let dir = Dir::new();
+        let program = dir.path().to_str().unwrap();
+        let failure = format_with(program, "models.rs", "").unwrap_err();
+        assert!(
+            matches!(&failure, Failure::Rustfmt(RustfmtFailure::Spawn { file, source })
+                if file == "models.rs" && source.kind() == ErrorKind::PermissionDenied),
+            "{failure:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rustfmt_that_stops_reading() {
+        let text = "x".repeat(1 << 20);
+        let failure = format_with("true", "models.rs", &text).unwrap_err();
+        assert!(
+            matches!(&failure, Failure::Rustfmt(RustfmtFailure::Write { file, source })
+                if file == "models.rs" && source.kind() == ErrorKind::BrokenPipe),
+            "{failure:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rustfmt_output_not_utf8() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = Dir::new();
+        let script = dir.path().join("fake-rustfmt");
+        std::fs::write(&script, "#!/bin/sh\ncat >/dev/null\nprintf '\\377'\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = || format_with(script.to_str().unwrap(), "models.rs", "fn a() {}").unwrap_err();
+        let busy = |f: &Failure| {
+            matches!(f, Failure::Rustfmt(RustfmtFailure::Spawn { source, .. })
+                if source.kind() == ErrorKind::ExecutableFileBusy)
+        };
+        // DECISION: retry while another test thread's fork still holds the
+        // fresh script open for writing (ETXTBSY), a Linux race of the test.
+        let mut failure = run();
+        for _ in 0..50 {
+            if !busy(&failure) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            failure = run();
+        }
+        assert!(
+            matches!(&failure, Failure::Rustfmt(RustfmtFailure::NonUtf8 { file, source })
+                if file == "models.rs" && source.as_bytes() == [0xff]),
+            "{failure:?}"
         );
     }
 
