@@ -18,8 +18,8 @@ fn main() -> ExitCode {
     match codegen::run(&workspace_root()) {
         Ok(report) => {
             println!("{}", report.summary());
-            for warning in &report.warnings {
-                eprintln!("warning: {warning}");
+            for line in report.warning_lines() {
+                eprintln!("{line}");
             }
             ExitCode::SUCCESS
         }

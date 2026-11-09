@@ -25,9 +25,9 @@ pub(crate) fn format_with(program: &str, rel: &str, text: &str) -> Result<String
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => Failure::Rustfmt(
-                "rustfmt not found: run `rustup component add rustfmt`".to_string(),
-            ),
+            ErrorKind::NotFound => Failure::RustfmtNotFound {
+                file: rel.to_string(),
+            },
             _ => failed(&e),
         })?;
     let mut stdin = child.stdin.take().ok_or_else(|| failed(&"no stdin"))?;
@@ -120,13 +120,17 @@ mod tests {
 
     #[test]
     fn missing_rustfmt() {
-        let Err(Failure::Rustfmt(message)) = format_with("rustfmt-does-not-exist", "models.rs", "")
-        else {
-            panic!("expected a rustfmt failure");
-        };
+        let failure = format_with("rustfmt-does-not-exist", "models.rs", "").unwrap_err();
+        assert!(
+            matches!(&failure, Failure::RustfmtNotFound { file } if file == "models.rs"),
+            "{failure:?}"
+        );
         assert_eq!(
-            message,
-            "rustfmt not found: run `rustup component add rustfmt`"
+            failure.lines(),
+            [
+                "error: rustfmt not found to format src/models.rs",
+                "hint: run `rustup component add rustfmt`",
+            ]
         );
     }
 

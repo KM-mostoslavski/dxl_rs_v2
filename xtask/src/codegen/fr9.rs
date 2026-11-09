@@ -20,7 +20,7 @@
 use std::f64::consts::PI;
 use std::ops::RangeInclusive;
 
-use super::Diagnostic;
+use super::diagnostic::{Check, Diagnostic};
 use super::schema::{Access, Area, ControlTable, RawRange, Row, Source, UnitEntry};
 
 /// The `LimitMode` variants, in their `repr(u8)` order.
@@ -55,7 +55,7 @@ const P1_MODES: [(&str, Modes); 4] = [
 const LOAD_STEP_TOLERANCE: f64 = 0.05;
 
 /// The units `unit_info` may give.
-const UNITS: [&str; 8] = ["deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2"];
+pub(crate) const UNITS: [&str; 8] = ["deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2"];
 
 // DECISION: refuse ranged or unit rows outside 1..=7 bytes instead of
 // widening to i128: the e-Manual tables use 1, 2 and 4, and 8 overflows i64.
@@ -448,11 +448,9 @@ fn find<'a>(table: &'a ControlTable, name: &str) -> Option<&'a Row> {
 /// Check 18: `unit_source` is `Verified`, and every FR-9 field sits under
 /// it.
 pub(crate) fn check_unit_source(file: &str, table: &ControlTable, errors: &mut Vec<Diagnostic>) {
-    let mut fail = |message: String| errors.push(Diagnostic::new(file, message));
+    let mut fail = |check: Check| errors.push(Diagnostic::new(file, check));
     match &table.unit_source {
-        Some(Source::Unverified) => {
-            fail("unit_source must be Verified(url, verified), found Unverified".to_string());
-        }
+        Some(Source::Unverified) => fail(Check::UnitSourceUnverified),
         Some(Source::Verified { .. }) => {}
         None => {
             let per_mode = table.operating_modes.as_ref().is_some_and(|m| {
@@ -462,16 +460,15 @@ pub(crate) fn check_unit_source(file: &str, table: &ControlTable, errors: &mut V
                     || m.current_position.is_some()
             });
             if per_mode {
-                fail("per-mode operating_modes lists without unit_source".to_string());
+                fail(Check::PerModeWithoutUnitSource);
             }
             if table.torque_control_mode.is_some() {
-                fail("torque_control_mode without unit_source".to_string());
+                fail(Check::SwitchWithoutUnitSource);
             }
             if let Some(row) = table.control_table.iter().find(|r| r.range.is_some()) {
-                fail(format!(
-                    "row {:?} has a range without unit_source",
-                    row.data_name
-                ));
+                fail(Check::RangeWithoutUnitSource {
+                    register: row.data_name.clone(),
+                });
             }
         }
     }
@@ -490,23 +487,28 @@ pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec
         let Some(range) = row.range else {
             continue;
         };
+        let register = row.data_name.clone();
         if !SPAN_SIZES.contains(&row.size) {
             errors.push(Diagnostic::new(
                 file,
-                format!(
-                    "row {:?}: size {} is outside 1..=7 bytes, so range {}..={} cannot be checked",
-                    row.data_name, row.size, range.min, range.max
-                ),
+                Check::RowRangeSize {
+                    register,
+                    size: row.size,
+                    min: range.min,
+                    max: range.max,
+                },
             ));
         } else if !fits(range, SignKind::Unsigned, row.size)
             && !fits(range, SignKind::TwosComplement, row.size)
         {
             errors.push(Diagnostic::new(
                 file,
-                format!(
-                    "row {:?}: range {}..={} does not fit {} byte(s)",
-                    row.data_name, range.min, range.max, row.size
-                ),
+                Check::RowRangeDoesNotFit {
+                    register,
+                    min: range.min,
+                    max: range.max,
+                    size: row.size,
+                },
             ));
         }
     }
@@ -515,61 +517,71 @@ pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec
     }
     let angle_limit_table = table.operating_modes.is_none();
     for entry in &table.unit_info {
-        let mut fail = |message: String| {
-            errors.push(Diagnostic::new(
-                file,
-                format!("unit_info {:?}: {message}", entry.data_name),
-            ));
-        };
+        let mut fail = |check: Check| errors.push(Diagnostic::new(file, check));
+        let register = || entry.data_name.clone();
         let row = find(table, &entry.data_name);
         if row.is_none() {
-            fail("names no row".to_string());
+            fail(Check::UnitNamesNoRow {
+                register: register(),
+            });
         }
         if !(entry.value.is_finite() && entry.value > 0.0) {
-            fail(format!("value {} must be finite and above 0", entry.value));
+            fail(Check::UnitValue {
+                register: register(),
+                value: entry.value,
+            });
         }
         if !UNITS.contains(&entry.unit.as_str()) {
-            fail(format!(
-                "unknown unit {:?} (expected {})",
-                entry.unit,
-                UNITS.join(", ")
-            ));
+            fail(Check::UnknownUnit {
+                register: register(),
+                unit: entry.unit.clone(),
+            });
         }
         let sign = SignKind::parse(&entry.sign_type);
         match (sign, row) {
-            (None, _) => fail(format!(
-                "unknown sign_type {:?} (expected unsigned, twos_complement or direction_bit_N)",
-                entry.sign_type
-            )),
-            (Some(_), Some(row)) if !SPAN_SIZES.contains(&row.size) => fail(format!(
-                "row size {} is outside 1..=7 bytes, so sign_type {} cannot be checked",
-                row.size, entry.sign_type
-            )),
-            (Some(sign), Some(row)) if sign.raw_span(row.size).is_none() => fail(format!(
-                "sign_type {} does not fit a {}-byte register",
-                entry.sign_type, row.size
-            )),
+            (None, _) => fail(Check::UnknownSign {
+                register: register(),
+                sign_type: entry.sign_type.clone(),
+            }),
+            (Some(_), Some(row)) if !SPAN_SIZES.contains(&row.size) => fail(Check::UnitRowSize {
+                register: register(),
+                size: row.size,
+                sign_type: entry.sign_type.clone(),
+            }),
+            (Some(sign), Some(row)) if sign.raw_span(row.size).is_none() => {
+                fail(Check::SignDoesNotFit {
+                    register: register(),
+                    sign_type: entry.sign_type.clone(),
+                    size: row.size,
+                });
+            }
             (Some(sign), Some(row)) => {
                 if let Some(range) = entry.range
                     && !fits(range, sign, row.size)
                 {
-                    fail(format!(
-                        "range {}..={} does not fit a {}-byte {} register",
-                        range.min, range.max, row.size, entry.sign_type
-                    ));
+                    fail(Check::UnitRangeDoesNotFit {
+                        register: register(),
+                        min: range.min,
+                        max: range.max,
+                        size: row.size,
+                        sign_type: entry.sign_type.clone(),
+                    });
                 }
             }
             (Some(_), None) => {}
         }
         if let Some(modes) = &entry.modes {
             if !angle_limit_table {
-                fail("modes is only allowed in an angle-limit table".to_string());
+                fail(Check::ModesInModeRegisterTable {
+                    register: register(),
+                });
             }
             for mode in modes {
                 if !P1_MODES.iter().any(|(name, _)| name == mode) {
-                    fail(format!(
-                        "unknown mode {mode:?} (expected joint, wheel, multi_turn or torque_control)"
-                    ));
+                    fail(Check::UnknownMode {
+                        register: register(),
+                        mode: mode.clone(),
+                    });
                 }
             }
         }
@@ -577,14 +589,18 @@ pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec
             && profile != "velocity_based"
             && profile != "time_based"
         {
-            fail(format!(
-                "unknown profile {profile:?} (expected velocity_based or time_based)"
-            ));
+            fail(Check::UnknownProfile {
+                register: register(),
+                profile: profile.clone(),
+            });
         }
         if let Some(bound) = &entry.bounded_by
             && find(table, bound).is_none()
         {
-            fail(format!("bounded_by {bound:?} names no row"));
+            fail(Check::BoundedByNoRow {
+                register: register(),
+                bounded_by: bound.clone(),
+            });
         }
     }
 }
@@ -596,9 +612,7 @@ pub(crate) fn check_per_mode(file: &str, table: &ControlTable, errors: &mut Vec<
     let Some(values) = &table.operating_modes else {
         return;
     };
-    let mut fail = |message: String| {
-        errors.push(Diagnostic::new(file, format!("operating_modes: {message}")));
-    };
+    let mut fail = |check: Check| errors.push(Diagnostic::new(file, check));
     let lists = [
         &values.current,
         &values.velocity,
@@ -609,10 +623,7 @@ pub(crate) fn check_per_mode(file: &str, table: &ControlTable, errors: &mut Vec<
         (lists[0], lists[1], lists[2], lists[3])
     else {
         if lists.iter().any(|l| l.is_some()) {
-            fail(
-                "current, velocity, pwm and current_position come all together or not at all"
-                    .to_string(),
-            );
+            fail(Check::PerModeIncomplete);
         }
         return;
     };
@@ -621,15 +632,11 @@ pub(crate) fn check_per_mode(file: &str, table: &ControlTable, errors: &mut Vec<
     let mut no_position = values.no_position.clone();
     no_position.sort_unstable();
     if split != no_position {
-        fail(format!(
-            "current, velocity and pwm {split:?} must split no_position {no_position:?} exactly"
-        ));
+        fail(Check::PerModeSplit { split, no_position });
     }
-    for value in current_position {
-        if !values.unbounded.contains(value) {
-            fail(format!(
-                "current_position value {value} is not in unbounded"
-            ));
+    for &value in current_position {
+        if !values.unbounded.contains(&value) {
+            fail(Check::CurrentPositionNotUnbounded { value });
         }
     }
 }
@@ -644,35 +651,33 @@ pub(crate) fn torque_switch(
 ) -> Option<TorqueSwitch> {
     let mode = table.torque_control_mode.as_ref()?;
     let before = errors.len();
-    let mut fail = |message: String| {
-        errors.push(Diagnostic::new(
-            file,
-            format!("torque_control_mode: {message}"),
-        ));
-    };
+    let mut fail = |check: Check| errors.push(Diagnostic::new(file, check));
     if !angle_limits {
-        fail("only an angle-limit table (no mode register) may have one".to_string());
+        fail(Check::SwitchInModeRegisterTable);
     }
+    let register = || mode.register.clone();
     let mut switch = None;
     match find(table, &mode.register) {
-        None => fail(format!("register {:?} names no row", mode.register)),
+        None => fail(Check::SwitchRegisterNoRow {
+            register: register(),
+        }),
         Some(row) if row.size != 1 || row.access != Access::RW || row.area != Area::Ram => {
-            fail(format!(
-                "register {:?} must be 1 byte RW/RAM",
-                mode.register
-            ));
+            fail(Check::SwitchRegisterAttrs {
+                register: register(),
+            });
         }
         Some(row) => match row.range {
-            None => fail(format!(
-                "register {:?} needs a range, so values other than on are known",
-                mode.register
-            )),
+            None => fail(Check::SwitchRegisterNoRange {
+                register: register(),
+            }),
             Some(range) => {
                 if !(range.min..=range.max).contains(&i64::from(mode.on)) {
-                    fail(format!(
-                        "on {} is outside {:?}'s range {}..={}",
-                        mode.on, mode.register, range.min, range.max
-                    ));
+                    fail(Check::SwitchOnOutsideRange {
+                        on: mode.on,
+                        register: register(),
+                        min: range.min,
+                        max: range.max,
+                    });
                 }
                 match (u8::try_from(range.min), u8::try_from(range.max)) {
                     (Ok(min), Ok(max)) => {
@@ -682,22 +687,27 @@ pub(crate) fn torque_switch(
                             values: (min, max),
                         });
                     }
-                    _ => fail(format!(
-                        "register {:?}'s range {}..={} is outside u8 (0..=255)",
-                        mode.register, range.min, range.max
-                    )),
+                    _ => fail(Check::SwitchRangeOutsideU8 {
+                        register: register(),
+                        min: range.min,
+                        max: range.max,
+                    }),
                 }
             }
         },
     }
     match find(table, &mode.goal) {
-        None => fail(format!("goal {:?} names no row", mode.goal)),
+        None => fail(Check::SwitchGoalNoRow {
+            goal: mode.goal.clone(),
+        }),
         Some(row) if row.access != Access::RW || row.area != Area::Ram => {
-            fail(format!("goal {:?} must be RW/RAM", mode.goal));
+            fail(Check::SwitchGoalAttrs {
+                goal: mode.goal.clone(),
+            });
         }
-        Some(_) if mode.goal == mode.register => {
-            fail("goal and register are the same row".to_string());
-        }
+        Some(_) if mode.goal == mode.register => fail(Check::SwitchGoalIsRegister {
+            register: register(),
+        }),
         Some(_) => {}
     }
     if errors.len() > before {
@@ -755,13 +765,12 @@ pub(crate) fn roles(
             [] => continue,
             [one] => *one,
             [..] => {
-                let names: Vec<String> = found
-                    .iter()
-                    .map(|(r, _)| format!("{:?}", r.data_name))
-                    .collect();
                 errors.push(Diagnostic::new(
                     file,
-                    format!("role {} has two rows: {}", def.field, names.join(" and ")),
+                    Check::RoleTwoRows {
+                        field: def.field,
+                        rows: found.iter().map(|(r, _)| r.data_name.clone()).collect(),
+                    },
                 ));
                 continue;
             }
@@ -818,10 +827,12 @@ fn role_of(
             } else {
                 errors.push(Diagnostic::new(
                     file,
-                    format!(
-                        "unit_info {:?}: unit {:?} is not the {} role's quantity ({:?})",
-                        entry.data_name, entry.unit, def.field, def.quantity
-                    ),
+                    Check::UnitNotQuantity {
+                        register: entry.data_name.clone(),
+                        unit: entry.unit.clone(),
+                        field: def.field,
+                        quantity: def.quantity,
+                    },
                 ));
             }
             continue;
@@ -829,12 +840,11 @@ fn role_of(
         if let Some(clash) = role.scales.iter().find(|s| s.modes & modes != 0) {
             errors.push(Diagnostic::new(
                 file,
-                format!(
-                    "unit_info {:?}: two {} scales in mode {}",
-                    entry.data_name,
-                    def.field,
-                    mode_names(clash.modes & modes).join(", ")
-                ),
+                Check::TwoScales {
+                    register: entry.data_name.clone(),
+                    field: def.field,
+                    modes: mode_names(clash.modes & modes),
+                },
             ));
             continue;
         }
@@ -848,13 +858,12 @@ fn role_of(
                 if (table_step / exact - 1.0).abs() > LOAD_STEP_TOLERANCE {
                     errors.push(Diagnostic::new(
                         file,
-                        format!(
-                            "unit_info {:?}: step {} {} is not about 100 % / {} (the magnitude below direction bit {n})",
-                            entry.data_name,
-                            entry.value,
-                            entry.unit,
-                            full_magnitude(n)
-                        ),
+                        Check::LoadStep {
+                            register: entry.data_name.clone(),
+                            value: entry.value,
+                            unit: entry.unit.clone(),
+                            bit: n,
+                        },
                     ));
                     continue;
                 }
@@ -932,7 +941,7 @@ mod tests {
         assert!(
             out.errors
                 .iter()
-                .any(|d| d.file == "t" && keywords.iter().all(|k| d.message.contains(k))),
+                .any(|d| d.file == "t" && keywords.iter().all(|k| d.cause.to_string().contains(k))),
             "no error with {keywords:?} in {:?}",
             out.errors
         );
@@ -1304,7 +1313,7 @@ mod tests {
                 "RW",
                 "RAM",
             ),
-            &["needs a range"],
+            &["register \"Torque Ctrl Mode Enable\" has no range"],
         );
         assert_fails(
             Table::xm_fr9()

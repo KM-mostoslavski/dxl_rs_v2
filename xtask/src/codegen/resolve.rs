@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::Diagnostic;
+use super::diagnostic::{Check, Diagnostic};
 use super::fr9::{self, GenRole};
 use super::names::{const_ident, is_reserved_module, module_ident, type_ident};
 use super::schema::{
@@ -204,24 +204,20 @@ struct Mapping<'a> {
 /// Checks 3 and 4: the lists present, non-empty, and `default` set exactly
 /// when both exist, to P2.
 fn check_lists(number: u16, entry: &ModelEntry, errors: &mut Vec<Diagnostic>) {
-    let mut fail = |message: String| {
-        errors.push(Diagnostic::new(
-            "dynamixel",
-            format!("model {number}: {message}"),
-        ));
-    };
+    let mut fail = |check: Check| errors.push(Diagnostic::new("dynamixel", check));
+    let model = number;
     if entry.p1.is_none() && entry.p2.is_none() {
-        fail("no p1 or p2 list".to_string());
+        fail(Check::NoLists { model });
     }
     for (protocol, list) in [(ProtocolTag::P1, &entry.p1), (ProtocolTag::P2, &entry.p2)] {
         if list.as_ref().is_some_and(Vec::is_empty) {
-            fail(format!("{} list is empty", protocol.list()));
+            fail(Check::EmptyList { model, protocol });
         }
     }
     match (entry.p1.is_some() && entry.p2.is_some(), entry.default) {
-        (true, None) => fail("default: P2 is required with both p1 and p2".to_string()),
-        (true, Some(ProtocolTag::P1)) => fail("default must be P2, found P1".to_string()),
-        (false, Some(_)) => fail("default is only allowed with both p1 and p2".to_string()),
+        (true, None) => fail(Check::DefaultMissing { model }),
+        (true, Some(found @ ProtocolTag::P1)) => fail(Check::DefaultNotP2 { model, found }),
+        (false, Some(_)) => fail(Check::DefaultWithOneList { model }),
         _ => {}
     }
 }
@@ -242,11 +238,10 @@ pub(crate) fn resolve(
         if !FAMILIES.contains(&entry.family.as_str()) {
             out.errors.push(Diagnostic::new(
                 "dynamixel",
-                format!(
-                    "model {number}: unknown family {:?} (expected {})",
-                    entry.family,
-                    FAMILIES.join(", ")
-                ),
+                Check::UnknownFamily {
+                    model: number,
+                    family: entry.family.clone(),
+                },
             ));
         }
         for (protocol, list) in [(ProtocolTag::P1, &entry.p1), (ProtocolTag::P2, &entry.p2)] {
@@ -266,10 +261,11 @@ pub(crate) fn resolve(
                 } else if reported.insert((&table.file, number)) {
                     out.errors.push(Diagnostic::new(
                         "dynamixel",
-                        format!(
-                            "table {} is listed under model {} and model {number}",
-                            table.file, mapping.number
-                        ),
+                        Check::TableUnderTwoModels {
+                            table: table.file.clone(),
+                            first: mapping.number,
+                            second: number,
+                        },
                     ));
                 }
             }
@@ -291,34 +287,33 @@ pub(crate) fn resolve(
         if let Some(other) = types.insert(ty.clone(), file) {
             out.errors.push(Diagnostic::new(
                 file,
-                format!("tables {other} and {file} both give the type {ty}"),
+                Check::DuplicateType {
+                    first: other.to_string(),
+                    second: file.to_string(),
+                    ty: ty.clone(),
+                },
             ));
         }
         let module = module_ident(file);
         if is_reserved_module(&module) {
             out.errors.push(Diagnostic::new(
                 file,
-                format!(
-                    "module name {module} is reserved (a Rust keyword, or the generated tests module)"
-                ),
+                Check::ReservedModule {
+                    module: module.clone(),
+                },
             ));
         }
         let Some(table) = tables.get(file) else {
             continue;
         };
         if table.protocols.is_empty() {
-            out.errors.push(Diagnostic::new(file, "protocols is empty"));
+            out.errors
+                .push(Diagnostic::new(file, Check::EmptyProtocols));
         }
         for &(protocol, _, _) in &mapping.appearances {
             if !table.protocols.contains(&protocol) {
-                out.errors.push(Diagnostic::new(
-                    file,
-                    format!(
-                        "listed under {} but its protocols lack {}",
-                        protocol.list(),
-                        protocol.variant()
-                    ),
-                ));
+                out.errors
+                    .push(Diagnostic::new(file, Check::ProtocolMissing { protocol }));
             }
         }
         let registers = registers(file, table, &mut out.errors);
@@ -379,22 +374,24 @@ pub(crate) fn resolve(
         if mapped.contains_key(file) {
             out.errors.push(Diagnostic::new(
                 "dynamixel",
-                format!("table {file} is both mapped and in not_mapped"),
+                Check::MappedAndNotMapped {
+                    table: file.to_string(),
+                },
             ));
         }
         if !on_disk.contains(file) {
             out.errors.push(Diagnostic::new(
                 "dynamixel",
-                format!("not_mapped names {file}, which does not exist"),
+                Check::NotMappedMissing {
+                    table: file.to_string(),
+                },
             ));
         }
     }
     for stem in on_disk {
         if !mapped.contains_key(stem.as_str()) && !not_mapped.contains(stem.as_str()) {
-            out.warnings.push(Diagnostic::new(
-                stem.as_str(),
-                "not in dynamixel.ron (models or not_mapped), skipped",
-            ));
+            out.warnings
+                .push(Diagnostic::new(stem.as_str(), Check::Unmapped));
         }
     }
     out
@@ -410,19 +407,19 @@ fn check_order(
     if list.first().is_some_and(|first| first.from_fw != 0) {
         errors.push(Diagnostic::new(
             "dynamixel",
-            format!(
-                "model {number}: {} from_fw must start at 0",
-                protocol.list()
-            ),
+            Check::FirstFromFw {
+                model: number,
+                protocol,
+            },
         ));
     }
     if list.windows(2).any(|w| w[0].from_fw >= w[1].from_fw) {
         errors.push(Diagnostic::new(
             "dynamixel",
-            format!(
-                "model {number}: {} from_fw must strictly increase",
-                protocol.list()
-            ),
+            Check::FromFwOrder {
+                model: number,
+                protocol,
+            },
         ));
     }
 }
@@ -437,10 +434,11 @@ fn registers(file: &str, table: &ControlTable, errors: &mut Vec<Diagnostic>) -> 
         if let Some(other) = seen.insert(ident.clone(), &row.data_name) {
             errors.push(Diagnostic::new(
                 file,
-                format!(
-                    "rows {other:?} and {:?} both give the constant {ident}",
-                    row.data_name
-                ),
+                Check::DuplicateConstant {
+                    first: other.to_string(),
+                    second: row.data_name.clone(),
+                    ident: ident.clone(),
+                },
             ));
         }
         out.push((ident, row.clone()));
@@ -450,21 +448,6 @@ fn registers(file: &str, table: &ControlTable, errors: &mut Vec<Diagnostic>) -> 
 
 const OPERATING_MODE: &str = "Operating Mode";
 const CONTROL_MODE: &str = "Control Mode";
-
-fn access_name(access: Access) -> &'static str {
-    match access {
-        Access::R => "R",
-        Access::RW => "RW",
-    }
-}
-
-fn area_name(area: Area) -> &'static str {
-    match area {
-        Area::Eeprom => "EEPROM",
-        Area::Ram => "RAM",
-        Area::Hybrid => "Hybrid",
-    }
-}
 
 /// The common-role rows of `table`, or `None` after reporting checks 10, 11
 /// and 17.
@@ -476,7 +459,9 @@ fn roles(file: &str, table: &ControlTable, errors: &mut Vec<Diagnostic>) -> Opti
         if row.is_none() {
             errors.push(Diagnostic::new(
                 file,
-                format!("missing role {name} (row {name:?})"),
+                Check::MissingRole {
+                    register: name.to_string(),
+                },
             ));
         }
         row.cloned()
@@ -509,14 +494,12 @@ fn roles(file: &str, table: &ControlTable, errors: &mut Vec<Diagnostic>) -> Opti
     {
         errors.push(Diagnostic::new(
             file,
-            format!(
-                "role {} must be 1 byte RW/EEPROM, found {} byte{} {}/{}",
-                row.data_name,
-                row.size,
-                if row.size == 1 { "" } else { "s" },
-                access_name(row.access),
-                area_name(row.area)
-            ),
+            Check::ModeRowAttrs {
+                register: row.data_name.clone(),
+                size: row.size,
+                access: row.access,
+                area: row.area,
+            },
         ));
     }
     if errors.len() > before {
@@ -546,13 +529,11 @@ fn check_attrs(
     if row.access != access || row.area != area {
         errors.push(Diagnostic::new(
             file,
-            format!(
-                "role {role} must be {}/{}, found {}/{}",
-                access_name(access),
-                area_name(area),
-                access_name(row.access),
-                area_name(row.area)
-            ),
+            Check::RoleAttrs {
+                register: role.to_string(),
+                expected: (access, area),
+                found: (row.access, row.area),
+            },
         ));
     }
 }
@@ -568,10 +549,7 @@ fn limits<'a>(
     let cw_ccw = pair("CW Angle Limit", "CCW Angle Limit");
     let present = |p: (Option<&Row>, Option<&Row>)| p.0.is_some() || p.1.is_some();
     if present(min_max) && present(cw_ccw) {
-        errors.push(Diagnostic::new(
-            file,
-            "both limit forms: Min/Max Position Limit and CW/CCW Angle Limit rows",
-        ));
+        errors.push(Diagnostic::new(file, Check::BothLimitForms));
         return None;
     }
     match (min_max, cw_ccw) {
@@ -584,16 +562,15 @@ fn limits<'a>(
             ccw: ccw.clone(),
         }),
         ((None, None), (None, None)) => {
-            errors.push(Diagnostic::new(
-                file,
-                "missing role position limits (rows \"Min Position Limit\" and \"Max Position Limit\", or \"CW Angle Limit\" and \"CCW Angle Limit\")",
-            ));
+            errors.push(Diagnostic::new(file, Check::MissingLimits));
             None
         }
         ((Some(row), None) | (None, Some(row)), _) | (_, (Some(row), None) | (None, Some(row))) => {
             errors.push(Diagnostic::new(
                 file,
-                format!("half a limit form: {:?} without its pair", row.data_name),
+                Check::HalfLimitForm {
+                    register: row.data_name.clone(),
+                },
             ));
             None
         }
@@ -608,28 +585,22 @@ fn mode<'a>(
     errors: &mut Vec<Diagnostic>,
 ) -> Option<ModeRole> {
     let before = errors.len();
-    let mut fail = |message: String| errors.push(Diagnostic::new(file, message));
+    let mut fail = |check: Check| errors.push(Diagnostic::new(file, check));
     let operating = find(OPERATING_MODE);
     let control = find(CONTROL_MODE);
     let angle_limits = find("CW Angle Limit").is_some() || find("CCW Angle Limit").is_some();
     if operating.is_some() && control.is_some() {
-        fail(format!(
-            "two mode registers: {OPERATING_MODE:?} and {CONTROL_MODE:?} rows"
-        ));
+        fail(Check::TwoModeRegisters);
     } else if operating.is_some() && angle_limits {
-        fail(format!(
-            "{OPERATING_MODE:?} row beside CW/CCW Angle Limit rows (only {CONTROL_MODE:?} may sit beside them)"
-        ));
+        fail(Check::OperatingModeBesideAngleLimits);
     }
     let row = operating.or(control);
     match (row, &table.operating_modes) {
-        (Some(row), None) => fail(format!("{:?} row without operating_modes", row.data_name)),
-        (None, Some(_)) => fail(format!(
-            "operating_modes without an {OPERATING_MODE:?} or {CONTROL_MODE:?} row"
-        )),
-        (None, None) if !angle_limits => fail(format!(
-            "no mode source: needs an {OPERATING_MODE:?} or {CONTROL_MODE:?} row, or CW/CCW Angle Limit rows"
-        )),
+        (Some(row), None) => fail(Check::ModeRowWithoutValues {
+            register: row.data_name.clone(),
+        }),
+        (None, Some(_)) => fail(Check::ValuesWithoutModeRow),
+        (None, None) if !angle_limits => fail(Check::NoModeSource),
         _ => {}
     }
     if let Some(values) = &table.operating_modes {
@@ -640,10 +611,12 @@ fn mode<'a>(
         ];
         for (i, (a, list_a)) in lists.iter().enumerate() {
             for (b, list_b) in lists.iter().skip(i + 1) {
-                for value in list_a.iter().filter(|v| list_b.contains(v)) {
-                    fail(format!(
-                        "operating_modes: value {value} in both {a} and {b}"
-                    ));
+                for &value in list_a.iter().filter(|v| list_b.contains(v)) {
+                    fail(Check::ModeValueInTwoLists {
+                        value,
+                        first: a,
+                        second: b,
+                    });
                 }
             }
         }
@@ -668,28 +641,20 @@ fn check_scale(file: &str, scale: &TypeInfo, errors: &mut Vec<Diagnostic>) {
         scale.value_of_max_radian_position,
     );
     if max <= min {
-        errors.push(Diagnostic::new(
-            file,
-            format!(
-                "type_info: value_of_max_radian_position ({max}) must be above value_of_min_radian_position ({min})"
-            ),
-        ));
+        errors.push(Diagnostic::new(file, Check::RawScaleOrder { min, max }));
     }
     let finite = scale.min_radian.is_finite() && scale.max_radian.is_finite();
     if !finite || scale.max_radian <= scale.min_radian {
         errors.push(Diagnostic::new(
             file,
-            format!(
-                "type_info: max_radian ({:?}) must be finite and above min_radian ({:?})",
-                scale.max_radian, scale.min_radian
-            ),
+            Check::RadianScale {
+                min: scale.min_radian,
+                max: scale.max_radian,
+            },
         ));
     }
     if !(min..=max).contains(&zero) {
-        errors.push(Diagnostic::new(
-            file,
-            format!("type_info: value_of_zero_radian_position ({zero}) outside {min}..={max}"),
-        ));
+        errors.push(Diagnostic::new(file, Check::ZeroOutside { zero, min, max }));
     }
 }
 
@@ -702,10 +667,10 @@ fn check_model_number(models: &[GenModel], errors: &mut Vec<Diagnostic>) -> Opti
         if (row.address, row.size) != (0, 2) {
             errors.push(Diagnostic::new(
                 model.file.as_str(),
-                format!(
-                    "Model Number must be at address 0, size 2, found address {}, size {}",
-                    row.address, row.size
-                ),
+                Check::ModelNumberLocation {
+                    address: row.address,
+                    size: row.size,
+                },
             ));
         }
         *counts.entry((row.access, row.area)).or_default() += 1;
@@ -716,13 +681,10 @@ fn check_model_number(models: &[GenModel], errors: &mut Vec<Diagnostic>) -> Opti
         if (row.access, row.area) != (access, area) {
             errors.push(Diagnostic::new(
                 model.file.as_str(),
-                format!(
-                    "Model Number is {}/{} here but {}/{} in the other tables",
-                    access_name(row.access),
-                    area_name(row.area),
-                    access_name(access),
-                    area_name(area)
-                ),
+                Check::ModelNumberAttrs {
+                    found: (row.access, row.area),
+                    others: (access, area),
+                },
             ));
         }
     }
@@ -746,15 +708,14 @@ fn check_firmware_version(resolved: &Resolved, errors: &mut Vec<Diagnostic>) {
             if (other_row.address, other_row.size) != (row.address, row.size) {
                 errors.push(Diagnostic::new(
                     "dynamixel",
-                    format!(
-                        "model {}: {} tables {first} and {other} have Firmware Version at different locations ({}/{} and {}/{})",
-                        list.number,
-                        list.protocol.list(),
-                        row.address,
-                        row.size,
-                        other_row.address,
-                        other_row.size
-                    ),
+                    Check::FirmwareVersionMoves {
+                        model: list.number,
+                        protocol: list.protocol,
+                        first: first.to_string(),
+                        first_at: (row.address, row.size),
+                        other: other.to_string(),
+                        other_at: (other_row.address, other_row.size),
+                    },
                 ));
             }
         }
@@ -795,10 +756,10 @@ fn check_p1_addresses(model: &GenModel, errors: &mut Vec<Diagnostic>) {
         if row.address > 255 {
             errors.push(Diagnostic::new(
                 model.file.as_str(),
-                format!(
-                    "listed under p1 but {} is at address {} (> 255)",
-                    row.data_name, row.address
-                ),
+                Check::P1Address {
+                    register: row.data_name.clone(),
+                    address: row.address,
+                },
             ));
         }
     }
@@ -807,6 +768,7 @@ fn check_p1_addresses(model: &GenModel, errors: &mut Vec<Diagnostic>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codegen::diagnostic::Cause;
     use crate::codegen::fixtures::{Map, Table, outcome};
     use crate::codegen::schema::{OperatingModes, parse_table_str};
 
@@ -827,7 +789,7 @@ mod tests {
         assert!(
             out.errors
                 .iter()
-                .any(|d| d.file == "t" && keywords.iter().all(|k| d.message.contains(k))),
+                .any(|d| d.file == "t" && keywords.iter().all(|k| d.cause.to_string().contains(k))),
             "no error with {keywords:?} in {:?}",
             out.errors
         );
@@ -1133,7 +1095,7 @@ mod tests {
         assert!(
             out.errors
                 .iter()
-                .any(|d| d.file == file && keywords.iter().all(|k| d.message.contains(k))),
+                .any(|d| d.file == file && keywords.iter().all(|k| d.cause.to_string().contains(k))),
             "no {file} error with {keywords:?} in {:?}",
             out.errors
         );
@@ -1245,7 +1207,7 @@ mod tests {
         let text = Table::xm().omit_field("protocols").render();
         let d = parse_table_str(&text, "xm").unwrap_err();
         assert_eq!(d.file, "xm");
-        assert!(d.message.contains("protocols"), "{}", d.message);
+        assert!(d.cause.to_string().contains("protocols"), "{}", d.cause);
     }
 
     #[test]
@@ -1253,7 +1215,7 @@ mod tests {
         let text = Table::xm().omit_field("source").render();
         let d = parse_table_str(&text, "xm").unwrap_err();
         assert_eq!(d.file, "xm");
-        assert!(d.message.contains("source"), "{}", d.message);
+        assert!(d.cause.to_string().contains("source"), "{}", d.cause);
     }
 
     #[test]
@@ -1426,7 +1388,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|d| d.file == file && keywords.iter().all(|k| d.message.contains(k))),
+                .any(|d| d.file == file && keywords.iter().all(|k| d.cause.to_string().contains(k))),
             "no {file} error with {keywords:?} in {errors:?}"
         );
     }
@@ -1578,12 +1540,10 @@ mod tests {
             ],
         );
         assert!(out.errors.is_empty(), "{:?}", out.errors);
-        assert_eq!(
-            out.warnings,
-            [Diagnostic::new(
-                "stray",
-                "not in dynamixel.ron (models or not_mapped), skipped"
-            )]
-        );
+        let [warning] = out.warnings.as_slice() else {
+            panic!("{:?}", out.warnings);
+        };
+        assert_eq!(warning.file, "stray");
+        assert!(matches!(warning.cause, Cause::Check(Check::Unmapped)));
     }
 }

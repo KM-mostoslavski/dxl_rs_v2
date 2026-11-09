@@ -14,7 +14,7 @@ use std::path::Path;
 use ron::extensions::Extensions;
 use serde::Deserialize;
 
-use super::Diagnostic;
+use super::diagnostic::{Cause, Diagnostic};
 
 /// `dynamixel.ron`: model numbers and the tables each uses per protocol.
 #[derive(Debug, Deserialize)]
@@ -345,7 +345,7 @@ pub(crate) fn parse_map(path: &Path) -> Result<ModelMap, Diagnostic> {
 pub(crate) fn parse_map_str(text: &str) -> Result<ModelMap, Diagnostic> {
     options()
         .from_str(text)
-        .map_err(|e| Diagnostic::new("dynamixel", e.to_string()))
+        .map_err(|e| Diagnostic::new("dynamixel", Cause::Parse(Box::new(e))))
 }
 
 /// Reads one control table, named `stem` in the diagnostic.
@@ -358,11 +358,19 @@ pub(crate) fn parse_table(path: &Path, stem: &str) -> Result<ControlTable, Diagn
 pub(crate) fn parse_table_str(text: &str, stem: &str) -> Result<ControlTable, Diagnostic> {
     options()
         .from_str(&braces_to_parens(text))
-        .map_err(|e| Diagnostic::new(stem, e.to_string()))
+        .map_err(|e| Diagnostic::new(stem, Cause::Parse(Box::new(e))))
 }
 
 fn read(path: &Path, stem: &str) -> Result<String, Diagnostic> {
-    std::fs::read_to_string(path).map_err(|e| Diagnostic::new(stem, format!("cannot read: {e}")))
+    std::fs::read_to_string(path).map_err(|source| {
+        Diagnostic::new(
+            stem,
+            Cause::Read {
+                path: path.to_path_buf(),
+                source,
+            },
+        )
+    })
 }
 
 /// `IMPLICIT_SOME`, so optional fields (`p1`, `p2`, `default`,
@@ -439,7 +447,7 @@ mod tests {
     fn err(result: Result<ControlTable, Diagnostic>) -> String {
         let diagnostic = result.unwrap_err();
         assert_eq!(diagnostic.file, "t");
-        diagnostic.message
+        diagnostic.cause.to_string()
     }
 
     #[test]
@@ -687,7 +695,7 @@ mod tests {
         let dir = Dir::new();
         let d = parse_table(&dir.path().join("gone.ron"), "gone").unwrap_err();
         assert_eq!(d.file, "gone");
-        assert!(d.message.contains("cannot read"));
+        assert!(d.cause.to_string().contains("cannot read"));
         let d = parse_map(&dir.path().join("dynamixel.ron")).unwrap_err();
         assert_eq!(d.file, "dynamixel");
     }
