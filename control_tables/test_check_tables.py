@@ -1145,6 +1145,18 @@ class Fr9Tests(FixtureCase):
             with self.subTest(entry=text):
                 self.assertFails(self.check_with(x=fr9_x(units=units(text))), "x.ron", needle)
 
+    def test_angular_acceleration_unit(self) -> None:
+        # MX-64(2.0) Acceleration Limit(40): "214.577 Rev/min2" (superscript 2), 0 ~ 32,767
+        # (https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/, 2026-11-09), recorded as `rev/min^2`.
+        rows = FR9_X_ROWS + [(40, 4, "Acceleration Limit", "RW", "EEPROM")]
+        entry = '{{ data_name: "Acceleration Limit", value: 214.577, unit: "{}", sign_type: "unsigned", range: (min: 0, max: 32767) }}'
+        self.assertPasses(self.check_with(x=fr9_x(rows=rows, units=units(entry.format("rev/min^2")))))
+        for unit in ("rev/min²", "Rev/min2", "rpm^2"):
+            with self.subTest(unit=unit):
+                self.assertFails(
+                    self.check_with(x=fr9_x(rows=rows, units=units(entry.format(unit)))), "x.ron", "is not one of"
+                )
+
     def test_ranges_fit_the_register(self) -> None:
         cases = {
             "(min: 10, max: 2)": "above max",
@@ -1287,10 +1299,44 @@ class RealTablesTests(unittest.TestCase):
     """The FR-9 data in this repository's own tables (specs/009-tables-fr9)."""
 
     FR9_STEMS = ("ax_12a", "ax_12_plus", "rx_28", "mx_64_p1", "mx_64", "xm430_w350")
+    # The limits written through typed setters (docs/plans/2026-11-09-typed-limits.md, D1 and D10).
+    TYPED_LIMITS = (
+        "Min Voltage Limit",
+        "Max Voltage Limit",
+        "Temperature Limit",
+        "Min Position Limit",
+        "Max Position Limit",
+        "CW Angle Limit",
+        "CCW Angle Limit",
+        "Velocity Limit",
+        "Current Limit",
+        "PWM Limit",
+        "Max Torque",
+        "Acceleration Limit",
+    )
+    # MX-64 P1 gives Min/Max Voltage Limit the range 50..160 and Max Voltage Limit the initial
+    # value 240 (specs/009-tables-fr9, edge cases): no range for either.
+    LIMITS_WITHOUT_RANGE = {("mx_64_p1", "Min Voltage Limit"), ("mx_64_p1", "Max Voltage Limit")}
 
     def test_repository_tables_pass(self) -> None:
-        code, out, err = run_check(["--today", "2026-11-03"])
+        code, out, err = run_check(["--today", "2026-11-09"])
         self.assertEqual(code, 0, err)
+
+    def test_fr9_tables_scale_every_typed_limit(self) -> None:
+        _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)
+        for stem in self.FR9_STEMS:
+            rows = {r["data_name"] for r in tables[stem]["control_table"]}
+            entries = {e["data_name"]: e for e in tables[stem]["unit_info"]}
+            for name in self.TYPED_LIMITS:
+                if name not in rows:
+                    continue
+                with self.subTest(stem=stem, register=name):
+                    self.assertIn(name, entries)
+                    entry = entries[name]
+                    for key in ("value", "unit", "sign_type"):
+                        self.assertIn(key, entry)
+                    if (stem, name) not in self.LIMITS_WITHOUT_RANGE:
+                        self.assertIn("range", entry)
 
     def test_fr9_tables_carry_unit_source(self) -> None:
         _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)

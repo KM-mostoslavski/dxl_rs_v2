@@ -2,11 +2,12 @@
 // Source: control_tables/h54_200_s500_ra.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-    HasLedBlue, HasLedGreen, HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving,
+    Actuator, Cache, Describe, HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent,
+    HasGoalVelocity, HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed,
+    HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
     HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-    HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, LimitRegisters, ModeSource, ModeValues,
-    Model, ModelData, Protocols, RoleRegister, Roles,
+    HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
+    LimitRegisters, ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -77,6 +78,12 @@ impl H54200S500Ra {
             min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
             max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
             temperature_limit: Some(<Self as HasTemperatureLimit>::ROLE),
+            min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
+            max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
+            velocity_limit: Some(<Self as HasVelocityLimit>::ROLE),
+            current_limit: Some(<Self as HasCurrentLimit>::ROLE),
+            pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
+            acceleration_limit: Some(<Self as HasAccelerationLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -430,6 +437,78 @@ impl HasTemperatureLimit for H54200S500Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Temperature Limit",
         register: Self::TEMPERATURE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Min Position Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMinPositionLimit for H54200S500Ra {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Min Position Limit",
+        register: Self::MIN_POSITION_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Max Position Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMaxPositionLimit for H54200S500Ra {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Max Position Limit",
+        register: Self::MAX_POSITION_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Velocity Limit: raw only, no unit in the table.
+impl HasVelocityLimit for H54200S500Ra {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Velocity Limit",
+        register: Self::VELOCITY_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Current Limit: raw only, no unit in the table.
+impl HasCurrentLimit for H54200S500Ra {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Current Limit",
+        register: Self::CURRENT_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// PWM Limit: raw only, no unit in the table.
+impl HasPwmLimit for H54200S500Ra {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "PWM Limit",
+        register: Self::PWM_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Acceleration Limit: raw only, no unit in the table.
+impl HasAccelerationLimit for H54200S500Ra {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Acceleration Limit",
+        register: Self::ACCELERATION_LIMIT,
         scales: &[],
         bounded_by: None,
         from_fw: 0,

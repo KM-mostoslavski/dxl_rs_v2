@@ -50,6 +50,6 @@ pub use transport::Transport;
 #[cfg(feature = "mock")]
 pub use transport::{Mismatch, MockTime, MockTransport};
 pub use units::{
-    ComplianceMargin, ComplianceSlope, Current, Gain, HardwareErrors, Load, Position,
-    PositionScale, RegisterScale, Sign, SpeedLimit, Temperature, Tick, Velocity, Voltage,
+    Acceleration, ComplianceMargin, ComplianceSlope, Current, Gain, HardwareErrors, Load, Position,
+    PositionScale, Pwm, RegisterScale, Sign, SpeedLimit, Temperature, Tick, Velocity, Voltage,
 };

@@ -10,10 +10,15 @@
 //! - `DXL_OUTPUT` share of output per direction, in e-Manual steps of about 0.1 % (default
 //!   200, at most 400), `DXL_SPIN_MS` per direction (default 1500).
 //!
-//! Wheel mode is CW Angle Limit = CCW Angle Limit = 0 in EEPROM. This crate does not write
-//! EEPROM through typed calls, and Setup reads the mode once: set both limits to 0 (e.g. with
-//! the `raw-registers` feature or the ROBOTIS tools), power-cycle, then run this. Actuators in
-//! joint mode are listed and left alone.
+//! Wheel mode is CW Angle Limit = CCW Angle Limit = 0 in EEPROM. It can be set through the
+//! crate, `a.set_position_limits(zero, zero)` with `zero = a.position_scale().to_position(0)`
+//! (or `a.write_limit(Raw(MinPositionLimit), 0)` then `a.write_limit(Raw(MaxPositionLimit), 0)`):
+//! the bus switches the actuator to wheel mode on the acknowledged write, with no power cycle
+//! and no new Setup. It takes the write only after `a.disable_torque()` confirmed torque off
+//! and `a.set_speed_limit(SpeedLimit::Unlimited)` wrote Moving Speed = 0: in wheel mode Moving
+//! Speed, the last speed limit, is the goal velocity the next `enable_torque` drives, so the
+//! switch is refused (`WheelSpeedUnknown`) until the bus knows it is 0. This example leaves the
+//! limits alone: actuators in joint mode are listed and skipped.
 //!
 //! In wheel mode the e-Manual gives AX and RX Moving Speed as a share of output ("only the
 //! output control is possible, not speed"), not as a velocity: bit 10 is the direction (set =

@@ -2,10 +2,11 @@
 // Source: control_tables/ym070_210_m001.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-    HasMaxVoltageLimit, HasMinVoltageLimit, HasPGain, HasPresentCurrent, HasPresentVelocity,
-    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, LimitRegisters, ModeSource, ModeValues,
-    Model, ModelData, Protocols, RoleRegister, Roles,
+    Actuator, Cache, Describe, HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent,
+    HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+    HasMinVoltageLimit, HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage,
+    HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasVelocityLimit, LimitRegisters, ModeSource,
+    ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -70,6 +71,12 @@ impl Ym070210M001 {
             d_gain: Some(<Self as HasDGain>::ROLE),
             min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
             max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
+            min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
+            max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
+            velocity_limit: Some(<Self as HasVelocityLimit>::ROLE),
+            current_limit: Some(<Self as HasCurrentLimit>::ROLE),
+            pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
+            acceleration_limit: Some(<Self as HasAccelerationLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -451,6 +458,78 @@ impl HasMaxVoltageLimit for Ym070210M001 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Voltage Limit",
         register: Self::MAX_VOLTAGE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Min Position Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMinPositionLimit for Ym070210M001 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Min Position Limit",
+        register: Self::MIN_POSITION_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Max Position Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMaxPositionLimit for Ym070210M001 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Max Position Limit",
+        register: Self::MAX_POSITION_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Velocity Limit: raw only, no unit in the table.
+impl HasVelocityLimit for Ym070210M001 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Velocity Limit",
+        register: Self::VELOCITY_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Current Limit: raw only, no unit in the table.
+impl HasCurrentLimit for Ym070210M001 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Current Limit",
+        register: Self::CURRENT_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// PWM Limit: raw only, no unit in the table.
+impl HasPwmLimit for Ym070210M001 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "PWM Limit",
+        register: Self::PWM_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Acceleration Limit: raw only, no unit in the table.
+impl HasAccelerationLimit for Ym070210M001 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Acceleration Limit",
+        register: Self::ACCELERATION_LIMIT,
         scales: &[],
         bounded_by: None,
         from_fw: 0,

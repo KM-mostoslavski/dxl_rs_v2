@@ -28,3 +28,16 @@ Changes a merged contract: step 3 → 4 → 5.
 - [x] T093 Declared Setup holds an actuator whose replies carry only hardware fault flags as `Faulted`; mixed flags and P2 error codes still fail
 - [x] T094 Autoscan holds a hardware-faulted pong the same way
 - [x] T095 Recovery path (`write_raw` → `clear_fault` → `enable_torque`), whole-bus `enable_torque` refused, `DynBus` parity, rustdoc, D-01 done
+
+## Typed limit setters
+
+Plan: [`2026-11-09-typed-limits.md`](2026-11-09-typed-limits.md).
+
+- [ ] T096 [human] Architect: SRS text for typed limit writes (plan D1 to D10)
+- [x] T097 tables: `unit_info` for the D1 registers in the six verified tables
+- [x] T098 xtask: limit roles and the `Pwm` quantity; regenerate models
+- [x] T099 core: `units::Pwm`, `ValidationError::ActuatorIsOn`, the new roles
+- [x] T100 bus: limit fields, `LimitField`, `write_limit`, setters and getters, checks, cache updates
+- [x] T101 bus: docs and step end
+- [x] T102 bus: D8 torque confirmed off, D9 no wheel switch with a live speed
+- [x] T103 tables, xtask, core, bus: D10 typed Acceleration Limit

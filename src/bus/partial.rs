@@ -31,7 +31,7 @@ where
     F: ReadField,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states, _) = slots.split_mut();
+    let (kinds, states, _, _) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_out(stages.len(), out.len())?;
     group::stage_reads::<F>(kinds, stages)?;
@@ -489,7 +489,7 @@ mod tests {
             let mut stages = [Stage::EMPTY; 32];
             let mut got: [Option<Result<i32, Error>>; 3] = [None; 3];
             let (mut wire, mut slots) = bus.split();
-            let (kinds, states, _) = slots.split_mut();
+            let (kinds, states, _, _) = slots.split_mut();
             let staged = group::resolve(kinds, [id(1), id(2), id(3)], &mut stages).unwrap();
             group::stage_reads::<Raw<PresentPosition>>(kinds, staged).unwrap();
             group::read_each::<P2, _, _, Raw<PresentPosition>, XlLayoutBreaks, _>(

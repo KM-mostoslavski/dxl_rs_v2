@@ -3,10 +3,11 @@
 
 use crate::actuator::{
     Actuator, Cache, Describe, HasCcwComplianceMargin, HasCcwComplianceSlope,
-    HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMaxVoltageLimit,
-    HasMinVoltageLimit, HasMoving, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasSpeedLimit, HasTemperatureLimit, LimitRegisters, ModeSource, Model,
-    ModelData, Protocols, RoleRegister, Roles,
+    HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMaxPositionLimit,
+    HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
+    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
+    HasTemperatureLimit, LimitRegisters, ModeSource, Model, ModelData, Protocols, RoleRegister,
+    Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -63,6 +64,9 @@ impl Ax18a {
             min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
             max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
             temperature_limit: Some(<Self as HasTemperatureLimit>::ROLE),
+            min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
+            max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
+            max_torque: Some(<Self as HasMaxTorque>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -318,6 +322,42 @@ impl HasTemperatureLimit for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Temperature Limit",
         register: Self::TEMPERATURE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// CW Angle Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMinPositionLimit for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CW Angle Limit",
+        register: Self::CW_ANGLE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// CCW Angle Limit: a position, converted with the model's position scale (`type_info`).
+impl HasMaxPositionLimit for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CCW Angle Limit",
+        register: Self::CCW_ANGLE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Max Torque: raw only, no unit in the table.
+impl HasMaxTorque for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Max Torque",
+        register: Self::MAX_TORQUE,
         scales: &[],
         bounded_by: None,
         from_fw: 0,

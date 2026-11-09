@@ -694,6 +694,57 @@ mod tests {
         ));
         assert!(role("xl430_w250", "present_velocity").scales.is_empty());
         assert_eq!(role("ph54_200_s500", "led_red").row.data_name, "LED Red");
+
+        for (file, field, name, address, top) in [
+            ("ax_12a", "min_position_limit", "CW Angle Limit", 6, 1023),
+            ("ax_12a", "max_position_limit", "CCW Angle Limit", 8, 1023),
+            ("mx_64_p1", "max_position_limit", "CCW Angle Limit", 8, 4095),
+            (
+                "xm430_w350",
+                "min_position_limit",
+                "Min Position Limit",
+                52,
+                4095,
+            ),
+            (
+                "mx_64",
+                "max_position_limit",
+                "Max Position Limit",
+                48,
+                4095,
+            ),
+        ] {
+            let limit = role(file, field);
+            assert_eq!(
+                (limit.row.data_name.as_str(), limit.row.address),
+                (name, address),
+                "{file}: {field}"
+            );
+            assert!(limit.scales.is_empty(), "{file}: {field}");
+            assert_eq!(limit.row_range, Some((0, top)), "{file}: {field}");
+        }
+        assert_eq!(role("xl430_w250", "min_position_limit").row_range, None);
+        let torque = role("ax_12a", "max_torque");
+        assert_eq!(torque.row.address, 14);
+        assert!(close(torque.scales[0].si_per_raw, 1.0 / 1023.0));
+        assert_eq!(torque.scales[0].range, Some((0, 1023)));
+        let velocity = role("xm430_w350", "velocity_limit");
+        assert_eq!(velocity.row.address, 44);
+        assert!(close(velocity.scales[0].si_per_raw, 0.229 * rpm));
+        let current = role("xm430_w350", "current_limit");
+        assert_eq!(current.row.address, 38);
+        assert!(close(current.scales[0].si_per_raw, 0.00269));
+        let pwm = role("xm430_w350", "pwm_limit");
+        assert_eq!(pwm.row.address, 36);
+        assert!(pwm.scales.iter().all(|s| close(s.si_per_raw, 0.00113)));
+        let acceleration = role("mx_64", "acceleration_limit");
+        assert_eq!((acceleration.row.address, acceleration.row.size), (40, 4));
+        assert!(close(
+            acceleration.scales[0].si_per_raw,
+            214.577 * std::f64::consts::PI / 1800.0
+        ));
+        assert_eq!(acceleration.scales[0].range, Some((0, 32767)));
+        assert!(role("mx_28", "acceleration_limit").scales.is_empty());
     }
 
     #[test]

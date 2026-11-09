@@ -3,10 +3,11 @@
 
 use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-    HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad,
-    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick, HasSpeedLimit,
-    HasTemperatureLimit, HasTorqueCtrlModeEnable, LimitMode, LimitRegisters, ModeScale, ModeSet,
-    ModeSource, Model, ModelData, Protocols, RoleRegister, Roles,
+    HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+    HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
+    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+    HasTorqueCtrlModeEnable, LimitMode, LimitRegisters, ModeScale, ModeSet, ModeSource, Model,
+    ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -68,6 +69,9 @@ impl Mx64P1 {
             min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
             max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
             temperature_limit: Some(<Self as HasTemperatureLimit>::ROLE),
+            min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
+            max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
+            max_torque: Some(<Self as HasMaxTorque>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: true,
@@ -407,6 +411,49 @@ impl HasTemperatureLimit for Mx64P1 {
             modes: ModeSet::ALL,
             scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
             range: Some((0, 100)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// CW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 4095.
+impl HasMinPositionLimit for Mx64P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CW Angle Limit",
+        register: Self::CW_ANGLE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: Some((0, 4095)),
+    };
+}
+
+/// CCW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 4095.
+impl HasMaxPositionLimit for Mx64P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "CCW Angle Limit",
+        register: Self::CCW_ANGLE_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: Some((0, 4095)),
+    };
+}
+
+/// Max Torque: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: raw 1023, the top of its range, is 100 %.
+impl HasMaxTorque for Mx64P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Max Torque",
+        register: Self::MAX_TORQUE,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0009775171, Sign::Unsigned, 2, false)),
+            range: Some((0, 1023)),
         }],
         bounded_by: None,
         from_fw: 0,

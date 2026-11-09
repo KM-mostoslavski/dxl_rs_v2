@@ -8,7 +8,11 @@
 //! (temperature, voltage, velocity, load, current, LED, gains, ...) is a
 //! [`field`]: read and written on one actuator, on many with
 //! [`Bus::read_field`] and [`Bus::sync_write`], and several at once with
-//! [`Bus::bulk_read`] and [`Bus::bulk_write`] ([`bulk`]).
+//! [`Bus::bulk_read`] and [`Bus::bulk_write`] ([`bulk`]). The EEPROM
+//! limits several series share (voltage, temperature, position, velocity,
+//! acceleration, current and PWM limits, Max Torque) are fields too, read
+//! on every tier and written on one actuator only, with
+//! [`ActuatorRef::write_limit`] and its setters.
 //!
 //! Rules that hold for every call:
 //!
@@ -22,6 +26,18 @@
 //!   currents need a current mode and stay within the Current Limit, both
 //!   read at Setup. LED, speed limit and gains move nothing and are
 //!   written with torque off too.
+//! - An EEPROM limit is written only once the bus has confirmed torque
+//!   off: an acknowledged `disable_torque()` since Setup, with no
+//!   `enable_torque()`, reboot or raw write after it. It is one
+//!   acknowledged unicast write checked against its e-Manual range where
+//!   the table records one (and, for a pair, its order); on AX, RX and MX
+//!   on Protocol 1 a switch to wheel mode also needs Moving Speed written
+//!   0 first. The bus follows it: an acknowledged position limit,
+//!   Velocity Limit or Current Limit replaces what Setup read, and on AX,
+//!   RX and MX on Protocol 1 the limit mode follows the angle limits; a
+//!   failed one leaves it unknown, and goals that depend on it are refused
+//!   until the next Setup or an acknowledged write that determines it
+//!   again. The bus never writes Torque Enable on its own.
 //! - A model whose table lacks a register refuses a typed call for it with
 //!   [`ValidationError::Unsupported`](crate::ValidationError::Unsupported)
 //!   before any byte; on the Tier 2 handle ([`ModelRef`]) the call does not
@@ -32,7 +48,7 @@
 //!   An X-series actuator needs a reboot before its fault clears: on
 //!   Protocol 2, [`ActuatorRef::reboot`]. Setup is the exception: it holds
 //!   such an actuator `Faulted` and lists it in [`SetupReport::faulted`]
-//!   instead of failing, so its EEPROM can still be fixed.
+//!   instead of failing, so its EEPROM limits can still be fixed.
 //! - Broadcast writes get no reply, so a loop that only writes sees a fault
 //!   on its next read.
 //! - A multi-actuator call validates every target before any byte, so a
@@ -88,6 +104,9 @@ pub mod field;
 mod fr9_tests;
 mod group;
 mod id_set;
+#[cfg(test)]
+mod limit_tests;
+mod limits;
 mod model_ref;
 mod multi;
 mod observe;
@@ -121,7 +140,7 @@ pub use model_ref::ModelRef;
 pub use serial::SerialBus;
 pub use setup::SetupReport;
 
-use slots::{Bound, FixedSlots, Slots, find};
+use slots::{Bound, FixedSlots, Marks, Slots, find};
 use wire::Wire;
 
 /// No clock. Implements no `Clock`, so a no_std bus must name its clock.
@@ -235,6 +254,11 @@ impl Default for Config {
 /// off. Each actuator is then reached through a
 /// short-lived [`ActuatorRef`] from [`actuator`](Bus::actuator).
 ///
+/// Setup reads no Torque Enable and writes nothing, so the hardware may
+/// still have torque on: EEPROM limit writes are refused until an
+/// acknowledged [`disable_torque`](Bus::disable_torque) (or
+/// [`ActuatorRef::disable_torque`]) confirms it off.
+///
 /// A reply reporting a hardware fault returns [`Error::Status`] and marks
 /// that actuator [`Faulted`](TorqueState::Faulted) on the same call; only
 /// [`ActuatorRef::clear_fault`] clears it, after asking the actuator. An
@@ -320,6 +344,9 @@ pub struct Bus<P: Protocol, T: Transport, C = DefaultClock, const N: usize = 32>
     /// `bounds[i]` is the goal bound Setup read for `actuators[i]`.
     /// Entries at `i >= len` are unused and kept `None`.
     bounds: [Bound; N],
+    /// `marks[i]` is what the bus confirmed about `actuators[i]` since
+    /// Setup. Entries at `i >= len` are unused and kept clear.
+    marks: [Marks; N],
     protocol: PhantomData<P>,
 }
 
@@ -336,6 +363,7 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
             actuators: heapless::Vec::new(),
             states: [TorqueState::Off; N],
             bounds: [None; N],
+            marks: [Marks::CLEAR; N],
             protocol: PhantomData,
         }
     }
@@ -372,8 +400,11 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// [`Faulted`](TorqueState::Faulted), and listed in
     /// [`SetupReport::faulted`]: goals and torque are refused until
     /// [`ActuatorRef::clear_fault`], which measures and returns the fault,
-    /// and its EEPROM can be fixed with `write_raw` (feature
-    /// `raw-registers`) in the meantime. On Protocol 2 its model number is
+    /// and its EEPROM limits can be fixed in the meantime: after
+    /// [`ActuatorRef::disable_torque`], which returns the fault yet confirms
+    /// torque off, with [`ActuatorRef::set_voltage_limits`] and the other
+    /// limit setters, or `write_raw` with the `raw-registers` feature for
+    /// any other register. On Protocol 2 its model number is
     /// then read from Model Number, the ping having failed.
     ///
     /// # Errors
@@ -481,11 +512,12 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     pub fn actuator(&mut self, id: Id) -> Option<ActuatorRef<'_, P, T, C>> {
         let (wire, slots) = self.split();
         let index = find(slots.kinds(), id)?;
-        let (kinds, states, bounds) = slots.into_split();
+        let (kinds, states, bounds, marks) = slots.into_split();
         let kind = kinds.get_mut(index)?;
         let state = states.get_mut(index)?;
-        let bound = bounds.get(index).copied().flatten();
-        Some(ActuatorRef::new(kind, state, bound, wire))
+        let bound = bounds.get_mut(index)?;
+        let marks = marks.get_mut(index)?;
+        Some(ActuatorRef::new(kind, state, bound, marks, wire))
     }
 
     /// The torque state of the actuator with `id`; `None` for an `Id` the
@@ -506,7 +538,12 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     fn split(&mut self) -> (Wire<'_, P, T, C>, FixedSlots<'_, N>) {
         (
             Wire::new(&mut self.transport, &mut self.clock, &self.config),
-            FixedSlots::new(&mut self.actuators, &mut self.states, &mut self.bounds),
+            FixedSlots::new(
+                &mut self.actuators,
+                &mut self.states,
+                &mut self.bounds,
+                &mut self.marks,
+            ),
         )
     }
 }

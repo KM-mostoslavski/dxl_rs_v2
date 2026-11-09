@@ -191,6 +191,13 @@ impl Error {
                 "an electrical shock, or too little power for its motor"
             }
             Self::Validation(V::ActuatorIsOff { .. }) => "enable torque before setting a goal",
+            Self::Validation(V::ActuatorIsOn { .. }) => "disable torque before writing EEPROM",
+            Self::Validation(V::TorqueUnconfirmed { .. }) => {
+                "call disable_torque() before writing EEPROM"
+            }
+            Self::Validation(V::WheelSpeedUnknown { .. }) => {
+                "write Moving Speed 0 before switching to wheel mode"
+            }
             Self::Validation(V::ActuatorFaulted { .. }) => "clear the fault before enabling torque",
             Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
             Self::Validation(V::NoUnit { .. }) => "use the register's raw form",
@@ -198,9 +205,10 @@ impl Error {
         })
     }
 
-    /// Whether the error is a hardware fault, after which the actuator is
-    /// treated as faulted and its torque as off: a [`FaultError`], or a
-    /// [`StatusError`] whose report is one (before it is measured).
+    /// Whether the error is a hardware fault, after which the bus holds
+    /// the actuator [`Faulted`](crate::TorqueState::Faulted) and refuses
+    /// its goals: a [`FaultError`], or a [`StatusError`] whose report is
+    /// one (before it is measured).
     pub fn is_hardware_fault(&self) -> bool {
         match self {
             Self::Fault(_) => true,
@@ -607,6 +615,9 @@ impl fmt::Display for FeatureHint {
 ///         | V::PacketTooLarge { .. }
 ///         | V::DataLength { .. }
 ///         | V::ActuatorIsOff { .. }
+///         | V::ActuatorIsOn { .. }
+///         | V::TorqueUnconfirmed { .. }
+///         | V::WheelSpeedUnknown { .. }
 ///         | V::ActuatorFaulted { .. }
 ///         | V::NotFinite { .. }
 ///         | V::DoesNotFit { .. }
@@ -681,6 +692,58 @@ pub enum ValidationError {
         id: Id,
     },
 
+    /// An EEPROM register was to be written while the torque state the bus
+    /// holds for the actuator is on: the bus writes EEPROM only with torque
+    /// off, on every model, so nothing is sent. X-series, MX(2.0) and
+    /// XL-320 firmware also writes EEPROM only with Torque Enable 0
+    /// (XM430-W350 Torque Enable(64),
+    /// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>); the AX, RX
+    /// and MX Protocol 1 pages document no such lock, so there the bus
+    /// check is the only guard. In any other state the write also waits
+    /// for torque to be confirmed off
+    /// ([`TorqueUnconfirmed`](Self::TorqueUnconfirmed)).
+    #[error("id {}: torque on, {register} not written", id.get())]
+    ActuatorIsOn {
+        /// The actuator the write was for.
+        id: Id,
+        /// The EEPROM register's name, as the control table writes it.
+        register: &'static str,
+    },
+
+    /// An EEPROM register was to be written while the bus has not confirmed
+    /// the actuator's torque off, so nothing is sent (plan 2026-11-09 D8).
+    /// Only a Torque Enable = 0 write whose reply shows it ran confirms it
+    /// (`disable_torque()`, also when the reply carries only a hardware
+    /// fault); Setup, an `enable_torque()` that sent bytes, a torque write
+    /// without such a reply, a reboot and a raw write leave it unconfirmed.
+    /// The bus never reads Torque Enable and never writes it on its own.
+    #[error("id {}: torque not confirmed off, {register} not written", id.get())]
+    TorqueUnconfirmed {
+        /// The actuator the write was for.
+        id: Id,
+        /// The EEPROM register's name, as the control table writes it.
+        register: &'static str,
+    },
+
+    /// A limit write would switch an AX, RX or MX on Protocol 1 to wheel
+    /// mode (CW = CCW Angle Limit = 0) while the bus does not know Moving
+    /// Speed is 0, so nothing is sent (plan 2026-11-09 D9). In wheel mode
+    /// Moving Speed, the last speed limit, is the goal velocity the next
+    /// `enable_torque()` drives (AX-12A Moving Speed(32),
+    /// <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>). Only an
+    /// acknowledged unicast write of Moving Speed = 0 makes it known
+    /// (`set_speed_limit(SpeedLimit::Unlimited)`, or
+    /// `write(Raw(SpeedLimit), 0)` where that returns `NoUnit`); Setup, any
+    /// other write of it, a raw write and a reboot leave it unknown. After
+    /// a raw write the bus no longer trusts the wheel mode it holds, so
+    /// CW = CCW = 0 counts as a switch there too, until an acknowledged
+    /// `set_position_limits`.
+    #[error("id {}: Moving Speed not known to be 0, wheel mode not set", id.get())]
+    WheelSpeedUnknown {
+        /// The actuator the write was for.
+        id: Id,
+    },
+
     /// Torque was to be enabled on a faulted actuator.
     #[error("id {}: faulted", id.get())]
     ActuatorFaulted {
@@ -688,36 +751,45 @@ pub enum ValidationError {
         id: Id,
     },
 
-    /// A goal tick lies outside the position limits read from the
-    /// actuator's EEPROM. Both bounds are allowed.
-    #[error("id {}: goal {raw} outside {min}..={max}", id.get())]
+    /// A value lies outside its allowed range: a goal outside the position
+    /// limits or the EEPROM bound the bus holds, or a register value (a
+    /// setting, an EEPROM limit) outside the e-Manual range its table
+    /// records. Both bounds are allowed. All in raw register units.
+    #[error("id {}: value {raw} outside {min}..={max}", id.get())]
     OutOfLimits {
-        /// The actuator the goal was for.
+        /// The actuator the value was for.
         id: Id,
-        /// The goal, in raw ticks.
+        /// The value, in raw register units (a signed goal velocity or
+        /// current as its signed magnitude).
         raw: i32,
-        /// The minimum position limit, in raw ticks.
+        /// The lowest value allowed.
         min: i32,
-        /// The maximum position limit, in raw ticks.
+        /// The highest value allowed.
         max: i32,
     },
 
-    /// A goal was checked before Setup read the actuator's position limits.
-    /// Limits are never taken from a control table's defaults.
+    /// A goal was checked before Setup read the actuator's position limits,
+    /// or after a failed limit write left them, the limit mode or the goal
+    /// bound unknown; or a single position-limit write was refused because
+    /// the other limit is unknown, so its order cannot be checked. Limits
+    /// are never taken from a control table's defaults.
     #[error("id {}: limits unknown", id.get())]
     LimitsUnknown {
         /// The actuator the goal was for.
         id: Id,
     },
 
-    /// The actuator reports a minimum position limit above its maximum.
-    #[error("id {}: min limit {min} above max {max}", id.get())]
+    /// A minimum limit lies above its maximum: position limits the actuator
+    /// reports at Setup, or a pair given to a limit write (position or
+    /// voltage limits, or one position limit against the other the bus
+    /// holds). In raw register units.
+    #[error("id {}: min {min} above max {max}", id.get())]
     InvertedLimits {
-        /// The actuator that reported the limits.
+        /// The actuator the limits are of.
         id: Id,
-        /// The minimum position limit it reports, in raw ticks.
+        /// The minimum, in raw register units.
         min: i32,
-        /// The maximum position limit it reports, in raw ticks.
+        /// The maximum, in raw register units.
         max: i32,
     },
 
@@ -1700,8 +1772,9 @@ impl StatusError {
         }
     }
 
-    /// Whether the report is a hardware fault, after which the actuator
-    /// should be treated as faulted and its torque as off.
+    /// Whether the report is a hardware fault, after which the bus holds
+    /// the actuator [`Faulted`](crate::TorqueState::Faulted) and refuses
+    /// its goals.
     ///
     /// - Protocol 2: the alert bit (bit 7) is set. The e-Manual defines it as
     ///   "a problem with the device", detailed in Hardware Error Status
@@ -2305,6 +2378,24 @@ mod tests {
                 "id 4: torque off",
             ),
             (
+                ValidationError::ActuatorIsOn {
+                    id: id(6),
+                    register: "Max Voltage Limit",
+                },
+                "id 6: torque on, Max Voltage Limit not written",
+            ),
+            (
+                ValidationError::TorqueUnconfirmed {
+                    id: id(7),
+                    register: "CCW Angle Limit",
+                },
+                "id 7: torque not confirmed off, CCW Angle Limit not written",
+            ),
+            (
+                ValidationError::WheelSpeedUnknown { id: id(8) },
+                "id 8: Moving Speed not known to be 0, wheel mode not set",
+            ),
+            (
                 ValidationError::ActuatorFaulted { id: id(4) },
                 "id 4: faulted",
             ),
@@ -2315,7 +2406,7 @@ mod tests {
                     min: 1000,
                     max: 3000,
                 },
-                "id 3: goal 3001 outside 1000..=3000",
+                "id 3: value 3001 outside 1000..=3000",
             ),
             (
                 ValidationError::LimitsUnknown { id: id(3) },
@@ -2327,7 +2418,7 @@ mod tests {
                     min: 3000,
                     max: 1000,
                 },
-                "id 3: min limit 3000 above max 1000",
+                "id 3: min 3000 above max 1000",
             ),
             (
                 ValidationError::DuplicateId { id: id(5) },
@@ -2797,6 +2888,26 @@ mod tests {
             (
                 ValidationError::ActuatorIsOff { id: id(1) }.into(),
                 "enable torque before setting a goal",
+            ),
+            (
+                ValidationError::ActuatorIsOn {
+                    id: id(1),
+                    register: "Min Voltage Limit",
+                }
+                .into(),
+                "disable torque before writing EEPROM",
+            ),
+            (
+                ValidationError::TorqueUnconfirmed {
+                    id: id(1),
+                    register: "Min Voltage Limit",
+                }
+                .into(),
+                "call disable_torque() before writing EEPROM",
+            ),
+            (
+                ValidationError::WheelSpeedUnknown { id: id(1) }.into(),
+                "write Moving Speed 0 before switching to wheel mode",
             ),
             (
                 ValidationError::ActuatorFaulted { id: id(1) }.into(),

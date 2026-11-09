@@ -12,12 +12,13 @@ use crate::units::{Limits, Position, PositionScale, RegisterScale};
 mod roles;
 
 pub use roles::{
-    HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
-    HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasLedBlue,
-    HasLedGreen, HasLedRed, HasMaxVoltageLimit, HasMinVoltageLimit, HasMoving, HasPGain,
+    HasAccelerationLimit, HasCcwComplianceMargin, HasCcwComplianceSlope, HasCurrentLimit,
+    HasCwComplianceMargin, HasCwComplianceSlope, HasDGain, HasGoalCurrent, HasGoalVelocity,
+    HasHardwareErrorStatus, HasLed, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
+    HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
     HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-    HasTorqueCtrlModeEnable, RoleRegister,
+    HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+    HasTorqueCtrlModeEnable, HasVelocityLimit, RoleRegister,
 };
 #[allow(
     unused_imports,
@@ -123,8 +124,13 @@ pub trait Actuator: sealed::Describe {
     }
 
     /// The position limits read from the actuator's EEPROM at Setup, in raw
-    /// ticks: Min/Max Position Limit, or CW/CCW Angle Limit. `None` until
-    /// Setup read them; never a control table's default.
+    /// ticks: Min/Max Position Limit, or CW/CCW Angle Limit. A limit
+    /// written since with
+    /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) or
+    /// [`set_position_limits`](crate::ActuatorRef::set_position_limits)
+    /// replaces them once acknowledged. `None` until Setup read them, and
+    /// after a limit write that failed, until the next Setup or an
+    /// acknowledged write of both limits; never a control table's default.
     ///
     /// They are returned in every operating mode, but goals are checked
     /// against them only in position (joint) mode. In extended position,
@@ -141,7 +147,16 @@ pub trait Actuator: sealed::Describe {
     /// goal positions, [`LimitMode::Velocity`] and [`LimitMode::Wheel`]
     /// goal velocities, [`LimitMode::Current`] and
     /// [`LimitMode::UnboundedCurrent`] goal currents. A mode changed after
-    /// Setup is not seen until the next Setup.
+    /// Setup is not seen until the next Setup, except the one an angle-limit
+    /// write through
+    /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) sets on
+    /// AX, RX and MX on Protocol 1.
+    ///
+    /// On those models an angle-limit write that failed leaves the mode
+    /// unknown: this returns the last mode known, which the actuator may no
+    /// longer be in, and every goal is refused with
+    /// [`LimitsUnknown`](crate::ValidationError::LimitsUnknown) until the
+    /// next Setup or an acknowledged write of both angle limits.
     fn limit_mode(&self) -> LimitMode {
         self.cache().mode()
     }
@@ -171,7 +186,11 @@ pub trait Model: Actuator {
     const DATA: &'static ModelData;
 }
 
-/// Torque and fault state of one actuator. Faulted always means torque off.
+/// Torque and fault state of one actuator, as the bus holds it.
+///
+/// `Faulted` means the bus refuses goals and `enable_torque` until the
+/// fault is cleared. It does not say the hardware's torque is off: see
+/// [`Faulted`](TorqueState::Faulted).
 ///
 /// Every actuator starts [`Off`](TorqueState::Off). The bus keeps one state
 /// per actuator and moves it by these rules:
@@ -194,13 +213,13 @@ pub trait Model: Actuator {
 ///     match state {
 ///         TorqueState::Off => "torque off",
 ///         TorqueState::On => "torque on",
-///         TorqueState::Faulted => "faulted, torque off",
+///         TorqueState::Faulted => "faulted",
 ///     }
 /// }
 /// assert_eq!(label(TorqueState::default()), "torque off");
 /// ```
 ///
-/// Only the crate moves a state, so "faulted means off" holds:
+/// Only the crate moves a state, so the table above holds:
 ///
 /// ```compile_fail,E0624
 /// use dxl_rs_v2::{Id, TorqueState};
@@ -219,13 +238,23 @@ pub enum TorqueState {
     Off = 0,
     /// Torque on. Goals are accepted.
     On = 1,
-    /// The actuator reported a hardware fault. Torque is off, goals are
-    /// refused, and torque stays off until the fault is cleared.
+    /// The actuator reported a hardware fault. Goals and `enable_torque()`
+    /// are refused until the fault is cleared. The firmware turns its
+    /// output off only for the faults it shuts down on: on AX, RX and MX on
+    /// Protocol 1, those its Shutdown register selects (AX-12A
+    /// Shutdown(18), default 36: Overheating and Overload, "the motor's
+    /// output will be 0 [%]",
+    /// <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>, 2026-11-09).
+    /// So a `Faulted` actuator that was `On` may still hold torque until an
+    /// acknowledged `disable_torque()` (see
+    /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)).
     Faulted = 2,
 }
 
 impl TorqueState {
-    /// Whether torque is on. `Faulted` counts as off.
+    /// Whether the bus holds torque on: only `On`. `Faulted` is not on
+    /// here, though the hardware may still hold torque (see
+    /// [`Faulted`](Self::Faulted)).
     pub const fn is_on(self) -> bool {
         matches!(self, Self::On)
     }
@@ -698,6 +727,16 @@ impl LimitMode {
 /// alike. Limits follow the operating mode: in [`LimitMode::Unbounded`]
 /// only `Register::encode` stops a value that does not fit the register. No
 /// constructor fills limits from a control table.
+///
+/// A limit write the bus cannot confirm leaves part of it unknown: the
+/// limits ([`forget_limits`](Cache::forget_limits)), the mode
+/// ([`forget_mode`](Cache::forget_mode)) or the goal bound
+/// ([`forget_bound`](Cache::forget_bound)). Every goal that depends on it
+/// is then refused with [`ValidationError::LimitsUnknown`], until the next
+/// Setup builds a new cache or an acknowledged write determines it again
+/// (plan 2026-11-09 D5): both limits ([`record_limits`](Cache::record_limits),
+/// and [`know_mode`](Cache::know_mode) where the mode follows them), or the
+/// goal bound ([`know_bound`](Cache::know_bound)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cache {
     /// The actuator's ID. Never changes.
@@ -708,8 +747,27 @@ pub struct Cache {
     /// The firmware version Setup learned (a Protocol 2 ping, or a read
     /// where the model's table depends on it); 0 when it was not needed.
     firmware: u8,
-    /// The EEPROM limits, or `None` until Setup records them.
+    // DECISION: the unknown state of a failed limit write (plan 2026-11-09 D5) lives in Cache's padding byte, beside the checks that refuse goals, so every tier sees it and Cache stays 16 bytes.
+    /// What a failed limit write left unknown besides the limits.
+    unknown: Unknown,
+    /// The EEPROM limits, or `None` until Setup records them, or after a
+    /// failed limit write.
     limits: Option<Limits>,
+}
+
+/// What a failed EEPROM limit write left unknown in a [`Cache`] besides its
+/// limits, until the next Setup or an acknowledged write that determines it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unknown {
+    /// Nothing: the mode and the goal bound are what Setup read, or what
+    /// an acknowledged write set since.
+    Nothing,
+    /// The EEPROM bound of the goal the mode uses (Velocity Limit or
+    /// Current Limit): that goal is refused.
+    Bound,
+    /// The limit mode itself, which follows the angle limits on AX, RX and
+    /// MX on Protocol 1: every goal is refused.
+    Mode,
 }
 
 impl Cache {
@@ -731,6 +789,7 @@ impl Cache {
             id,
             mode: LimitMode::Bounded,
             firmware: 0,
+            unknown: Unknown::Nothing,
             limits: None,
         }
     }
@@ -774,6 +833,63 @@ impl Cache {
         self.mode = mode;
     }
 
+    /// Forgets the limits after a failed write of one: a bounded goal is
+    /// refused with `LimitsUnknown` until the next Setup or an acknowledged
+    /// write of both ([`record_limits`](Self::record_limits)).
+    pub(crate) fn forget_limits(&mut self) {
+        self.limits = None;
+    }
+
+    /// Forgets the limit mode after a failed write of an angle limit it
+    /// follows: every goal is refused with `LimitsUnknown` until the next
+    /// Setup or an acknowledged write of both angle limits
+    /// ([`know_mode`](Self::know_mode)).
+    pub(crate) fn forget_mode(&mut self) {
+        self.unknown = Unknown::Mode;
+    }
+
+    /// Records limit mode `mode`, which an acknowledged write of the angle
+    /// limits it follows determines: known again if it was forgotten. The
+    /// limits do not change.
+    pub(crate) fn know_mode(&mut self, mode: LimitMode) {
+        self.mode = mode;
+        if matches!(self.unknown, Unknown::Mode) {
+            self.unknown = Unknown::Nothing;
+        }
+    }
+
+    /// Forgets the EEPROM bound of the goal the mode uses after a failed
+    /// write of it: that goal is refused with `LimitsUnknown` until the
+    /// next Setup or an acknowledged write of it
+    /// ([`know_bound`](Self::know_bound)). A forgotten mode stays forgotten.
+    pub(crate) fn forget_bound(&mut self) {
+        if matches!(self.unknown, Unknown::Nothing) {
+            self.unknown = Unknown::Bound;
+        }
+    }
+
+    /// Knows the EEPROM bound of the goal the mode uses again, after an
+    /// acknowledged write of it. A forgotten mode stays forgotten.
+    pub(crate) fn know_bound(&mut self) {
+        if matches!(self.unknown, Unknown::Bound) {
+            self.unknown = Unknown::Nothing;
+        }
+    }
+
+    /// Checks that the limit mode is known: not forgotten since a failed
+    /// write of an angle limit it follows.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::LimitsUnknown`] when it was forgotten.
+    pub(crate) const fn check_mode_known(&self) -> Result<(), ValidationError> {
+        if matches!(self.unknown, Unknown::Mode) {
+            Err(ValidationError::LimitsUnknown { id: self.id })
+        } else {
+            Ok(())
+        }
+    }
+
     /// Checks goal tick `raw` against the limit mode and returns it.
     ///
     /// - [`LimitMode::Bounded`]: `raw` must lie in the recorded limits, both
@@ -784,13 +900,16 @@ impl Cache {
     /// # Errors
     ///
     /// - [`ValidationError::LimitsUnknown`]: bounded, and no limits were
-    ///   recorded.
+    ///   recorded or they were forgotten; or the mode was forgotten.
     /// - [`ValidationError::OutOfLimits`]: bounded, and `raw` is outside
     ///   them.
     /// - [`ValidationError::NotPositionMode`]: the mode ignores goal
     ///   positions, whether limits are known or not.
     #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) fn check_goal(&self, raw: i32) -> Result<i32, ValidationError> {
+        if matches!(self.unknown, Unknown::Mode) {
+            return Err(ValidationError::LimitsUnknown { id: self.id });
+        }
         match (self.mode, self.limits) {
             (LimitMode::Bounded, None) => Err(ValidationError::LimitsUnknown { id: self.id }),
             (LimitMode::Bounded, Some(limits))
@@ -814,37 +933,47 @@ impl Cache {
         self.mode
     }
 
-    /// Checks that the recorded mode uses a goal velocity.
+    /// Checks that the recorded mode uses a goal velocity, and that the mode
+    /// and its goal bound are known.
     ///
     /// # Errors
     ///
-    /// [`ValidationError::NotVelocityMode`] in any other mode.
+    /// - [`ValidationError::LimitsUnknown`]: the mode was forgotten, or the
+    ///   mode uses a goal velocity and its bound was forgotten.
+    /// - [`ValidationError::NotVelocityMode`] in any other mode.
     #[allow(dead_code, reason = "used by the bus part of FR-9")]
     pub(crate) const fn check_goal_velocity(&self) -> Result<(), ValidationError> {
-        if self.mode.allows_goal_velocity() {
-            Ok(())
-        } else {
-            Err(ValidationError::NotVelocityMode {
+        match (self.unknown, self.mode.allows_goal_velocity()) {
+            (Unknown::Mode, _) | (Unknown::Bound, true) => {
+                Err(ValidationError::LimitsUnknown { id: self.id })
+            }
+            (_, true) => Ok(()),
+            (_, false) => Err(ValidationError::NotVelocityMode {
                 id: self.id,
                 mode: self.mode,
-            })
+            }),
         }
     }
 
-    /// Checks that the recorded mode uses a goal current.
+    /// Checks that the recorded mode uses a goal current, and that the mode
+    /// and its goal bound are known.
     ///
     /// # Errors
     ///
-    /// [`ValidationError::NotCurrentMode`] in any other mode.
+    /// - [`ValidationError::LimitsUnknown`]: the mode was forgotten, or the
+    ///   mode uses a goal current and its bound was forgotten.
+    /// - [`ValidationError::NotCurrentMode`] in any other mode.
     #[allow(dead_code, reason = "used by the bus part of FR-9")]
     pub(crate) const fn check_goal_current(&self) -> Result<(), ValidationError> {
-        if self.mode.allows_goal_current() {
-            Ok(())
-        } else {
-            Err(ValidationError::NotCurrentMode {
+        match (self.unknown, self.mode.allows_goal_current()) {
+            (Unknown::Mode, _) | (Unknown::Bound, true) => {
+                Err(ValidationError::LimitsUnknown { id: self.id })
+            }
+            (_, true) => Ok(()),
+            (_, false) => Err(ValidationError::NotCurrentMode {
                 id: self.id,
                 mode: self.mode,
-            })
+            }),
         }
     }
 }
@@ -1068,16 +1197,18 @@ mod tests {
     }
 
     #[test]
-    fn cache_holds_only_id_mode_firmware_and_limits() {
+    fn cache_holds_only_id_mode_firmware_limits_and_unknowns() {
         let Cache {
             id: _,
             mode: _,
             firmware: _,
             limits: _,
+            unknown: _,
         } = Cache::new(id(3));
         let mut cache = Cache::new(id(3));
         assert_eq!(cache.limits(), None);
         assert_eq!(cache.mode, LimitMode::Bounded);
+        assert_eq!(cache.unknown, Unknown::Nothing);
         assert_eq!(cache.firmware(), 0);
         cache.record_firmware(40);
         assert_eq!(cache.firmware(), 40);
@@ -1590,6 +1721,95 @@ mod tests {
                     assert_eq!(cache.check_goal(raw), refused);
                 }
             }
+        }
+
+        #[test]
+        fn forgotten_limits_refuse_bounded_goals_only() {
+            let mut cache = limited(id(3));
+            cache.forget_limits();
+            assert_eq!(cache.limits(), None);
+            assert_eq!(
+                cache.check_goal(2000),
+                Err(ValidationError::LimitsUnknown { id: id(3) })
+            );
+            cache.record_mode(LimitMode::Unbounded);
+            assert_eq!(cache.check_goal(5000), Ok(5000));
+        }
+
+        #[test]
+        fn forgotten_mode_refuses_every_goal() {
+            let unknown = Err(ValidationError::LimitsUnknown { id: id(4) });
+            for mode in ALL_MODES {
+                let mut cache = limited(id(4));
+                cache.record_mode(mode);
+                cache.forget_mode();
+                cache.forget_bound();
+                assert_eq!(cache.check_goal(2000), unknown.map(|()| 0), "{mode:?}");
+                assert_eq!(cache.check_goal_velocity(), unknown, "{mode:?}");
+                assert_eq!(cache.check_goal_current(), unknown, "{mode:?}");
+                cache.record_limits(1000, 3000).unwrap();
+                cache.record_mode(LimitMode::Bounded);
+                assert_eq!(cache.check_goal(2000), unknown.map(|()| 0), "{mode:?}");
+            }
+        }
+
+        #[test]
+        fn forgotten_bound_refuses_the_goal_it_bounds() {
+            let unknown = Err(ValidationError::LimitsUnknown { id: id(4) });
+            for mode in ALL_MODES {
+                let mut cache = limited(id(4));
+                cache.record_mode(mode);
+                cache.forget_bound();
+                let velocity = if mode.allows_goal_velocity() {
+                    unknown
+                } else {
+                    Err(ValidationError::NotVelocityMode { id: id(4), mode })
+                };
+                let current = if mode.allows_goal_current() {
+                    unknown
+                } else {
+                    Err(ValidationError::NotCurrentMode { id: id(4), mode })
+                };
+                assert_eq!(cache.check_goal_velocity(), velocity, "{mode:?}");
+                assert_eq!(cache.check_goal_current(), current, "{mode:?}");
+                if mode.allows_goal_position() {
+                    assert_eq!(cache.check_goal(2000), Ok(2000), "{mode:?}");
+                }
+            }
+        }
+
+        #[test]
+        fn known_mode_and_bound_accept_goals_again() {
+            let unknown = Err(ValidationError::LimitsUnknown { id: id(4) });
+            let mut cache = limited(id(4));
+            cache.forget_mode();
+            cache.forget_limits();
+            assert_eq!(cache.check_mode_known(), unknown);
+            cache.know_bound();
+            assert_eq!(
+                cache.check_mode_known(),
+                unknown,
+                "a bound does not bring the mode back"
+            );
+            cache.record_limits(0, 0).unwrap();
+            cache.know_mode(LimitMode::Wheel);
+            assert_eq!(cache.check_mode_known(), Ok(()));
+            assert_eq!(cache.mode, LimitMode::Wheel);
+            assert_eq!(cache.check_goal_velocity(), Ok(()));
+
+            let mut cache = limited(id(4));
+            cache.record_mode(LimitMode::Velocity);
+            cache.forget_bound();
+            assert_eq!(cache.check_goal_velocity(), unknown);
+            assert_eq!(
+                cache.check_mode_known(),
+                Ok(()),
+                "a forgotten bound keeps the mode"
+            );
+            cache.know_bound();
+            assert_eq!(cache.check_goal_velocity(), Ok(()));
+            cache.know_mode(LimitMode::Velocity);
+            assert_eq!(cache.unknown, Unknown::Nothing);
         }
 
         #[test]

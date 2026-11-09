@@ -327,6 +327,29 @@ roles! {
     /// Temperature Limit, °C: the EEPROM bound above which the actuator
     /// reports overheating.
     TemperatureLimit, temperature_limit, HasTemperatureLimit, "Temperature Limit";
+    /// Min Position Limit, or CW Angle Limit on the angle-limit models: the
+    /// EEPROM lower position bound, a position through the model's
+    /// position scale.
+    MinPositionLimit, min_position_limit, HasMinPositionLimit, "Min Position Limit";
+    /// Max Position Limit, or CCW Angle Limit on the angle-limit models: the
+    /// EEPROM upper position bound, a position through the model's
+    /// position scale.
+    MaxPositionLimit, max_position_limit, HasMaxPositionLimit, "Max Position Limit";
+    /// Velocity Limit, rad/s: the EEPROM bound of Goal Velocity's
+    /// magnitude.
+    VelocityLimit, velocity_limit, HasVelocityLimit, "Velocity Limit";
+    /// Current Limit, A: the EEPROM bound of Goal Current's magnitude.
+    CurrentLimit, current_limit, HasCurrentLimit, "Current Limit";
+    /// PWM Limit, a ratio of the full PWM output: the EEPROM bound of the
+    /// PWM output.
+    PwmLimit, pwm_limit, HasPwmLimit, "PWM Limit";
+    /// Max Torque (AX, RX, MX on Protocol 1, XL-320), a ratio of the
+    /// maximum torque: the value Torque Limit (RAM) is reset to at power-on
+    /// (e-Manual), so it bounds the output from the next power-on.
+    MaxTorque, max_torque, HasMaxTorque, "Max Torque";
+    /// Acceleration Limit (MX(2.0), PRO, PRO+, Y, RH-P12-RN), rad/s²: the
+    /// EEPROM bound of Profile Acceleration.
+    AccelerationLimit, acceleration_limit, HasAccelerationLimit, "Acceleration Limit";
 }
 
 #[cfg(test)]
@@ -488,8 +511,18 @@ mod tests {
         assert_eq!(roles.get(Role::SpeedLimit), Some(&MOVING_SPEED));
         assert_eq!(roles.get(Role::RealtimeTick), Some(&TICK));
         assert_eq!(roles.get(Role::GoalVelocity), None);
-        assert_eq!(Role::ALL.len(), 25);
+        assert_eq!(Role::ALL.len(), 32);
         assert_eq!(Role::TemperatureLimit.name(), "Temperature Limit");
+        assert_eq!(Role::MinPositionLimit.name(), "Min Position Limit");
+        assert_eq!(Role::MaxPositionLimit.name(), "Max Position Limit");
+        assert_eq!(Role::VelocityLimit.name(), "Velocity Limit");
+        assert_eq!(Role::CurrentLimit.name(), "Current Limit");
+        assert_eq!(Role::PwmLimit.name(), "PWM Limit");
+        assert_eq!(Role::MaxTorque.name(), "Max Torque");
+        assert_eq!(Role::AccelerationLimit.name(), "Acceleration Limit");
+        roles.max_torque = Some(SLOPE);
+        assert_eq!(roles.get(Role::MaxTorque), Some(&SLOPE));
+        assert_eq!(roles.get(Role::PwmLimit), None);
         assert_eq!(Role::SpeedLimit.name(), "Profile Velocity");
         assert_eq!(Role::TorqueCtrlModeEnable.name(), "Torque Ctrl Mode Enable");
     }

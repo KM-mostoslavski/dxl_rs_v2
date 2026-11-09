@@ -100,7 +100,9 @@ impl<M, P: Protocol, T: Transport, C: Clock> Describe for ModelRef<'_, '_, M, P,
 }
 
 /// `id`, `model_number`, `name`, `position_scale` and
-/// `position_limits[_raw]` of the held actuator, as read at Setup.
+/// `position_limits[_raw]` of the held actuator, as read at Setup and kept
+/// true by its limit writes (`None` after a failed one, until the next
+/// Setup or an acknowledged write of both).
 impl<M, P: Protocol, T: Transport, C: Clock> Actuator for ModelRef<'_, '_, M, P, T, C> {}
 
 /// Declares a Tier 2 getter and setter pair for a role.

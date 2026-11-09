@@ -20,19 +20,20 @@ use super::field::{
     GoalCurrent, GoalPosition, GoalVelocity, PresentPosition, Raw, ReadField, WriteField,
 };
 use super::group::Stage;
-use super::slots::{Bound, Held, Slots, find};
+use super::slots::{Bound, Held, Marks, Slots, find};
 use super::wire::{AnyProtocol, ReadMany, SyncRead, Wire};
 use super::{ActuatorRef, Config, IdSet, SetupReport, multi, setup};
 
 /// Every `Id` there is: the most a Setup can find.
 const ALL_IDS: usize = Id::MAX as usize + 1;
 
-/// The slots of a `DynBus`: its actuator, torque-state and goal-bound
-/// Vecs, grown by Setup.
+/// The slots of a `DynBus`: its actuator, torque-state, goal-bound and
+/// mark Vecs, grown by Setup.
 struct DynSlots<'a> {
     actuators: &'a mut Vec<ActuatorKind>,
     states: &'a mut Vec<TorqueState>,
     bounds: &'a mut Vec<Bound>,
+    marks: &'a mut Vec<Marks>,
 }
 
 impl Slots for DynSlots<'_> {
@@ -41,13 +42,14 @@ impl Slots for DynSlots<'_> {
     }
 
     fn split_mut(&mut self) -> Held<'_> {
-        (self.actuators, self.states, self.bounds)
+        (self.actuators, self.states, self.bounds, self.marks)
     }
 
     fn clear(&mut self) {
         self.actuators.clear();
         self.states.clear();
         self.bounds.clear();
+        self.marks.clear();
     }
 
     fn push(
@@ -59,6 +61,7 @@ impl Slots for DynSlots<'_> {
         self.actuators.push(kind);
         self.states.push(state);
         self.bounds.push(bound);
+        self.marks.push(Marks::CLEAR);
         Ok(())
     }
 }
@@ -102,6 +105,9 @@ pub struct DynBus<P: Protocol, T: Transport, C = StdClock> {
     /// `bounds[i]` is the goal bound Setup read for `actuators[i]`; same
     /// length.
     bounds: Vec<Bound>,
+    /// `marks[i]` is what the bus confirmed about `actuators[i]` since
+    /// Setup; same length.
+    marks: Vec<Marks>,
     /// Staging for multi-actuator calls; as long as `actuators` after Setup.
     stages: Vec<Stage>,
     protocol: PhantomData<P>,
@@ -117,6 +123,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
             actuators: Vec::new(),
             states: Vec::new(),
             bounds: Vec::new(),
+            marks: Vec::new(),
             stages: Vec::new(),
             protocol: PhantomData,
         }
@@ -187,9 +194,10 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
         let index = find(&self.actuators, id)?;
         let kind = self.actuators.get_mut(index)?;
         let state = self.states.get_mut(index)?;
-        let bound = self.bounds.get(index).copied().flatten();
+        let bound = self.bounds.get_mut(index)?;
+        let marks = self.marks.get_mut(index)?;
         let wire = Wire::new(&mut self.transport, &mut self.clock, &self.config);
-        Some(ActuatorRef::new(kind, state, bound, wire))
+        Some(ActuatorRef::new(kind, state, bound, marks, wire))
     }
 
     /// The torque state of the actuator with `id`; `None` for an `Id` the
@@ -373,6 +381,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
                 actuators: &mut self.actuators,
                 states: &mut self.states,
                 bounds: &mut self.bounds,
+                marks: &mut self.marks,
             },
         )
     }
@@ -385,6 +394,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
                 actuators: &mut self.actuators,
                 states: &mut self.states,
                 bounds: &mut self.bounds,
+                marks: &mut self.marks,
             },
             &mut self.stages,
         )
@@ -446,8 +456,8 @@ impl<T: Transport, C: Clock> DynBus<P2, T, C> {
     ///
     /// As [`Bus::bulk_write_raw`].
     pub fn bulk_write_raw(&mut self, targets: &[bulk::RawWrite<'_>]) -> Result<(), Error> {
-        let (mut wire, slots) = self.split();
-        bulk::raw::bulk_write_raw(&mut wire, &slots, targets)
+        let (mut wire, mut slots) = self.split();
+        bulk::raw::bulk_write_raw(&mut wire, &mut slots, targets)
     }
 }
 
