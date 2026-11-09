@@ -19,8 +19,8 @@ the constitution's principles are in `AGENTS.md`.
 ## FR-6.14: precise tooling errors (added 2026-11-09)
 
 From the read-only audit of 2026-11-09 against FR-6.14 (line numbers at
-`dev` 49bdc7a). The `Diagnostic` and `Failure` layouts change, so this
-re-enters at step 4 (contract), then step 5.
+`dev` 49bdc7a). A change at step 5: xtask is a binary, so its error
+types are internal and step 4 is a no-op.
 
 - [ ] T201 [contract] Replace `Diagnostic { file, message: String }` (`codegen.rs:30-36`) with a typed diagnostic: one variant per check cause, each holding `file`, `model`, `register`, `field` and the deciding values as fields; `Display` keeps today's text, built from the fields; a separate `hint()` carries advice (FR-6.12), and no message carries advice any more (e.g. `output.rs:29` "run rustup component add rustfmt" moves to the hint). FR-6.14
 - [ ] T202 Silent skip, `fr9.rs:665-669`: a torque switch range outside `u8` (`u8::try_from(..).ok()?`) returns `None` with no diagnostic, so codegen exits 0 and MX-64 P1 falls back to `ModeSource::AngleLimits`, losing `HasGoalCurrent` and `HasTorqueCtrlModeEnable`. Report a "switch range outside u8" diagnostic with the observed min and max; test with `(-1, 1)`. FR-6.14, Principle III
