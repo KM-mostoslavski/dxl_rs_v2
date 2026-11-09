@@ -345,7 +345,7 @@ pub(crate) fn parse_map(path: &Path) -> Result<ModelMap, Diagnostic> {
 pub(crate) fn parse_map_str(text: &str) -> Result<ModelMap, Diagnostic> {
     options()
         .from_str(text)
-        .map_err(|e| Diagnostic::new("dynamixel", Cause::Parse(Box::new(e))))
+        .map_err(|e| Diagnostic::new("dynamixel", e))
 }
 
 /// Reads one control table, named `stem` in the diagnostic.
@@ -358,7 +358,7 @@ pub(crate) fn parse_table(path: &Path, stem: &str) -> Result<ControlTable, Diagn
 pub(crate) fn parse_table_str(text: &str, stem: &str) -> Result<ControlTable, Diagnostic> {
     options()
         .from_str(&braces_to_parens(text))
-        .map_err(|e| Diagnostic::new(stem, Cause::Parse(Box::new(e))))
+        .map_err(|e| Diagnostic::new(stem, e))
 }
 
 fn read(path: &Path, stem: &str) -> Result<String, Diagnostic> {
@@ -418,7 +418,7 @@ pub(crate) fn braces_to_parens(text: &str) -> String {
 )]
 mod tests {
     use super::*;
-    use crate::codegen::fixtures::Dir;
+    use crate::codegen::fixtures::{Dir, Table};
 
     const TYPE_INFO: &str = "type_info: { value_of_zero_radian_position: 2048, \
         value_of_max_radian_position: 4095, value_of_min_radian_position: 0, \
@@ -698,6 +698,43 @@ mod tests {
         assert!(d.cause.to_string().contains("cannot read"));
         let d = parse_map(&dir.path().join("dynamixel.ron")).unwrap_err();
         assert_eq!(d.file, "dynamixel");
+    }
+
+    #[test]
+    fn parse_errors_keep_position_and_code() {
+        let d = parse_map_str("(models: {").unwrap_err();
+        assert_eq!(d.file, "dynamixel");
+        assert!(
+            matches!(&d.cause, Cause::Parse { line: 1, column: 10, code } if **code == ron::Error::Eof),
+            "{d:?}"
+        );
+        assert_eq!(d.cause.to_string(), "1:10: Unexpected end of RON");
+
+        let text = Table::xm().render().replace(
+            "data_name: \"Goal Position\", access: RW, area: RAM",
+            "data_name: \"Goal Position\", access: RW, area: RAMX",
+        );
+        let (line, row) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("RAMX"))
+            .unwrap();
+        let column = row.find("RAMX").unwrap() + 1;
+        let d = parse_table_str(&text, "xm").unwrap_err();
+        assert_eq!(d.file, "xm");
+        let Cause::Parse {
+            line: got_line,
+            column: got_column,
+            code,
+        } = &d.cause
+        else {
+            panic!("{d:?}");
+        };
+        assert_eq!((*got_line, *got_column), (line + 1, column));
+        assert!(
+            matches!(&**code, ron::Error::NoSuchEnumVariant { found, .. } if found == "RAMX"),
+            "{code:?}"
+        );
     }
 
     #[test]

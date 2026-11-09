@@ -57,8 +57,16 @@ pub enum Cause {
         /// The error reading it.
         source: std::io::Error,
     },
-    /// The file is not RON of the expected shape.
-    Parse(Box<ron::error::SpannedError>),
+    /// The file is not RON of the expected shape. The position is exact
+    /// in the file, since rewriting braces keeps every character in place.
+    Parse {
+        /// The line, from 1.
+        line: usize,
+        /// The column, from 1.
+        column: usize,
+        /// The parser's own error, boxed to keep diagnostics small.
+        code: Box<ron::Error>,
+    },
     /// A `.ron` file whose name is not UTF-8, so no map can name it.
     NonUtf8Name {
         /// The file.
@@ -72,8 +80,20 @@ impl Cause {
     /// What to check, when the facts point at a usual cause.
     pub fn hint(&self) -> Option<&'static str> {
         match self {
-            Self::Read { .. } | Self::Parse(_) | Self::NonUtf8Name { .. } => None,
+            Self::Read { .. } | Self::Parse { .. } | Self::NonUtf8Name { .. } => None,
             Self::Check(check) => check.hint(),
+        }
+    }
+}
+
+// DECISION: keep the start of ron's span only: the spec names one line and
+// column, and the start is where the offending token begins.
+impl From<ron::error::SpannedError> for Cause {
+    fn from(error: ron::error::SpannedError) -> Self {
+        Self::Parse {
+            line: error.span.start.line,
+            column: error.span.start.col,
+            code: Box::new(error.code),
         }
     }
 }
@@ -88,7 +108,7 @@ impl fmt::Display for Cause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read { path, source } => write!(f, "cannot read {}: {source}", path.display()),
-            Self::Parse(error) => write!(f, "{error}"),
+            Self::Parse { line, column, code } => write!(f, "{line}:{column}: {code}"),
             Self::NonUtf8Name { path } => write!(f, "{}: file name is not UTF-8", path.display()),
             Self::Check(check) => write!(f, "{check}"),
         }
