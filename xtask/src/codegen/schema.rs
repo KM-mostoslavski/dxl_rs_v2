@@ -444,10 +444,22 @@ mod tests {
         parse_map(&path)
     }
 
-    fn err(result: Result<ControlTable, Diagnostic>) -> String {
+    /// The RON error of a table that fails to parse.
+    fn err(result: Result<ControlTable, Diagnostic>) -> ron::Error {
         let diagnostic = result.unwrap_err();
         assert_eq!(diagnostic.file, "t");
-        diagnostic.cause.to_string()
+        match diagnostic.cause {
+            Cause::Parse { code, .. } => *code,
+            other => panic!("expected a parse error, got {other:?}"),
+        }
+    }
+
+    #[track_caller]
+    fn missing(code: &ron::Error, field: &str) {
+        assert!(
+            matches!(code, ron::Error::MissingStructField { field: f, .. } if *f == field),
+            "{code:?}"
+        );
     }
 
     #[test]
@@ -491,24 +503,30 @@ mod tests {
     fn row_without_access_fails() {
         let rows =
             r#"control_table: [{ address: 0, size: 2, data_name: "Model Number", area: EEPROM }],"#;
-        assert!(err(table("source: Unverified, protocols: [P1],", rows)).contains("access"));
+        missing(
+            &err(table("source: Unverified, protocols: [P1],", rows)),
+            "access",
+        );
     }
 
     #[test]
     fn row_without_area_fails() {
         let rows =
             r#"control_table: [{ address: 0, size: 2, data_name: "Model Number", access: R }],"#;
-        assert!(err(table("source: Unverified, protocols: [P1],", rows)).contains("area"));
+        missing(
+            &err(table("source: Unverified, protocols: [P1],", rows)),
+            "area",
+        );
     }
 
     #[test]
     fn table_without_source_fails() {
-        assert!(err(table("protocols: [P1],", ROWS)).contains("source"));
+        missing(&err(table("protocols: [P1],", ROWS)), "source");
     }
 
     #[test]
     fn table_without_protocols_fails() {
-        assert!(err(table("source: Unverified,", ROWS)).contains("protocols"));
+        missing(&err(table("source: Unverified,", ROWS)), "protocols");
     }
 
     #[test]
@@ -546,20 +564,20 @@ mod tests {
 
     #[test]
     fn operating_modes_value_above_255_fails() {
-        let message = err(table(
+        let code = err(table(
             "source: Unverified, protocols: [P2], operating_modes: (bounded: [300], unbounded: [], no_position: []),",
             ROWS,
         ));
-        assert!(message.contains("out of bounds"), "{message}");
+        assert_eq!(code, ron::Error::IntegerOutOfBounds);
     }
 
     #[test]
     fn operating_modes_missing_key_fails() {
-        let message = err(table(
+        let code = err(table(
             "source: Unverified, protocols: [P2], operating_modes: (bounded: [3], unbounded: []),",
             ROWS,
         ));
-        assert!(message.contains("no_position"), "{message}");
+        missing(&code, "no_position");
     }
 
     #[test]
@@ -693,11 +711,28 @@ mod tests {
     #[test]
     fn unreadable_file_names_the_stem() {
         let dir = Dir::new();
-        let d = parse_table(&dir.path().join("gone.ron"), "gone").unwrap_err();
-        assert_eq!(d.file, "gone");
-        assert!(d.cause.to_string().contains("cannot read"));
-        let d = parse_map(&dir.path().join("dynamixel.ron")).unwrap_err();
-        assert_eq!(d.file, "dynamixel");
+        for (path, stem) in [
+            (dir.path().join("gone.ron"), "gone"),
+            (dir.path().join("dynamixel.ron"), "dynamixel"),
+        ] {
+            let d = if stem == "dynamixel" {
+                parse_map(&path).map(|_| ()).unwrap_err()
+            } else {
+                parse_table(&path, stem).map(|_| ()).unwrap_err()
+            };
+            assert_eq!(d.file, stem);
+            let Cause::Read { path: got, source } = &d.cause else {
+                panic!("{d:?}");
+            };
+            assert_eq!((got, source.kind()), (&path, std::io::ErrorKind::NotFound));
+            assert_eq!(
+                d.to_string(),
+                format!(
+                    "control_tables/{stem}.ron: cannot read {}: {source}",
+                    path.display()
+                )
+            );
+        }
     }
 
     #[test]

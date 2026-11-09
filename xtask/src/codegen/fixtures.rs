@@ -9,13 +9,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
 use super::diagnostic::{Cause, Check, Diagnostic};
 use super::resolve::{Outcome, Resolved, resolve};
-use super::schema::{parse_map_str, parse_table_str};
+use super::schema::{Access, Area, ProtocolTag, parse_map_str, parse_table_str};
 
 /// Minimal self-cleaning temp directory, to avoid a dependency for tests.
 pub(crate) struct Dir(PathBuf);
@@ -620,8 +621,13 @@ pub(crate) struct Failing {
     pub root: Root,
     /// The diagnostic's file stem.
     pub file: &'static str,
-    /// Words the diagnostic's message contains.
-    pub keywords: &'static [&'static str],
+    /// Whether a diagnostic's cause is the one expected, fields included.
+    pub cause: fn(&Cause) -> bool,
+}
+
+/// Whether `cause` is the check `expected`, every field equal.
+pub(crate) fn is_check(cause: &Cause, expected: &Check) -> bool {
+    matches!(cause, Cause::Check(check) if check == expected)
 }
 
 /// A valid one-model root: `xm` under 1020 on P1 and P2.
@@ -675,13 +681,20 @@ fn xm_root(table: Table) -> Root {
 }
 
 /// One failing root per check of data-model §3.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one entry per check, each a root and its expected cause"
+)]
 pub(crate) fn failing() -> Vec<Failing> {
     vec![
         Failing {
             check: 1,
             root: Root::new(&xm_map(), &[]),
             file: "xm",
-            keywords: &["cannot read"],
+            cause: |c| {
+                matches!(c, Cause::Read { path, source }
+                    if path.ends_with("control_tables/xm.ron") && source.kind() == ErrorKind::NotFound)
+            },
         },
         Failing {
             check: 2,
@@ -692,7 +705,17 @@ pub(crate) fn failing() -> Vec<Failing> {
                 &[("xm", Table::xm().protocols("[P2]"))],
             ),
             file: "dynamixel",
-            keywords: &["model 1020", "p2 from_fw must start at 0"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::FirstFromFw {
+                        model: 1020,
+                        protocol: ProtocolTag::P2,
+                        table: "xm".into(),
+                        from_fw: 1,
+                    },
+                )
+            },
         },
         Failing {
             check: 3,
@@ -704,7 +727,7 @@ pub(crate) fn failing() -> Vec<Failing> {
                 &[("xm", Table::xm().protocols("[P2]"))],
             ),
             file: "dynamixel",
-            keywords: &["model 1030", "no p1 or p2 list"],
+            cause: |c| is_check(c, &Check::NoLists { model: 1030 }),
         },
         Failing {
             check: 4,
@@ -716,7 +739,7 @@ pub(crate) fn failing() -> Vec<Failing> {
                 &[("xm", Table::xm())],
             ),
             file: "dynamixel",
-            keywords: &["model 1020", "default: P2 is required"],
+            cause: |c| is_check(c, &Check::DefaultMissing { model: 1020 }),
         },
         Failing {
             check: 5,
@@ -727,7 +750,15 @@ pub(crate) fn failing() -> Vec<Failing> {
                 &[("xm", Table::xm().protocols("[P2]"))],
             ),
             file: "dynamixel",
-            keywords: &["model 1020", "unknown family \"x_series\""],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::UnknownFamily {
+                        model: 1020,
+                        family: "x_series".into(),
+                    },
+                )
+            },
         },
         Failing {
             check: 6,
@@ -740,7 +771,16 @@ pub(crate) fn failing() -> Vec<Failing> {
                 &[("xm", Table::xm().protocols("[P2]"))],
             ),
             file: "dynamixel",
-            keywords: &["table xm", "model 1020", "model 1030"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::TableUnderTwoModels {
+                        table: "xm".into(),
+                        first: 1020,
+                        second: 1030,
+                    },
+                )
+            },
         },
         Failing {
             check: 7,
@@ -749,13 +789,23 @@ pub(crate) fn failing() -> Vec<Failing> {
                 &[("xm", Table::xm())],
             ),
             file: "dynamixel",
-            keywords: &["not_mapped names gone"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::NotMappedMissing {
+                        table: "gone".into(),
+                    },
+                )
+            },
         },
         Failing {
             check: 8,
             root: xm_root(Table::xm().omit_field("protocols")),
             file: "xm",
-            keywords: &["protocols"],
+            cause: |c| {
+                matches!(c, Cause::Parse { code, .. }
+                    if matches!(**code, ron::Error::MissingStructField { field: "protocols", .. }))
+            },
         },
         Failing {
             check: 9,
@@ -766,7 +816,14 @@ pub(crate) fn failing() -> Vec<Failing> {
                 &[("xm", Table::xm().protocols("[P2]"))],
             ),
             file: "xm",
-            keywords: &["listed under p1", "lack P1"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::ProtocolMissing {
+                        protocol: ProtocolTag::P1,
+                    },
+                )
+            },
         },
         Failing {
             check: 12,
@@ -778,7 +835,15 @@ pub(crate) fn failing() -> Vec<Failing> {
                 "EEPROM",
             )),
             file: "xm",
-            keywords: &["Model Number must be at address 0, size 2"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::ModelNumberLocation {
+                        address: 2,
+                        size: 2,
+                    },
+                )
+            },
         },
         Failing {
             check: 13,
@@ -798,7 +863,19 @@ pub(crate) fn failing() -> Vec<Failing> {
                 ],
             ),
             file: "dynamixel",
-            keywords: &["model 1190", "old", "new", "Firmware Version"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::FirmwareVersionMoves {
+                        model: 1190,
+                        protocol: ProtocolTag::P2,
+                        first: "old".into(),
+                        first_at: (6, 1),
+                        other: "new".into(),
+                        other_at: (2, 1),
+                    },
+                )
+            },
         },
         Failing {
             check: 14,
@@ -810,13 +887,28 @@ pub(crate) fn failing() -> Vec<Failing> {
                 "RAM",
             )),
             file: "xm",
-            keywords: &["listed under p1 but Goal Position is at address 564 (> 255)"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::P1Address {
+                        register: "Goal Position".into(),
+                        address: 564,
+                    },
+                )
+            },
         },
         Failing {
             check: 10,
             root: xm_root(Table::xm().without("Goal Position")),
             file: "xm",
-            keywords: &["missing role Goal Position"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::MissingRole {
+                        register: "Goal Position".into(),
+                    },
+                )
+            },
         },
         Failing {
             check: 11,
@@ -828,13 +920,22 @@ pub(crate) fn failing() -> Vec<Failing> {
                 "RAM",
             )),
             file: "xm",
-            keywords: &["Torque Enable", "must be RW/RAM, found R/RAM"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::RoleAttrs {
+                        register: "Torque Enable".into(),
+                        expected: (Access::RW, Area::Ram),
+                        found: (Access::R, Area::Ram),
+                    },
+                )
+            },
         },
         Failing {
             check: 15,
             root: xm_root(Table::xm().type_info(2048, 4095, 0, -1.0, 1.0)),
             file: "xm",
-            keywords: &["value_of_max_radian_position"],
+            cause: |c| is_check(c, &Check::RawScaleOrder { min: 4095, max: 0 }),
         },
         Failing {
             check: 16,
@@ -844,19 +945,35 @@ pub(crate) fn failing() -> Vec<Failing> {
                     .with_row(66, 1, "Led", "RW", "RAM"),
             ),
             file: "xm",
-            keywords: &["\"LED\"", "\"Led\""],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::DuplicateConstant {
+                        first: "LED".into(),
+                        second: "Led".into(),
+                        ident: "LED".into(),
+                    },
+                )
+            },
         },
         Failing {
             check: 17,
             root: xm_root(Table::xm().omit_field("operating_modes")),
             file: "xm",
-            keywords: &["\"Operating Mode\" row without operating_modes"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::ModeRowWithoutValues {
+                        register: "Operating Mode".into(),
+                    },
+                )
+            },
         },
         Failing {
             check: 18,
             root: xm_root(Table::xm_fr9().unit_source("Unverified")),
             file: "xm",
-            keywords: &["unit_source must be Verified"],
+            cause: |c| is_check(c, &Check::UnitSourceUnverified),
         },
         Failing {
             check: 19,
@@ -864,7 +981,14 @@ pub(crate) fn failing() -> Vec<Failing> {
                 r#"data_name: "Goal PWM", value: 0.113, unit: "%", sign_type: "twos_complement""#,
             )),
             file: "xm",
-            keywords: &["unit_info \"Goal PWM\"", "names no row"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::UnitNamesNoRow {
+                        register: "Goal PWM".into(),
+                    },
+                )
+            },
         },
         Failing {
             check: 20,
@@ -872,7 +996,15 @@ pub(crate) fn failing() -> Vec<Failing> {
                 "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0])",
             )),
             file: "xm",
-            keywords: &["operating_modes", "all together"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::PerModeIncomplete {
+                        present: vec!["current"],
+                        missing: vec!["velocity", "pwm", "current_position"],
+                    },
+                )
+            },
         },
         Failing {
             check: 21,
@@ -886,13 +1018,28 @@ pub(crate) fn failing() -> Vec<Failing> {
                 )],
             ),
             file: "ax",
-            keywords: &["torque_control_mode", "\"Torque Mode\" names no row"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::SwitchRegisterNoRow {
+                        register: "Torque Mode".into(),
+                    },
+                )
+            },
         },
         Failing {
             check: 22,
             root: xm_root(Table::xm_fr9().with_row(42, 1, "Present Voltage", "R", "RAM")),
             file: "xm",
-            keywords: &["role present_voltage has two rows"],
+            cause: |c| {
+                is_check(
+                    c,
+                    &Check::RoleTwoRows {
+                        field: "present_voltage",
+                        rows: vec!["Present Voltage".into(), "Present Input Voltage".into()],
+                    },
+                )
+            },
         },
     ]
 }

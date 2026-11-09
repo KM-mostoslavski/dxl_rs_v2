@@ -550,11 +550,14 @@ mod tests {
             )],
         );
         let errors = checks(generate(&root.control_tables()));
-        assert!(
-            errors.iter().any(|d| d.file == "xm"
-                && d.cause.to_string().contains("LED")
-                && d.cause.to_string().contains("Led")),
-            "{errors:?}"
+        fixtures::assert_check(
+            &errors,
+            "xm",
+            &Check::DuplicateConstant {
+                first: "LED".into(),
+                second: "Led".into(),
+                ident: "LED".into(),
+            },
         );
     }
 
@@ -569,20 +572,27 @@ mod tests {
             &[("xl_320", Table::ax()), ("xl320", Table::ax())],
         );
         let errors = checks(generate(&root.control_tables()));
-        assert!(
-            errors
-                .iter()
-                .any(|d| d.cause.to_string().contains("Xl320")
-                    && d.cause.to_string().contains("xl_320")),
-            "{errors:?}"
+        fixtures::assert_check(
+            &errors,
+            "xl_320",
+            &Check::DuplicateType {
+                first: "xl320".into(),
+                second: "xl_320".into(),
+                ty: "Xl320".into(),
+            },
         );
     }
 
     #[test]
     fn reports_missing_files() {
         let root = Root::new(&Map::new().model(1, "ax", "A").p1(&[(0, "gone")]), &[]);
+        let path = root.control_tables().join("gone.ron");
         let errors = checks(generate(&root.control_tables()));
-        assert!(errors.iter().any(|d| d.file == "gone"), "{errors:?}");
+        assert!(
+            errors.iter().any(|d| d.file == "gone"
+                && matches!(&d.cause, Cause::Read { path: p, .. } if *p == path)),
+            "{errors:?}"
+        );
     }
 
     /// The real `control_tables/`, resolved and rendered, with an
@@ -1078,15 +1088,12 @@ mod tests {
                 panic!("check {}: expected check failures", case.check);
             };
             assert!(
-                errors.iter().any(|d| d.file == case.file
-                    && case
-                        .keywords
-                        .iter()
-                        .all(|k| d.cause.to_string().contains(k))),
-                "check {}: no {} error with {:?} in {errors:?}",
+                errors
+                    .iter()
+                    .any(|d| d.file == case.file && (case.cause)(&d.cause)),
+                "check {}: no expected {} error in {errors:?}",
                 case.check,
-                case.file,
-                case.keywords
+                case.file
             );
             case.root.assert_unchanged(&snapshot);
             covered.insert(case.check);
@@ -1099,8 +1106,13 @@ mod tests {
         let root = Root::new(&xm_map(), &[("xm", Table::xm().without("Goal Position"))]);
         let snapshot = root.sentinels();
         let errors = checks(generate(&root.control_tables()));
-        assert!(errors.iter().any(|d| d.file == "xm"
-            && d.cause.to_string() == "missing role Goal Position (row \"Goal Position\")"));
+        fixtures::assert_check(
+            &errors,
+            "xm",
+            &Check::MissingRole {
+                register: "Goal Position".into(),
+            },
+        );
         assert!(run(root.path()).is_err());
         root.assert_unchanged(&snapshot);
     }
@@ -1197,6 +1209,156 @@ mod tests {
             matches!(&error.cause, Cause::NonUtf8Name { path } if *path == odd),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn io_failures_state_their_values() {
+        let path = || PathBuf::from("src/models/a.rs");
+        let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let e = denied();
+        for (failure, message) in [
+            (
+                IoFailure::CreateDir {
+                    path: path(),
+                    source: denied(),
+                },
+                format!("cannot create directory src/models/a.rs: {e}"),
+            ),
+            (
+                IoFailure::ListDir {
+                    path: path(),
+                    source: denied(),
+                },
+                format!("cannot list src/models/a.rs: {e}"),
+            ),
+            (
+                IoFailure::ReadEntry {
+                    dir: path(),
+                    source: denied(),
+                },
+                format!("cannot read an entry of src/models/a.rs: {e}"),
+            ),
+            (
+                IoFailure::Metadata {
+                    path: path(),
+                    source: denied(),
+                },
+                format!("cannot read the metadata of src/models/a.rs: {e}"),
+            ),
+            (
+                IoFailure::Read {
+                    path: path(),
+                    source: denied(),
+                },
+                format!("cannot read src/models/a.rs: {e}"),
+            ),
+            (
+                IoFailure::Write {
+                    path: path(),
+                    source: denied(),
+                },
+                format!("cannot write src/models/a.rs: {e}"),
+            ),
+            (
+                IoFailure::Remove {
+                    path: path(),
+                    source: denied(),
+                },
+                format!("cannot remove src/models/a.rs: {e}"),
+            ),
+            (
+                IoFailure::NonUtf8Name { path: path() },
+                "src/models/a.rs: file name is not UTF-8".to_string(),
+            ),
+        ] {
+            assert_eq!(failure.to_string(), message);
+            let hint = match failure {
+                IoFailure::NonUtf8Name { .. } => Some(
+                    "codegen writes only UTF-8 names, so it did not write this file: move or remove it",
+                ),
+                _ => None,
+            };
+            let failure = Failure::from(failure);
+            assert_eq!(failure.hint(), hint);
+            let mut lines = vec![format!("error: {message}")];
+            lines.extend(hint.map(|h| format!("hint: {h}")));
+            assert_eq!(failure.lines(), lines);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rustfmt_failures_state_their_values() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let file = || "models/a.rs".to_string();
+        let broken = || std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let e = broken();
+        let status = std::process::ExitStatus::from_raw(256);
+        let not_utf8 = || String::from_utf8(vec![b'a', 0xff]).unwrap_err();
+        for (failure, message) in [
+            (
+                RustfmtFailure::NotFound { file: file() },
+                "rustfmt not found to format src/models/a.rs".to_string(),
+            ),
+            (
+                RustfmtFailure::Spawn {
+                    file: file(),
+                    source: broken(),
+                },
+                format!("cannot start rustfmt for src/models/a.rs: {e}"),
+            ),
+            (
+                RustfmtFailure::NoStdin { file: file() },
+                "rustfmt for src/models/a.rs has no stdin pipe".to_string(),
+            ),
+            (
+                RustfmtFailure::Wait {
+                    file: file(),
+                    source: broken(),
+                },
+                format!("cannot wait for rustfmt on src/models/a.rs: {e}"),
+            ),
+            (
+                RustfmtFailure::Write {
+                    file: file(),
+                    source: broken(),
+                },
+                format!("cannot write src/models/a.rs to rustfmt's stdin: {e}"),
+            ),
+            (
+                RustfmtFailure::WriterPanicked { file: file() },
+                "the thread writing src/models/a.rs to rustfmt's stdin panicked".to_string(),
+            ),
+            (
+                RustfmtFailure::Rejected {
+                    file: file(),
+                    status,
+                    stderr: "error: expected item".into(),
+                },
+                "rustfmt rejected src/models/a.rs (exit status: 1): error: expected item"
+                    .to_string(),
+            ),
+            (
+                RustfmtFailure::NonUtf8 {
+                    file: file(),
+                    source: not_utf8(),
+                },
+                format!(
+                    "rustfmt output for src/models/a.rs is not UTF-8: {}",
+                    not_utf8()
+                ),
+            ),
+        ] {
+            assert_eq!(failure.to_string(), message);
+            let hint = match failure {
+                RustfmtFailure::NotFound { .. } => Some("run `rustup component add rustfmt`"),
+                RustfmtFailure::Rejected { .. } => Some(
+                    "the generated code is not valid Rust: check that each table file stem forms a Rust identifier",
+                ),
+                _ => None,
+            };
+            assert_eq!(Failure::from(failure).hint(), hint);
+        }
     }
 
     #[test]

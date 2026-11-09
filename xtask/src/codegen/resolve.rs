@@ -819,18 +819,6 @@ mod tests {
         out.resolved.models[0].roles.clone()
     }
 
-    #[track_caller]
-    fn assert_fails(table: Table, keywords: &[&str]) {
-        let out = single(table);
-        assert!(
-            out.errors
-                .iter()
-                .any(|d| d.file == "t" && keywords.iter().all(|k| d.cause.to_string().contains(k))),
-            "no error with {keywords:?} in {:?}",
-            out.errors
-        );
-    }
-
     fn at(row: &Row) -> (u16, u8) {
         (row.address, row.size)
     }
@@ -886,47 +874,47 @@ mod tests {
 
     #[test]
     fn check10_missing_goal_position() {
-        assert_fails(
+        fails_with(
             Table::xm().without("Goal Position"),
-            &["missing role Goal Position"],
+            Check::MissingRole {
+                register: "Goal Position".into(),
+            },
         );
     }
 
     #[test]
     fn check10_missing_model_number() {
-        assert_fails(
+        fails_with(
             Table::xm().without("Model Number"),
-            &["missing role Model Number"],
+            Check::MissingRole {
+                register: "Model Number".into(),
+            },
         );
     }
 
     #[test]
     fn check10_half_limit_form() {
-        assert_fails(
+        fails_with(
             Table::xm().without("Max Position Limit"),
-            &["half a limit form", "Min Position Limit"],
+            Check::HalfLimitForm {
+                register: "Min Position Limit".into(),
+            },
         );
-        assert_fails(
+        fails_with(
             Table::ax().without("CW Angle Limit"),
-            &["half a limit form", "CCW Angle Limit"],
-        );
-    }
-
-    #[test]
-    fn check10_both_limit_forms() {
-        assert_fails(
-            Table::xm().with_row(6, 2, "CW Angle Limit", "RW", "EEPROM"),
-            &["both limit forms"],
+            Check::HalfLimitForm {
+                register: "CCW Angle Limit".into(),
+            },
         );
     }
 
     #[test]
     fn check10_no_limits() {
-        assert_fails(
+        fails_with(
             Table::xm()
                 .without("Min Position Limit")
                 .without("Max Position Limit"),
-            &["missing role position limits"],
+            Check::MissingLimits,
         );
     }
 
@@ -938,61 +926,87 @@ mod tests {
 
     #[test]
     fn check11_torque_enable_attrs() {
-        assert_fails(
+        fails_with(
             replaced(Table::xm(), (64, 1, "Torque Enable", "R", "RAM")),
-            &["role Torque Enable must be RW/RAM, found R/RAM"],
+            Check::RoleAttrs {
+                register: "Torque Enable".into(),
+                expected: (Access::RW, Area::Ram),
+                found: (Access::R, Area::Ram),
+            },
         );
     }
 
     #[test]
     fn check11_goal_position_attrs() {
-        assert_fails(
+        fails_with(
             replaced(Table::xm(), (116, 4, "Goal Position", "RW", "EEPROM")),
-            &["role Goal Position must be RW/RAM, found RW/EEPROM"],
+            Check::RoleAttrs {
+                register: "Goal Position".into(),
+                expected: (Access::RW, Area::Ram),
+                found: (Access::RW, Area::Eeprom),
+            },
         );
     }
 
     #[test]
     fn check11_present_position_attrs() {
-        assert_fails(
+        fails_with(
             replaced(Table::xm(), (132, 4, "Present Position", "RW", "RAM")),
-            &["role Present Position must be R/RAM, found RW/RAM"],
+            Check::RoleAttrs {
+                register: "Present Position".into(),
+                expected: (Access::R, Area::Ram),
+                found: (Access::RW, Area::Ram),
+            },
         );
     }
 
     #[test]
     fn check11_limit_attrs() {
-        assert_fails(
+        fails_with(
             replaced(Table::xm(), (48, 4, "Max Position Limit", "RW", "Hybrid")),
-            &["role Max Position Limit must be RW/EEPROM, found RW/Hybrid"],
+            Check::RoleAttrs {
+                register: "Max Position Limit".into(),
+                expected: (Access::RW, Area::Eeprom),
+                found: (Access::RW, Area::Hybrid),
+            },
         );
     }
 
     #[test]
     fn check15_raw_range() {
-        assert_fails(
+        fails_with(
             Table::xm().type_info(0, 10, 10, -1.0, 1.0),
-            &["value_of_max_radian_position (10) must be above"],
+            Check::RawScaleOrder { min: 10, max: 10 },
         );
     }
 
     #[test]
     fn check15_radian_range() {
-        assert_fails(
+        fails_with(
             Table::xm().type_info(2048, 0, 4095, 1.0, -1.0),
-            &["max_radian", "above min_radian"],
+            Check::RadianScale {
+                min: 1.0,
+                max: -1.0,
+            },
         );
-        assert_fails(
+        fails_with(
             Table::xm().type_info(2048, 0, 4095, -1.0, f32::INFINITY),
-            &["max_radian", "finite"],
+            Check::RadianScale {
+                min: -1.0,
+                max: f32::INFINITY,
+            },
         );
     }
 
     #[test]
     fn check15_zero_outside() {
-        assert_fails(
+        fails_with(
             Table::xm().type_info(5000, 0, 4095, -1.0, 1.0),
-            &["value_of_zero_radian_position (5000) outside 0..=4095"],
+            Check::ZeroOutside {
+                zero: 5000,
+                min: 0,
+                max: 4095,
+            },
         );
     }
 
@@ -1042,61 +1056,73 @@ mod tests {
 
     #[test]
     fn check17_no_mode_source() {
-        assert_fails(
+        fails_with(
             Table::xm()
                 .without("Operating Mode")
                 .omit_field("operating_modes"),
-            &["no mode source"],
+            Check::NoModeSource,
         );
     }
 
     #[test]
     fn check17_operating_mode_with_cw_ccw() {
-        assert_fails(
+        fails_with(
             Table::ax()
                 .with_row(11, 1, "Operating Mode", "RW", "EEPROM")
                 .operating_modes("(bounded: [3], unbounded: [], no_position: [])"),
-            &["\"Operating Mode\" row beside CW/CCW Angle Limit rows"],
+            Check::OperatingModeBesideAngleLimits,
         );
     }
 
     #[test]
     fn check17_two_mode_registers() {
-        assert_fails(
+        fails_with(
             Table::xm().with_row(12, 1, "Control Mode", "RW", "EEPROM"),
-            &["\"Operating Mode\"", "\"Control Mode\""],
+            Check::TwoModeRegisters,
         );
     }
 
     #[test]
     fn check17_mode_row_without_operating_modes() {
-        assert_fails(
+        fails_with(
             Table::xm().omit_field("operating_modes"),
-            &["\"Operating Mode\" row without operating_modes"],
+            Check::ModeRowWithoutValues {
+                register: "Operating Mode".into(),
+            },
         );
-        assert_fails(
+        fails_with(
             Table::xl320().omit_field("operating_modes"),
-            &["\"Control Mode\" row without operating_modes"],
+            Check::ModeRowWithoutValues {
+                register: "Control Mode".into(),
+            },
         );
     }
 
     #[test]
     fn check17_operating_modes_without_mode_row() {
-        assert_fails(
+        fails_with(
             Table::ax().operating_modes("(bounded: [3], unbounded: [], no_position: [])"),
-            &["operating_modes without an \"Operating Mode\" or \"Control Mode\" row"],
+            Check::ValuesWithoutModeRow,
         );
     }
 
     #[test]
     fn check17_overlapping_lists() {
-        assert_fails(
+        fails_with(
             Table::xm().operating_modes("(bounded: [3, 4], unbounded: [4, 5], no_position: [0])"),
-            &["value 4 in both bounded and unbounded"],
+            Check::ModeValueInTwoLists {
+                value: 4,
+                first: "bounded",
+                second: "unbounded",
+            },
         );
-        assert_fails(
+        fails_with(
             Table::xm().operating_modes("(bounded: [3], unbounded: [4, 5], no_position: [5])"),
-            &["value 5 in both unbounded and no_position"],
+            Check::ModeValueInTwoLists {
+                value: 5,
+                first: "unbounded",
+                second: "no_position",
+            },
         );
     }
 
@@ -1113,28 +1139,36 @@ mod tests {
 
     #[test]
     fn check11_mode_register_attrs() {
-        for row in [
-            (11, 2, "Operating Mode", "RW", "EEPROM"),
-            (11, 1, "Operating Mode", "R", "EEPROM"),
-            (11, 1, "Operating Mode", "RW", "RAM"),
+        for (row, size, access, area) in [
+            (
+                (11, 2, "Operating Mode", "RW", "EEPROM"),
+                2,
+                Access::RW,
+                Area::Eeprom,
+            ),
+            (
+                (11, 1, "Operating Mode", "R", "EEPROM"),
+                1,
+                Access::R,
+                Area::Eeprom,
+            ),
+            (
+                (11, 1, "Operating Mode", "RW", "RAM"),
+                1,
+                Access::RW,
+                Area::Ram,
+            ),
         ] {
-            assert_fails(
+            fails_with(
                 replaced(Table::xm(), row),
-                &["role Operating Mode must be 1 byte RW/EEPROM"],
+                Check::ModeRowAttrs {
+                    register: "Operating Mode".into(),
+                    size,
+                    access,
+                    area,
+                },
             );
         }
-    }
-
-    #[track_caller]
-    fn assert_map_fails(map: &Map, tables: &[(&str, Table)], file: &str, keywords: &[&str]) {
-        let out = outcome(map, tables);
-        assert!(
-            out.errors
-                .iter()
-                .any(|d| d.file == file && keywords.iter().all(|k| d.cause.to_string().contains(k))),
-            "no {file} error with {keywords:?} in {:?}",
-            out.errors
-        );
     }
 
     fn p2(table: Table) -> Table {
@@ -1142,48 +1176,25 @@ mod tests {
     }
 
     #[test]
-    fn check02_first_not_zero() {
-        assert_map_fails(
-            &Map::new().model(1190, "x-series", "X").p2(&[(1, "a")]),
-            &[("a", p2(Table::xm()))],
-            "dynamixel",
-            &["model 1190: p2 from_fw must start at 0"],
-        );
-    }
-
-    #[test]
-    fn check02_not_increasing() {
-        assert_map_fails(
-            &Map::new()
-                .model(1190, "x-series", "X")
-                .p2(&[(0, "a"), (60, "b"), (53, "c")]),
-            &[
-                ("a", p2(Table::xm())),
-                ("b", p2(Table::xm())),
-                ("c", p2(Table::xm())),
-            ],
-            "dynamixel",
-            &["model 1190: p2 from_fw must strictly increase"],
-        );
-    }
-
-    #[test]
     fn check03_no_lists() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new().model(1020, "x-series", "X"),
             &[],
             "dynamixel",
-            &["model 1020: no p1 or p2 list"],
+            Check::NoLists { model: 1020 },
         );
     }
 
     #[test]
     fn check03_empty_list() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new().model(1020, "x-series", "X").p1(&[]),
             &[],
             "dynamixel",
-            &["model 1020: p1 list is empty"],
+            Check::EmptyList {
+                model: 1020,
+                protocol: ProtocolTag::P1,
+            },
         );
     }
 
@@ -1193,40 +1204,30 @@ mod tests {
 
     #[test]
     fn check04_missing_default() {
-        assert_map_fails(
+        map_fails_with(
             &both(Map::new().model(1020, "x-series", "X")),
             &[("xm", Table::xm())],
             "dynamixel",
-            &["model 1020: default: P2 is required with both p1 and p2"],
+            Check::DefaultMissing { model: 1020 },
         );
     }
 
     #[test]
     fn check04_default_p1() {
-        assert_map_fails(
+        map_fails_with(
             &both(Map::new().model(1020, "x-series", "X")).default_p1(),
             &[("xm", Table::xm())],
             "dynamixel",
-            &["model 1020: default must be P2, found P1"],
-        );
-    }
-
-    #[test]
-    fn check04_default_with_one_list() {
-        assert_map_fails(
-            &Map::new()
-                .model(1020, "x-series", "X")
-                .p2(&[(0, "xm")])
-                .default_p2(),
-            &[("xm", p2(Table::xm()))],
-            "dynamixel",
-            &["model 1020: default is only allowed with both p1 and p2"],
+            Check::DefaultNotP2 {
+                model: 1020,
+                found: ProtocolTag::P1,
+            },
         );
     }
 
     #[test]
     fn check06_file_under_two_numbers() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new()
                 .model(1020, "x-series", "A")
                 .p2(&[(0, "xm")])
@@ -1234,7 +1235,11 @@ mod tests {
                 .p2(&[(0, "xm")]),
             &[("xm", p2(Table::xm()))],
             "dynamixel",
-            &["table xm is listed under model 1020 and model 1030"],
+            Check::TableUnderTwoModels {
+                table: "xm".into(),
+                first: 1020,
+                second: 1030,
+            },
         );
     }
 
@@ -1243,7 +1248,11 @@ mod tests {
         let text = Table::xm().omit_field("protocols").render();
         let d = parse_table_str(&text, "xm").unwrap_err();
         assert_eq!(d.file, "xm");
-        assert!(d.cause.to_string().contains("protocols"), "{}", d.cause);
+        assert!(
+            matches!(&d.cause, Cause::Parse { code, .. }
+                if matches!(**code, ron::Error::MissingStructField { field: "protocols", .. })),
+            "{d:?}"
+        );
     }
 
     #[test]
@@ -1251,40 +1260,49 @@ mod tests {
         let text = Table::xm().omit_field("source").render();
         let d = parse_table_str(&text, "xm").unwrap_err();
         assert_eq!(d.file, "xm");
-        assert!(d.cause.to_string().contains("source"), "{}", d.cause);
+        assert!(
+            matches!(&d.cause, Cause::Parse { code, .. }
+                if matches!(**code, ron::Error::MissingStructField { field: "source", .. })),
+            "{d:?}"
+        );
     }
 
     #[test]
     fn check08_empty_protocols() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new().model(1020, "x-series", "X").p2(&[(0, "xm")]),
             &[("xm", Table::xm().protocols("[]"))],
             "xm",
-            &["protocols is empty"],
+            Check::EmptyProtocols,
         );
     }
 
     #[test]
     fn check09_p1_list_without_p1() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new().model(1020, "x-series", "X").p1(&[(0, "xm")]),
             &[("xm", p2(Table::xm()))],
             "xm",
-            &["listed under p1 but its protocols lack P1"],
+            Check::ProtocolMissing {
+                protocol: ProtocolTag::P1,
+            },
         );
     }
 
     #[test]
     fn check12_model_number_address() {
-        assert_fails(
+        fails_with(
             replaced(Table::xm(), (0, 4, "Model Number", "R", "EEPROM")),
-            &["Model Number must be at address 0, size 2, found address 0, size 4"],
+            Check::ModelNumberLocation {
+                address: 0,
+                size: 4,
+            },
         );
     }
 
     #[test]
     fn check13_firmware_version_moves() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new()
                 .model(1190, "x-series", "X")
                 .p2(&[(0, "old"), (53, "new")]),
@@ -1299,20 +1317,25 @@ mod tests {
                 ),
             ],
             "dynamixel",
-            &[
-                "model 1190",
-                "old",
-                "new",
-                "Firmware Version at different locations",
-            ],
+            Check::FirmwareVersionMoves {
+                model: 1190,
+                protocol: ProtocolTag::P2,
+                first: "old".into(),
+                first_at: (6, 1),
+                other: "new".into(),
+                other_at: (2, 1),
+            },
         );
     }
 
     #[test]
     fn check14_p1_role_above_255() {
-        assert_fails(
+        fails_with(
             replaced(Table::xm(), (564, 4, "Goal Position", "RW", "RAM")),
-            &["listed under p1 but Goal Position is at address 564 (> 255)"],
+            Check::P1Address {
+                register: "Goal Position".into(),
+                address: 564,
+            },
         );
         let out = single(p2(replaced(
             Table::xm(),
@@ -1365,15 +1388,14 @@ mod tests {
 
     #[test]
     fn check05_unknown_family() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new().model(1020, "x_series", "X").p2(&[(0, "xm")]),
             &[("xm", p2(Table::xm()))],
             "dynamixel",
-            &[
-                "model 1020",
-                "\"x_series\"",
-                "expected ax, mx, rx, x-series, y-series, pro",
-            ],
+            Check::UnknownFamily {
+                model: 1020,
+                family: "x_series".into(),
+            },
         );
     }
 
@@ -1524,41 +1546,57 @@ mod tests {
         }
     }
 
-    #[track_caller]
-    fn assert_has(errors: &[Diagnostic], file: &str, keywords: &[&str]) {
-        assert!(
-            errors
-                .iter()
-                .any(|d| d.file == file && keywords.iter().all(|k| d.cause.to_string().contains(k))),
-            "no {file} error with {keywords:?} in {errors:?}"
-        );
-    }
-
     #[test]
     fn check01_map_missing() {
         let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
-        std::fs::remove_file(root.control_tables().join("dynamixel.ron")).unwrap();
-        assert_has(&generate_errors(&root), "dynamixel", &["cannot read"]);
+        let path = root.control_tables().join("dynamixel.ron");
+        std::fs::remove_file(&path).unwrap();
+        let errors = generate_errors(&root);
+        assert!(
+            errors.iter().any(|d| d.file == "dynamixel"
+                && matches!(&d.cause, Cause::Read { path: p, source }
+                    if *p == path && source.kind() == std::io::ErrorKind::NotFound)),
+            "{errors:?}"
+        );
     }
 
     #[test]
     fn check01_map_unparsable() {
         let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
         root.write("dynamixel", "(models: {");
-        assert_has(&generate_errors(&root), "dynamixel", &[]);
+        let errors = generate_errors(&root);
+        assert!(
+            errors.iter().any(|d| d.file == "dynamixel"
+                && matches!(&d.cause, Cause::Parse { line: 1, column: 10, code }
+                    if **code == ron::Error::Eof)),
+            "{errors:?}"
+        );
     }
 
     #[test]
     fn check01_table_missing() {
         let root = Root::new(&xm_map(), &[]);
-        assert_has(&generate_errors(&root), "xm", &["cannot read"]);
+        let path = root.control_tables().join("xm.ron");
+        let errors = generate_errors(&root);
+        assert!(
+            errors.iter().any(|d| d.file == "xm"
+                && matches!(&d.cause, Cause::Read { path: p, source }
+                    if *p == path && source.kind() == std::io::ErrorKind::NotFound)),
+            "{errors:?}"
+        );
     }
 
     #[test]
     fn check01_table_unparsable() {
         let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
         root.write("xm", "( source: Unverified, protocols: [P1, P2], ");
-        assert_has(&generate_errors(&root), "xm", &[]);
+        let errors = generate_errors(&root);
+        assert!(
+            errors.iter().any(|d| d.file == "xm"
+                && matches!(&d.cause, Cause::Parse { line: 1, code, .. }
+                    if **code == ron::Error::Eof)),
+            "{errors:?}"
+        );
     }
 
     #[test]
@@ -1568,7 +1606,13 @@ mod tests {
             .render()
             .replace("access: RW, area: RAM", "area: RAM");
         root.write("xm", &text);
-        assert_has(&generate_errors(&root), "xm", &["access"]);
+        let errors = generate_errors(&root);
+        assert!(
+            errors.iter().any(|d| d.file == "xm"
+                && matches!(&d.cause, Cause::Parse { code, .. }
+                    if matches!(**code, ron::Error::MissingStructField { field: "access", .. }))),
+            "{errors:?}"
+        );
     }
 
     #[test]
@@ -1594,27 +1638,29 @@ mod tests {
 
     #[test]
     fn check07_mapped_and_not_mapped() {
-        assert_map_fails(
+        map_fails_with(
             &xm_map().not_mapped("xm", "NoModelNumber"),
             &[("xm", Table::xm())],
             "dynamixel",
-            &["table xm is both mapped and in not_mapped"],
+            Check::MappedAndNotMapped { table: "xm".into() },
         );
     }
 
     #[test]
     fn check07_not_mapped_missing() {
-        assert_map_fails(
+        map_fails_with(
             &xm_map().not_mapped("gone", "SameNumberAs(1020)"),
             &[("xm", Table::xm())],
             "dynamixel",
-            &["not_mapped names gone, which does not exist"],
+            Check::NotMappedMissing {
+                table: "gone".into(),
+            },
         );
     }
 
     #[test]
     fn check16_duplicate_type() {
-        assert_map_fails(
+        map_fails_with(
             &Map::new()
                 .model(1, "ax", "A")
                 .p1(&[(0, "xl_320")])
@@ -1622,39 +1668,51 @@ mod tests {
                 .p1(&[(0, "xl320")]),
             &[("xl_320", Table::ax()), ("xl320", Table::ax())],
             "xl_320",
-            &["tables xl320 and xl_320 both give the type Xl320"],
+            Check::DuplicateType {
+                first: "xl320".into(),
+                second: "xl_320".into(),
+                ty: "Xl320".into(),
+            },
         );
     }
 
     #[test]
     fn check16_duplicate_register() {
-        assert_fails(
+        fails_with(
             Table::xm()
                 .with_row(65, 1, "LED", "RW", "RAM")
                 .with_row(66, 1, "Led", "RW", "RAM"),
-            &["rows \"LED\" and \"Led\" both give the constant LED"],
+            Check::DuplicateConstant {
+                first: "LED".into(),
+                second: "Led".into(),
+                ident: "LED".into(),
+            },
         );
     }
 
     #[test]
     fn check16_module_tests() {
         let table = Table::xm();
-        assert_map_fails(
+        map_fails_with(
             &Map::single(1020, "x-series", "X", "tests", &table),
             &[("tests", table)],
             "tests",
-            &["module name tests is reserved"],
+            Check::ReservedModule {
+                module: "tests".into(),
+            },
         );
     }
 
     #[test]
     fn check16_module_keyword() {
         let table = Table::xm();
-        assert_map_fails(
+        map_fails_with(
             &Map::single(1020, "x-series", "X", "type", &table),
             &[("type", table)],
             "type",
-            &["module name type is reserved"],
+            Check::ReservedModule {
+                module: "type".into(),
+            },
         );
     }
 

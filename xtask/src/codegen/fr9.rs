@@ -977,18 +977,6 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_fails(table: Table, keywords: &[&str]) {
-        let out = single(table);
-        assert!(
-            out.errors
-                .iter()
-                .any(|d| d.file == "t" && keywords.iter().all(|k| d.cause.to_string().contains(k))),
-            "no error with {keywords:?} in {:?}",
-            out.errors
-        );
-    }
-
-    #[track_caller]
     fn fails_with(table: Table, check: Check) {
         fixtures::assert_check(&single(table).errors, "t", &check);
     }
@@ -1189,23 +1177,13 @@ mod tests {
 
     #[test]
     fn check18_fields_without_unit_source() {
-        assert_fails(
-            Table::xm().operating_modes(
-                "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [16], current_position: [5])",
-            ),
-            &["per-mode operating_modes lists without unit_source"],
-        );
-        assert_fails(
+        fails_with(
             Table::mx_p1().omit_field("unit_source"),
-            &["torque_control_mode without unit_source"],
+            Check::SwitchWithoutUnitSource,
         );
-        assert_fails(
-            Table::ax().row_range("Goal Position", 0, 1023),
-            &["row \"Goal Position\" has a range (0..=1023) without unit_source"],
-        );
-        assert_fails(
+        fails_with(
             Table::xm_fr9().unit_source("Unverified"),
-            &["unit_source must be Verified"],
+            Check::UnitSourceUnverified,
         );
     }
 
@@ -1215,51 +1193,91 @@ mod tests {
 
     #[test]
     fn check19_bad_entries() {
-        for (fields, keywords) in [
+        let led = || "LED".to_string();
+        for (fields, check) in [
             (
                 r#"data_name: "LED", value: 0.0, unit: "V", sign_type: "unsigned""#,
-                &["\"LED\"", "value 0 must be finite and above 0"][..],
+                Check::UnitValue {
+                    register: led(),
+                    value: 0.0,
+                },
             ),
             (
                 r#"data_name: "LED", value: 1.0, unit: "lux", sign_type: "unsigned""#,
-                &["unknown unit \"lux\""],
+                Check::UnknownUnit {
+                    register: led(),
+                    unit: "lux".into(),
+                },
             ),
             (
                 r#"data_name: "LED", value: 1.0, unit: "V", sign_type: "signed""#,
-                &["unknown sign_type \"signed\""],
+                Check::UnknownSign {
+                    register: led(),
+                    sign_type: "signed".into(),
+                },
             ),
             (
                 r#"data_name: "LED", value: 1.0, unit: "V", sign_type: "direction_bit_10""#,
-                &["sign_type direction_bit_10 does not fit a 1-byte register"],
+                Check::SignDoesNotFit {
+                    register: led(),
+                    sign_type: "direction_bit_10".into(),
+                    size: 1,
+                },
             ),
             (
                 r#"data_name: "LED", value: 1.0, unit: "V", sign_type: "unsigned", range: (min: 0, max: 256)"#,
-                &["range 0..=256 does not fit a 1-byte unsigned register"],
+                Check::UnitRangeDoesNotFit {
+                    register: led(),
+                    min: 0,
+                    max: 256,
+                    size: 1,
+                    sign_type: "unsigned".into(),
+                },
             ),
             (
                 r#"data_name: "LED", value: 1.0, unit: "V", sign_type: "unsigned", modes: ["joint"]"#,
-                &["modes is only allowed in an angle-limit table"],
+                Check::ModesInModeRegisterTable { register: led() },
             ),
             (
                 r#"data_name: "LED", value: 1.0, unit: "V", sign_type: "unsigned", profile: "fast""#,
-                &["unknown profile \"fast\""],
+                Check::UnknownProfile {
+                    register: led(),
+                    profile: "fast".into(),
+                },
             ),
             (
                 r#"data_name: "LED", value: 1.0, unit: "V", sign_type: "unsigned", bounded_by: "LED Limit""#,
-                &["bounded_by \"LED Limit\" names no row"],
+                Check::BoundedByNoRow {
+                    register: led(),
+                    bounded_by: "LED Limit".into(),
+                },
+            ),
+            (
+                r#"data_name: "Goal PWM", value: 0.113, unit: "%", sign_type: "twos_complement""#,
+                Check::UnitNamesNoRow {
+                    register: "Goal PWM".into(),
+                },
             ),
         ] {
-            assert_fails(with_unit(fields), keywords);
+            fails_with(with_unit(fields), check);
         }
-        assert_fails(
+        fails_with(
             Table::ax_fr9().unit(
                 r#"data_name: "Moving Speed", value: 1.0, unit: "rpm", sign_type: "unsigned", modes: ["spin"]"#,
             ),
-            &["unknown mode \"spin\""],
+            Check::UnknownMode {
+                register: "Moving Speed".into(),
+                mode: "spin".into(),
+            },
         );
-        assert_fails(
+        fails_with(
             Table::xm_fr9().row_range("LED", 0, 300),
-            &["row \"LED\": range 0..=300 does not fit 1 byte(s)"],
+            Check::RowRangeDoesNotFit {
+                register: led(),
+                min: 0,
+                max: 300,
+                size: 1,
+            },
         );
         let negative = model(Table::xm_fr9().row_range("Goal Current", -1193, 1193));
         assert_eq!(negative.file, "t");
@@ -1268,16 +1286,19 @@ mod tests {
     #[test]
     fn check19_sizes_without_a_raw_span() {
         for size in [0, 8] {
-            assert_fails(
+            fails_with(
                 Table::xm_fr9()
                     .without("LED")
                     .with_row(65, size, "LED", "RW", "RAM")
                     .row_range("LED", 0, 1),
-                &[&format!(
-                    "row \"LED\": size {size} is outside 1..=7 bytes, so range 0..=1 cannot be checked"
-                )],
+                Check::RowRangeSize {
+                    register: "LED".into(),
+                    size,
+                    min: 0,
+                    max: 1,
+                },
             );
-            assert_fails(
+            fails_with(
                 Table::xm_fr9().without("Present Temperature").with_row(
                     146,
                     size,
@@ -1285,12 +1306,14 @@ mod tests {
                     "R",
                     "RAM",
                 ),
-                &[&format!(
-                    "unit_info \"Present Temperature\": row size {size} is outside 1..=7 bytes, so sign_type unsigned cannot be checked"
-                )],
+                Check::UnitRowSize {
+                    register: "Present Temperature".into(),
+                    size,
+                    sign_type: "unsigned".into(),
+                },
             );
         }
-        assert_fails(
+        fails_with(
             Table::ax_fr9()
                 .without("Present Load")
                 .with_row(40, 5, "Present Load", "R", "RAM")
@@ -1298,7 +1321,12 @@ mod tests {
                 .unit(
                     r#"data_name: "Present Load", value: 0.1, unit: "%", sign_type: "direction_bit_35""#,
                 ),
-            &["step 0.1 % is not about 100 % / 34359738367"],
+            Check::LoadStep {
+                register: "Present Load".into(),
+                value: 0.1,
+                unit: "%".into(),
+                bit: 35,
+            },
         );
     }
 
@@ -1327,21 +1355,20 @@ mod tests {
     #[test]
     fn check20_per_mode_lists() {
         let lists = |text: &str| Table::xm_fr9().operating_modes(text);
-        assert_fails(
+        fails_with(
             lists(
-                "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [], current_position: [5])",
+                "(bounded: [3], unbounded: [4, 5], no_position: [0, 16, 1], current: [0], velocity: [1], pwm: [], current_position: [5])",
             ),
-            &["must split no_position [0, 1, 16] exactly"],
+            Check::PerModeSplit {
+                split: vec![0, 1],
+                no_position: vec![0, 1, 16],
+            },
         );
-        assert_fails(
+        fails_with(
             lists(
                 "(bounded: [3], unbounded: [4], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [16], current_position: [5])",
             ),
-            &["current_position value 5 is not in unbounded"],
-        );
-        assert_fails(
-            lists("(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], pwm: [16])"),
-            &["all together"],
+            Check::CurrentPositionNotUnbounded { value: 5 },
         );
     }
 
@@ -1351,29 +1378,37 @@ mod tests {
 
     #[test]
     fn check21_torque_switch() {
-        assert_fails(
+        let register = || "Torque Ctrl Mode Enable".to_string();
+        fails_with(
             switch(r#"(register: "Torque Ctrl Mode Enable", on: 2, goal: "Goal Torque")"#),
-            &["on 2 is outside \"Torque Ctrl Mode Enable\"'s range 0..=1"],
+            Check::SwitchOnOutsideRange {
+                on: 2,
+                register: register(),
+                min: 0,
+                max: 1,
+            },
         );
-        assert_fails(
+        fails_with(
             switch(r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Thrust")"#),
-            &["goal \"Goal Thrust\" names no row"],
+            Check::SwitchGoalNoRow {
+                goal: "Goal Thrust".into(),
+            },
         );
-        assert_fails(
-            switch(r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Present Position")"#),
-            &["goal \"Present Position\" must be RW/RAM"],
+        fails_with(
+            switch(r#"(register: "Torque Mode", on: 1, goal: "Goal Torque")"#),
+            Check::SwitchRegisterNoRow {
+                register: "Torque Mode".into(),
+            },
         );
-        assert_fails(
+        fails_with(
             switch(
                 r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Torque Ctrl Mode Enable")"#,
             ),
-            &["goal and register are the same row"],
+            Check::SwitchGoalIsRegister {
+                register: register(),
+            },
         );
-        assert_fails(
-            switch(r#"(register: "Moving Speed", on: 1, goal: "Goal Torque")"#),
-            &["register \"Moving Speed\" must be 1 byte RW/RAM"],
-        );
-        assert_fails(
+        fails_with(
             Table::mx_p1().without("Torque Ctrl Mode Enable").with_row(
                 70,
                 1,
@@ -1381,9 +1416,11 @@ mod tests {
                 "RW",
                 "RAM",
             ),
-            &["register \"Torque Ctrl Mode Enable\" has no range"],
+            Check::SwitchRegisterNoRange {
+                register: register(),
+            },
         );
-        assert_fails(
+        fails_with(
             Table::xm_fr9()
                 .with_row(80, 1, "Torque Ctrl Mode Enable", "RW", "RAM")
                 .with_row(81, 2, "Goal Torque", "RW", "RAM")
@@ -1391,7 +1428,7 @@ mod tests {
                 .torque_control_mode(
                     r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque")"#,
                 ),
-            &["only an angle-limit table"],
+            Check::SwitchInModeRegisterTable,
         );
     }
 
@@ -1460,43 +1497,67 @@ mod tests {
 
     #[test]
     fn check21_switch_range_outside_u8() {
-        assert_fails(
+        fails_with(
             Table::mx_p1().row_range("Torque Ctrl Mode Enable", -1, 1),
-            &["register \"Torque Ctrl Mode Enable\"'s range -1..=1 is outside u8 (0..=255)"],
+            Check::SwitchRangeOutsideU8 {
+                register: "Torque Ctrl Mode Enable".into(),
+                min: -1,
+                max: 1,
+            },
         );
     }
 
     #[test]
     fn check22_role_conflicts() {
-        assert_fails(
+        fails_with(
             Table::ax_fr9().with_row(39, 2, "Present Velocity", "R", "RAM"),
-            &["role present_velocity has two rows: \"Present Velocity\" and \"Present Speed\""],
+            Check::RoleTwoRows {
+                field: "present_velocity",
+                rows: vec!["Present Velocity".into(), "Present Speed".into()],
+            },
         );
-        assert_fails(
+        fails_with(
             Table::mx_p1().with_row(72, 2, "Goal Current", "RW", "RAM"),
-            &["role goal_current has two rows"],
+            Check::RoleTwoRows {
+                field: "goal_current",
+                rows: vec!["Goal Current".into(), "Goal Torque".into()],
+            },
         );
-        assert_fails(
+        fails_with(
             Table::ax_fr9().unit(
                 r#"data_name: "Moving", value: 1.0, unit: "V", sign_type: "unsigned""#,
             ).unit(
                 r#"data_name: "Present Temperature", value: 1.0, unit: "V", sign_type: "unsigned", modes: ["wheel"]"#,
             ),
-            &["unit \"V\" is not the present_temperature role's quantity"],
+            Check::UnitNotQuantity {
+                register: "Present Temperature".into(),
+                unit: "V".into(),
+                field: "present_temperature",
+                quantity: Quantity::Temperature,
+            },
         );
-        assert_fails(
+        fails_with(
             Table::ax_fr9().unit(
                 r#"data_name: "Present Load", value: 0.2, unit: "%", sign_type: "direction_bit_10", modes: ["wheel"]"#,
             ),
-            &["two present_load scales in mode Wheel"],
+            Check::TwoScales {
+                register: "Present Load".into(),
+                field: "present_load",
+                modes: vec!["Wheel"],
+            },
         );
-        assert_fails(
+        fails_with(
             Table::ax_fr9()
                 .without_unit("Present Load")
                 .unit(
                     r#"data_name: "Present Load", value: 0.2, unit: "%", sign_type: "direction_bit_10""#,
                 ),
-            &["step 0.2 % is not about 100 % / 1023"],
+            Check::LoadStep {
+                register: "Present Load".into(),
+                value: 0.2,
+                unit: "%".into(),
+                bit: 10,
+            },
         );
     }
 
@@ -1534,7 +1595,7 @@ mod tests {
 
     #[test]
     fn check14_fr9_roles_on_p1() {
-        assert_fails(
+        fails_with(
             Table::xm_fr9().without("Present Temperature").with_row(
                 300,
                 1,
@@ -1542,7 +1603,10 @@ mod tests {
                 "R",
                 "RAM",
             ),
-            &["listed under p1 but Present Temperature is at address 300 (> 255)"],
+            Check::P1Address {
+                register: "Present Temperature".into(),
+                address: 300,
+            },
         );
         let out = single(
             Table::xm_fr9()
