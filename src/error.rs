@@ -683,8 +683,14 @@ pub enum ValidationError {
         id: Id,
     },
 
-    /// An EEPROM register was to be written while the actuator's torque is
-    /// on: the actuator refuses EEPROM writes then, so nothing is sent.
+    /// An EEPROM register was to be written while the torque state the bus
+    /// holds for the actuator is on: the bus writes EEPROM only with torque
+    /// off, on every model, so nothing is sent. X-series, MX(2.0) and
+    /// XL-320 firmware also writes EEPROM only with Torque Enable 0
+    /// (XM430-W350 Torque Enable(64),
+    /// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>); the AX, RX
+    /// and MX Protocol 1 pages document no such lock, so there the bus
+    /// check is the only guard.
     #[error("id {}: torque on, {register} not written", id.get())]
     ActuatorIsOn {
         /// The actuator the write was for.
@@ -700,36 +706,45 @@ pub enum ValidationError {
         id: Id,
     },
 
-    /// A goal tick lies outside the position limits read from the
-    /// actuator's EEPROM. Both bounds are allowed.
-    #[error("id {}: goal {raw} outside {min}..={max}", id.get())]
+    /// A value lies outside its allowed range: a goal outside the position
+    /// limits or the EEPROM bound the bus holds, or a register value (a
+    /// setting, an EEPROM limit) outside the e-Manual range its table
+    /// records. Both bounds are allowed. All in raw register units.
+    #[error("id {}: value {raw} outside {min}..={max}", id.get())]
     OutOfLimits {
-        /// The actuator the goal was for.
+        /// The actuator the value was for.
         id: Id,
-        /// The goal, in raw ticks.
+        /// The value, in raw register units (a signed goal velocity or
+        /// current as its signed magnitude).
         raw: i32,
-        /// The minimum position limit, in raw ticks.
+        /// The lowest value allowed.
         min: i32,
-        /// The maximum position limit, in raw ticks.
+        /// The highest value allowed.
         max: i32,
     },
 
-    /// A goal was checked before Setup read the actuator's position limits.
-    /// Limits are never taken from a control table's defaults.
+    /// A goal was checked before Setup read the actuator's position limits,
+    /// or after a failed limit write left them, the limit mode or the goal
+    /// bound unknown; or a single position-limit write was refused because
+    /// the other limit is unknown, so its order cannot be checked. Limits
+    /// are never taken from a control table's defaults.
     #[error("id {}: limits unknown", id.get())]
     LimitsUnknown {
         /// The actuator the goal was for.
         id: Id,
     },
 
-    /// The actuator reports a minimum position limit above its maximum.
-    #[error("id {}: min limit {min} above max {max}", id.get())]
+    /// A minimum limit lies above its maximum: position limits the actuator
+    /// reports at Setup, or a pair given to a limit write (position or
+    /// voltage limits, or one position limit against the other the bus
+    /// holds). In raw register units.
+    #[error("id {}: min {min} above max {max}", id.get())]
     InvertedLimits {
-        /// The actuator that reported the limits.
+        /// The actuator the limits are of.
         id: Id,
-        /// The minimum position limit it reports, in raw ticks.
+        /// The minimum, in raw register units.
         min: i32,
-        /// The maximum position limit it reports, in raw ticks.
+        /// The maximum, in raw register units.
         max: i32,
     },
 
@@ -2334,7 +2349,7 @@ mod tests {
                     min: 1000,
                     max: 3000,
                 },
-                "id 3: goal 3001 outside 1000..=3000",
+                "id 3: value 3001 outside 1000..=3000",
             ),
             (
                 ValidationError::LimitsUnknown { id: id(3) },
@@ -2346,7 +2361,7 @@ mod tests {
                     min: 3000,
                     max: 1000,
                 },
-                "id 3: min limit 3000 above max 1000",
+                "id 3: min 3000 above max 1000",
             ),
             (
                 ValidationError::DuplicateId { id: id(5) },

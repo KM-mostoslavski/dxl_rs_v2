@@ -129,8 +129,8 @@ pub trait Actuator: sealed::Describe {
     /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) or
     /// [`set_position_limits`](crate::ActuatorRef::set_position_limits)
     /// replaces them once acknowledged. `None` until Setup read them, and
-    /// after a limit write that failed until the next Setup; never a
-    /// control table's default.
+    /// after a limit write that failed, until the next Setup or an
+    /// acknowledged write of both limits; never a control table's default.
     ///
     /// They are returned in every operating mode, but goals are checked
     /// against them only in position (joint) mode. In extended position,
@@ -151,6 +151,12 @@ pub trait Actuator: sealed::Describe {
     /// write through
     /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) sets on
     /// AX, RX and MX on Protocol 1.
+    ///
+    /// On those models an angle-limit write that failed leaves the mode
+    /// unknown: this returns the last mode known, which the actuator may no
+    /// longer be in, and every goal is refused with
+    /// [`LimitsUnknown`](crate::ValidationError::LimitsUnknown) until the
+    /// next Setup or an acknowledged write of both angle limits.
     fn limit_mode(&self) -> LimitMode {
         self.cache().mode()
     }
@@ -708,12 +714,15 @@ impl LimitMode {
 /// only `Register::encode` stops a value that does not fit the register. No
 /// constructor fills limits from a control table.
 ///
-/// A limit write the bus cannot confirm leaves part of it unknown until
-/// the next Setup builds a new cache: the limits
-/// ([`forget_limits`](Cache::forget_limits)), the mode
+/// A limit write the bus cannot confirm leaves part of it unknown: the
+/// limits ([`forget_limits`](Cache::forget_limits)), the mode
 /// ([`forget_mode`](Cache::forget_mode)) or the goal bound
 /// ([`forget_bound`](Cache::forget_bound)). Every goal that depends on it
-/// is then refused with [`ValidationError::LimitsUnknown`].
+/// is then refused with [`ValidationError::LimitsUnknown`], until the next
+/// Setup builds a new cache or an acknowledged write determines it again
+/// (plan 2026-11-09 D5): both limits ([`record_limits`](Cache::record_limits),
+/// and [`know_mode`](Cache::know_mode) where the mode follows them), or the
+/// goal bound ([`know_bound`](Cache::know_bound)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cache {
     /// The actuator's ID. Never changes.
@@ -733,7 +742,7 @@ pub struct Cache {
 }
 
 /// What a failed EEPROM limit write left unknown in a [`Cache`] besides its
-/// limits, until the next Setup.
+/// limits, until the next Setup or an acknowledged write that determines it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Unknown {
     /// Nothing: the mode and the goal bound are what Setup read, or what
@@ -811,24 +820,59 @@ impl Cache {
     }
 
     /// Forgets the limits after a failed write of one: a bounded goal is
-    /// refused with `LimitsUnknown` until the next Setup.
+    /// refused with `LimitsUnknown` until the next Setup or an acknowledged
+    /// write of both ([`record_limits`](Self::record_limits)).
     pub(crate) fn forget_limits(&mut self) {
         self.limits = None;
     }
 
     /// Forgets the limit mode after a failed write of an angle limit it
     /// follows: every goal is refused with `LimitsUnknown` until the next
-    /// Setup.
+    /// Setup or an acknowledged write of both angle limits
+    /// ([`know_mode`](Self::know_mode)).
     pub(crate) fn forget_mode(&mut self) {
         self.unknown = Unknown::Mode;
     }
 
+    /// Records limit mode `mode`, which an acknowledged write of the angle
+    /// limits it follows determines: known again if it was forgotten. The
+    /// limits do not change.
+    pub(crate) fn know_mode(&mut self, mode: LimitMode) {
+        self.mode = mode;
+        if matches!(self.unknown, Unknown::Mode) {
+            self.unknown = Unknown::Nothing;
+        }
+    }
+
     /// Forgets the EEPROM bound of the goal the mode uses after a failed
     /// write of it: that goal is refused with `LimitsUnknown` until the
-    /// next Setup. A forgotten mode stays forgotten.
+    /// next Setup or an acknowledged write of it
+    /// ([`know_bound`](Self::know_bound)). A forgotten mode stays forgotten.
     pub(crate) fn forget_bound(&mut self) {
         if matches!(self.unknown, Unknown::Nothing) {
             self.unknown = Unknown::Bound;
+        }
+    }
+
+    /// Knows the EEPROM bound of the goal the mode uses again, after an
+    /// acknowledged write of it. A forgotten mode stays forgotten.
+    pub(crate) fn know_bound(&mut self) {
+        if matches!(self.unknown, Unknown::Bound) {
+            self.unknown = Unknown::Nothing;
+        }
+    }
+
+    /// Checks that the limit mode is known: not forgotten since a failed
+    /// write of an angle limit it follows.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::LimitsUnknown`] when it was forgotten.
+    pub(crate) const fn check_mode_known(&self) -> Result<(), ValidationError> {
+        if matches!(self.unknown, Unknown::Mode) {
+            Err(ValidationError::LimitsUnknown { id: self.id })
+        } else {
+            Ok(())
         }
     }
 
@@ -1718,6 +1762,40 @@ mod tests {
                     assert_eq!(cache.check_goal(2000), Ok(2000), "{mode:?}");
                 }
             }
+        }
+
+        #[test]
+        fn known_mode_and_bound_accept_goals_again() {
+            let unknown = Err(ValidationError::LimitsUnknown { id: id(4) });
+            let mut cache = limited(id(4));
+            cache.forget_mode();
+            cache.forget_limits();
+            assert_eq!(cache.check_mode_known(), unknown);
+            cache.know_bound();
+            assert_eq!(
+                cache.check_mode_known(),
+                unknown,
+                "a bound does not bring the mode back"
+            );
+            cache.record_limits(0, 0).unwrap();
+            cache.know_mode(LimitMode::Wheel);
+            assert_eq!(cache.check_mode_known(), Ok(()));
+            assert_eq!(cache.mode, LimitMode::Wheel);
+            assert_eq!(cache.check_goal_velocity(), Ok(()));
+
+            let mut cache = limited(id(4));
+            cache.record_mode(LimitMode::Velocity);
+            cache.forget_bound();
+            assert_eq!(cache.check_goal_velocity(), unknown);
+            assert_eq!(
+                cache.check_mode_known(),
+                Ok(()),
+                "a forgotten bound keeps the mode"
+            );
+            cache.know_bound();
+            assert_eq!(cache.check_goal_velocity(), Ok(()));
+            cache.know_mode(LimitMode::Velocity);
+            assert_eq!(cache.unknown, Unknown::Nothing);
         }
 
         #[test]

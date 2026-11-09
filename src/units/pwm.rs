@@ -1,7 +1,5 @@
 //! [`Pwm`].
 
-use crate::error::ValidationError;
-
 use super::scale::RegisterScale;
 
 /// A PWM output: a ratio of the full output, 1.0 being 100 %, held as an
@@ -20,6 +18,16 @@ use super::scale::RegisterScale;
 ///
 /// let half = Pwm::from_ratio(0.5);
 /// assert_eq!(half.ratio(), 0.5);
+/// ```
+///
+/// A [`RegisterScale`] converts it from raw only: it is written only as PWM
+/// Limit, which the bus converts to its raw value after its own checks
+/// ([`ActuatorRef::set_pwm_limit`](crate::ActuatorRef::set_pwm_limit)).
+///
+/// ```compile_fail,E0599
+/// fn write(scale: dxl_rs_v2::RegisterScale, p: dxl_rs_v2::Pwm) {
+///     let _ = scale.pwm_to_raw(p);
+/// }
 /// ```
 ///
 /// [`Default`] is zero, to fill a caller-owned buffer before a
@@ -45,23 +53,18 @@ impl RegisterScale {
         // DECISION: no clamp to ±1.0, unlike Load: a table's "about 0.113 %" step puts raw 885 at 1.00005, and a clamp would hide that value.
         Pwm(self.si_of(raw))
     }
-
-    /// The raw value nearest to `pwm`.
-    ///
-    /// # Errors
-    ///
-    /// - [`ValidationError::NotFinite`] if the ratio is NaN or infinite.
-    /// - [`ValidationError::DoesNotFit`] if it does not fit the register.
-    pub fn pwm_to_raw(&self, pwm: Pwm) -> Result<u32, ValidationError> {
-        self.raw_of_si(pwm.0)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::scale::Sign;
     use super::*;
-    use crate::error::Request;
+    use crate::error::{Request, ValidationError};
+
+    /// The raw value of `pwm` through `scale`, as the bus converts PWM Limit.
+    fn to_raw(scale: RegisterScale, pwm: Pwm) -> Result<u32, ValidationError> {
+        scale.raw_of_si(pwm.ratio())
+    }
 
     /// XM430-W350 PWM Limit: 0.113 %, 2 bytes, 0 to 885.
     const XM_PWM_LIMIT: RegisterScale = RegisterScale::new(0.001_13, Sign::Unsigned, 2, false);
@@ -81,9 +84,9 @@ mod tests {
         assert_eq!(XM_PWM_LIMIT.pwm(0).ratio(), 0.0);
         assert!((XM_PWM_LIMIT.pwm(885).ratio() - 1.000_05).abs() < 1e-5);
         assert!((XM_PWM_LIMIT.pwm(100).ratio() - 0.113).abs() < 1e-6);
-        assert_eq!(XM_PWM_LIMIT.pwm_to_raw(Pwm::from_ratio(1.0)), Ok(885));
-        assert_eq!(XM_PWM_LIMIT.pwm_to_raw(Pwm::from_ratio(0.5)), Ok(442));
-        assert_eq!(XM_PWM_LIMIT.pwm_to_raw(Pwm::default()), Ok(0));
+        assert_eq!(to_raw(XM_PWM_LIMIT, Pwm::from_ratio(1.0)), Ok(885));
+        assert_eq!(to_raw(XM_PWM_LIMIT, Pwm::from_ratio(0.5)), Ok(442));
+        assert_eq!(to_raw(XM_PWM_LIMIT, Pwm::default()), Ok(0));
     }
 
     #[test]
@@ -91,7 +94,7 @@ mod tests {
         let full_cw = XM_GOAL_PWM.pwm(0x1_0000 - 885).ratio();
         assert!((full_cw - -1.000_05).abs() < 1e-5, "{full_cw}");
         assert_eq!(
-            XM_GOAL_PWM.pwm_to_raw(Pwm::from_ratio(-1.0)),
+            to_raw(XM_GOAL_PWM, Pwm::from_ratio(-1.0)),
             Ok(0x1_0000 - 885)
         );
     }
@@ -100,26 +103,26 @@ mod tests {
     fn bad_ratios_are_refused() {
         for ratio in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             assert_eq!(
-                XM_PWM_LIMIT.pwm_to_raw(Pwm::from_ratio(ratio)),
+                to_raw(XM_PWM_LIMIT, Pwm::from_ratio(ratio)),
                 Err(ValidationError::NOT_FINITE)
             );
         }
         assert_eq!(
-            XM_PWM_LIMIT.pwm_to_raw(Pwm::from_ratio(-0.5)),
+            to_raw(XM_PWM_LIMIT, Pwm::from_ratio(-0.5)),
             Err(ValidationError::DoesNotFit {
                 raw: -442,
                 size: 2,
                 request: Request::NONE,
             })
         );
-        assert!(XM_PWM_LIMIT.pwm_to_raw(Pwm::from_ratio(100.0)).is_err());
+        assert!(to_raw(XM_PWM_LIMIT, Pwm::from_ratio(100.0)).is_err());
     }
 
     #[test]
     fn every_raw_value_round_trips() {
         for raw in 0..=885 {
             assert_eq!(
-                XM_PWM_LIMIT.pwm_to_raw(XM_PWM_LIMIT.pwm(raw)),
+                to_raw(XM_PWM_LIMIT, XM_PWM_LIMIT.pwm(raw)),
                 Ok(raw),
                 "raw {raw}"
             );

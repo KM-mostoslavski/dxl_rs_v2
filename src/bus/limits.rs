@@ -27,6 +27,13 @@ pub(super) struct Checked {
 }
 
 impl Checked {
+    /// Write `raw` to `site`, as if checked, for tests of the sending
+    /// order on a table no setter reaches yet.
+    #[cfg(all(test, feature = "y-series"))]
+    pub(super) const fn new(site: Site, raw: i32) -> Self {
+        Self { site, raw }
+    }
+
     /// The register value as the register's bytes, in `out`.
     ///
     /// # Errors
@@ -40,9 +47,16 @@ impl Checked {
     }
 }
 
-/// Refuses an EEPROM write while torque is on: the actuator ignores EEPROM
-/// writes then. `Off` and `Faulted` pass, so an actuator held faulted by
-/// Setup can have its limits fixed.
+/// Refuses an EEPROM write while the torque state the bus holds is `On`:
+/// the bus writes EEPROM only with torque off, on every model. X-series,
+/// MX(2.0) and XL-320 firmware also writes EEPROM only with Torque Enable 0
+/// (XM430-W350: "Data in the EEPROM Area can only be written to if Torque
+/// Enable(64) is cleared to '0'",
+/// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>, 2026-11-09);
+/// the AX, RX and MX Protocol 1 pages document no such lock (Lock(47) locks
+/// their EEPROM), so there this check is the only guard. `Off` and
+/// `Faulted` pass, so an actuator held faulted by Setup can have its
+/// limits fixed.
 fn check_off(
     id: crate::Id,
     state: TorqueState,
@@ -195,21 +209,26 @@ fn mode_follows_limits(kind: &ActuatorKind) -> bool {
 /// Records the position limits an acknowledged write left: `min` and `max`
 /// where written, the cached limit where not, and on a model whose mode
 /// follows them the mode `LimitMode::from_angle_limits` gives, as Setup
-/// would have recorded it.
+/// would have recorded it. Both written, they determine the limits and
+/// that mode even when a failed write had left them unknown (plan D5).
 fn record_written(kind: &mut ActuatorKind, bound: &mut Bound, min: Option<i32>, max: Option<i32>) {
-    // DECISION: limits forgotten by a failed write stay unknown after a later acknowledged write, until the next Setup (plan D5, literal).
-    let Some(old) = kind.cache().limits() else {
-        return;
+    // DECISION: one written limit with the other unknown leaves the limits unknown; check_order refuses that write before a byte, so this only guards the cache.
+    let (min, max) = match (min, max, kind.cache().limits()) {
+        (Some(min), Some(max), _) => (min, max),
+        (min, max, Some(old)) => (min.unwrap_or(old.min_raw()), max.unwrap_or(old.max_raw())),
+        (_, _, None) => return,
     };
-    let min = min.unwrap_or(old.min_raw());
-    let max = max.unwrap_or(old.max_raw());
     let Ok(limits) = kind.cache_mut().record_limits(min, max) else {
         kind.cache_mut().forget_limits();
         return;
     };
+    if !mode_follows_limits(kind) {
+        return;
+    }
     let mode = LimitMode::from_angle_limits(limits);
-    if mode_follows_limits(kind) && mode != kind.cache().mode() {
-        kind.cache_mut().record_mode(mode);
+    let was_known = kind.cache().check_mode_known().is_ok();
+    if mode != kind.cache().mode() || !was_known {
+        kind.cache_mut().know_mode(mode);
         *bound = None;
         if bound_register(kind).is_some() {
             kind.cache_mut().forget_bound();
@@ -217,11 +236,14 @@ fn record_written(kind: &mut ActuatorKind, bound: &mut Bound, min: Option<i32>, 
     }
 }
 
-/// Makes the cache follow limit writes `writes` (plan D5): acknowledged
-/// (`ok`), the position limits, the limit mode on the models whose mode
-/// follows them, and the goal bound take the written values; failed, the
-/// cache they touch is forgotten until the next Setup. Voltage,
-/// temperature, PWM and Max Torque are not cached.
+/// Makes the cache follow limit writes `writes` (plan D5). Acknowledged
+/// (`ok`): the position limits, the limit mode on the models whose mode
+/// follows them, and the goal bound take the written values, and a write
+/// that determines one makes it known again (both limits, or the bounding
+/// register). Failed: the cache they touch is forgotten, the goal bound
+/// the bus holds included, until the next Setup or an acknowledged write
+/// that determines it. Voltage, temperature, PWM and Max Torque are not
+/// cached.
 fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bool) {
     let registers = kind.data().limits;
     let bounding = bound_register(kind);
@@ -235,7 +257,9 @@ fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bo
         } else if bounding.is_some_and(|reg| reg.addr == addr) {
             if ok {
                 *bound = Some(write.raw.cast_unsigned());
+                kind.cache_mut().know_bound();
             } else {
+                *bound = None;
                 kind.cache_mut().forget_bound();
             }
         }
@@ -248,6 +272,7 @@ fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bo
     } else {
         if mode_follows_limits(kind) {
             kind.cache_mut().forget_mode();
+            *bound = None;
         }
         kind.cache_mut().forget_limits();
     }
