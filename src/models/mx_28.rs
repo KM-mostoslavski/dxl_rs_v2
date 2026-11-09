@@ -2,11 +2,12 @@
 // Source: control_tables/mx_28.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-    HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
-    HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-    HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-    LimitRegisters, ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
+    Actuator, Cache, Describe, HasAccelerationLimit, HasDGain, HasGoalVelocity,
+    HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+    HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature,
+    HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit,
+    HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeSource, ModeValues, Model,
+    ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -75,6 +76,7 @@ impl Mx28 {
             max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
             velocity_limit: Some(<Self as HasVelocityLimit>::ROLE),
             pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
+            acceleration_limit: Some(<Self as HasAccelerationLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -420,6 +422,18 @@ impl HasPwmLimit for Mx28 {
     const ROLE: RoleRegister = RoleRegister {
         name: "PWM Limit",
         register: Self::PWM_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Acceleration Limit: raw only, no unit in the table.
+impl HasAccelerationLimit for Mx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Acceleration Limit",
+        register: Self::ACCELERATION_LIMIT,
         scales: &[],
         bounded_by: None,
         from_fw: 0,

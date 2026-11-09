@@ -2,12 +2,12 @@
 // Source: control_tables/mx_106.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-    HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
-    HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-    HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit,
-    HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeSource, ModeValues, Model,
-    ModelData, Protocols, RoleRegister, Roles,
+    Actuator, Cache, Describe, HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent,
+    HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
+    HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+    HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeSource, ModeValues,
+    Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -78,6 +78,7 @@ impl Mx106 {
             velocity_limit: Some(<Self as HasVelocityLimit>::ROLE),
             current_limit: Some(<Self as HasCurrentLimit>::ROLE),
             pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
+            acceleration_limit: Some(<Self as HasAccelerationLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -451,6 +452,18 @@ impl HasPwmLimit for Mx106 {
     const ROLE: RoleRegister = RoleRegister {
         name: "PWM Limit",
         register: Self::PWM_LIMIT,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Acceleration Limit: raw only, no unit in the table.
+impl HasAccelerationLimit for Mx106 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Acceleration Limit",
+        register: Self::ACCELERATION_LIMIT,
         scales: &[],
         bounded_by: None,
         from_fw: 0,

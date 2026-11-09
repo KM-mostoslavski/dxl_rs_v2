@@ -2,12 +2,12 @@
 // Source: control_tables/mx_64.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-    HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
-    HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-    HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit,
-    HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeScale, ModeSet, ModeSource,
-    ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
+    Actuator, Cache, Describe, HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent,
+    HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
+    HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
+    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+    HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeScale, ModeSet,
+    ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -78,6 +78,7 @@ impl Mx64 {
             velocity_limit: Some(<Self as HasVelocityLimit>::ROLE),
             current_limit: Some(<Self as HasCurrentLimit>::ROLE),
             pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
+            acceleration_limit: Some(<Self as HasAccelerationLimit>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: true,
@@ -530,6 +531,22 @@ impl HasPwmLimit for Mx64 {
             modes: ModeSet::ALL,
             scale: Some(RegisterScale::new(0.00113, Sign::Unsigned, 2, false)),
             range: Some((0, 885)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Acceleration Limit: 214.577 rev/min^2 per raw step in every mode.
+impl HasAccelerationLimit for Mx64 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Acceleration Limit",
+        register: Self::ACCELERATION_LIMIT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.37450752, Sign::Unsigned, 4, false)),
+            range: Some((0, 32767)),
         }],
         bounded_by: None,
         from_fw: 0,

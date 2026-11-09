@@ -737,6 +737,14 @@ mod tests {
         let pwm = role("xm430_w350", "pwm_limit");
         assert_eq!(pwm.row.address, 36);
         assert!(pwm.scales.iter().all(|s| close(s.si_per_raw, 0.00113)));
+        let acceleration = role("mx_64", "acceleration_limit");
+        assert_eq!((acceleration.row.address, acceleration.row.size), (40, 4));
+        assert!(close(
+            acceleration.scales[0].si_per_raw,
+            214.577 * std::f64::consts::PI / 1800.0
+        ));
+        assert_eq!(acceleration.scales[0].range, Some((0, 32767)));
+        assert!(role("mx_28", "acceleration_limit").scales.is_empty());
     }
 
     #[test]

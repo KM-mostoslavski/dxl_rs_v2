@@ -347,6 +347,9 @@ roles! {
     /// maximum torque: the value Torque Limit (RAM) is reset to at power-on
     /// (e-Manual), so it bounds the output from the next power-on.
     MaxTorque, max_torque, HasMaxTorque, "Max Torque";
+    /// Acceleration Limit (MX(2.0), PRO, PRO+, Y, RH-P12-RN), rad/s²: the
+    /// EEPROM bound of Profile Acceleration.
+    AccelerationLimit, acceleration_limit, HasAccelerationLimit, "Acceleration Limit";
 }
 
 #[cfg(test)]
@@ -508,7 +511,7 @@ mod tests {
         assert_eq!(roles.get(Role::SpeedLimit), Some(&MOVING_SPEED));
         assert_eq!(roles.get(Role::RealtimeTick), Some(&TICK));
         assert_eq!(roles.get(Role::GoalVelocity), None);
-        assert_eq!(Role::ALL.len(), 31);
+        assert_eq!(Role::ALL.len(), 32);
         assert_eq!(Role::TemperatureLimit.name(), "Temperature Limit");
         assert_eq!(Role::MinPositionLimit.name(), "Min Position Limit");
         assert_eq!(Role::MaxPositionLimit.name(), "Max Position Limit");
@@ -516,6 +519,7 @@ mod tests {
         assert_eq!(Role::CurrentLimit.name(), "Current Limit");
         assert_eq!(Role::PwmLimit.name(), "PWM Limit");
         assert_eq!(Role::MaxTorque.name(), "Max Torque");
+        assert_eq!(Role::AccelerationLimit.name(), "Acceleration Limit");
         roles.max_torque = Some(SLOPE);
         assert_eq!(roles.get(Role::MaxTorque), Some(&SLOPE));
         assert_eq!(roles.get(Role::PwmLimit), None);

@@ -4,9 +4,9 @@
 //!
 //! A role is matched by exact e-Manual row name, like the common roles. Its
 //! scales come only from a table with `unit_source`, converted to SI here:
-//! rpm to rad/s, mA to A, V, °C, % to a ratio, ms to s, deg to rad. A
-//! register whose table gives no unit, or a unit that is not the role's
-//! quantity, gets no scale: raw only (FR-9.2).
+//! rpm to rad/s, rev/min² and deg/s² to rad/s², mA to A, V, °C, % to a
+//! ratio, ms to s, deg to rad. A register whose table gives no unit, or a
+//! unit that is not the role's quantity, gets no scale: raw only (FR-9.2).
 //!
 //! A load whose full magnitude the e-Manual fixes is the one exception to
 //! `value × factor`: the e-Manual gives its step as "about 0.1%" and its
@@ -84,6 +84,8 @@ const UNITS: [&str; 9] = [
 pub(crate) enum Quantity {
     /// `Velocity`, rad/s.
     Velocity,
+    /// `Acceleration`, rad/s².
+    Acceleration,
     /// `Current`, A.
     Current,
     /// `Voltage`, V.
@@ -110,6 +112,9 @@ impl Quantity {
     pub(crate) fn factor(self, unit: &str) -> Option<f64> {
         match (self, unit) {
             (Self::Velocity, "rpm") => Some(2.0 * PI / 60.0),
+            (Self::Acceleration, "rev/min^2") => Some(2.0 * PI / 3600.0),
+            // DECISION: deg/s^2, the other angular acceleration UNITS allows, types the role too, so no allowed unit of the quantity fails check 22.
+            (Self::Acceleration, "deg/s^2") => Some(PI / 180.0),
             (Self::Current, "mA") | (Self::Tick, "ms") => Some(1e-3),
             (Self::Voltage, "V") | (Self::Temperature, "°C") => Some(1.0),
             (Self::Load | Self::Pwm, "%") => Some(1e-2),
@@ -173,7 +178,7 @@ const fn role(
 
 /// Every role. Moving Speed serves two: in wheel mode it is the goal
 /// velocity, in every other mode a speed limit.
-pub(crate) const ROLES: [RoleDef; 31] = [
+pub(crate) const ROLES: [RoleDef; 32] = [
     role(
         "PresentTemperature",
         "present_temperature",
@@ -390,6 +395,13 @@ pub(crate) const ROLES: [RoleDef; 31] = [
         "HasMaxTorque",
         Quantity::Load,
         &[("Max Torque", ALL)],
+    ),
+    role(
+        "AccelerationLimit",
+        "acceleration_limit",
+        "HasAccelerationLimit",
+        Quantity::Acceleration,
+        &[("Acceleration Limit", ALL)],
     ),
 ];
 
@@ -1090,6 +1102,17 @@ mod tests {
     #[test]
     fn unit_factors() {
         assert!(close(Quantity::Velocity.factor("rpm").unwrap(), PI / 30.0));
+        assert!(close(
+            Quantity::Acceleration.factor("rev/min^2").unwrap(),
+            PI / 1800.0
+        ));
+        assert!(close(
+            Quantity::Acceleration.factor("deg/s^2").unwrap(),
+            PI / 180.0
+        ));
+        assert_eq!(Quantity::Acceleration.factor("rpm"), None);
+        assert_eq!(Quantity::Velocity.factor("rev/min^2"), None);
+        assert!(!Quantity::Acceleration.not_typed("rpm"));
         assert!(close(Quantity::Current.factor("mA").unwrap(), 0.001));
         assert!(close(Quantity::Tick.factor("ms").unwrap(), 0.001));
         assert!(close(Quantity::Load.factor("%").unwrap(), 0.01));
@@ -1109,7 +1132,7 @@ mod tests {
 
     #[test]
     fn role_list_matches_core() {
-        assert_eq!(ROLES.len(), 31);
+        assert_eq!(ROLES.len(), 32);
         let fields: Vec<&str> = ROLES.iter().map(|r| r.field).collect();
         let mut sorted = fields.clone();
         sorted.sort_unstable();
@@ -1304,6 +1327,54 @@ mod tests {
         let out = single(table("rev/min^2"));
         assert!(out.errors.is_empty(), "{:?}", out.errors);
         assert_fails(table("rev/min²"), &["unknown unit \"rev/min²\""]);
+    }
+
+    /// [`Table::xm_fr9`] with Acceleration Limit(40) in `unit`, as the
+    /// MX-64(2.0) page gives it in rev/min².
+    fn acceleration_limit(value: f64, unit: &str) -> Table {
+        Table::xm_fr9()
+            .with_row(40, 4, "Acceleration Limit", "RW", "EEPROM")
+            .unit(&format!(
+                r#"data_name: "Acceleration Limit", value: {value}, unit: "{unit}", sign_type: "unsigned", range: (min: 0, max: 32767)"#
+            ))
+    }
+
+    #[test]
+    fn acceleration_limit_role() {
+        let m = model(acceleration_limit(214.577, "rev/min^2"));
+        let roles = by_field(&m.typed);
+        let role = roles["acceleration_limit"];
+        assert_eq!(role.def.quantity, Quantity::Acceleration);
+        assert_eq!((role.row.address, role.row.size), (40, 4));
+        let [scale] = role.scales.as_slice() else {
+            panic!("{:?}", role.scales);
+        };
+        assert!(close(scale.si_per_raw, 214.577 * PI / 1800.0));
+        assert_eq!(
+            (scale.modes, scale.sign, scale.range),
+            (ALL, SignKind::Unsigned, Some((0, 32767)))
+        );
+        assert_eq!((role.bounded_by.as_ref(), role.from_fw), (None, 0));
+
+        let m = model(acceleration_limit(1.0, "deg/s^2"));
+        assert!(close(
+            by_field(&m.typed)["acceleration_limit"].scales[0].si_per_raw,
+            PI / 180.0
+        ));
+        let m = model(Table::xm_fr9().with_row(40, 4, "Acceleration Limit", "RW", "EEPROM"));
+        let raw = by_field(&m.typed)["acceleration_limit"];
+        assert!(raw.scales.is_empty() && raw.untyped.is_empty());
+        assert!(!by_field(&model(Table::xm_fr9()).typed).contains_key("acceleration_limit"));
+    }
+
+    #[test]
+    fn check22_acceleration_limit_unit() {
+        assert_fails(
+            acceleration_limit(0.229, "rpm"),
+            &[
+                "unit_info \"Acceleration Limit\": unit \"rpm\" is not the acceleration_limit role's quantity (Acceleration)",
+            ],
+        );
     }
 
     #[test]

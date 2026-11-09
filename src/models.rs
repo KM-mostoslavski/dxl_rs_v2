@@ -310,10 +310,10 @@ pub use h54_200_s500_ra::H54200S500Ra;
 /// The FR-9 typed registers: one trait per register role, implemented by
 /// each model type whose table has the register.
 pub use crate::actuator::{
-    HasCcwComplianceMargin, HasCcwComplianceSlope, HasCurrentLimit, HasCwComplianceMargin,
-    HasCwComplianceSlope, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-    HasLed, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit, HasMaxTorque,
-    HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
+    HasAccelerationLimit, HasCcwComplianceMargin, HasCcwComplianceSlope, HasCurrentLimit,
+    HasCwComplianceMargin, HasCwComplianceSlope, HasDGain, HasGoalCurrent, HasGoalVelocity,
+    HasHardwareErrorStatus, HasLed, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
+    HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
     HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
     HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
     HasTorqueCtrlModeEnable, HasVelocityLimit, RoleRegister,

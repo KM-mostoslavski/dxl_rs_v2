@@ -1,12 +1,15 @@
 //! Typed SI values for actuator quantities.
 //!
 //! [`Position`] is an angle in radians, held as an `f32`; [`Velocity`],
-//! [`Current`], [`Voltage`], [`Temperature`], [`Load`] and [`Pwm`] are SI
-//! values or ratios converted with a per-model [`RegisterScale`]. Each model's
+//! [`Acceleration`], [`Current`], [`Voltage`], [`Temperature`], [`Load`] and
+//! [`Pwm`] are SI values or ratios converted with a per-model
+//! [`RegisterScale`]. Each model's
 //! [`PositionScale`] maps it to and from the actuator's raw ticks. Every typed
 //! value keeps a raw form: the raw `i32` ticks stay available beside it, for
 //! values the typed form cannot hold or registers it does not cover.
 
+// DECISION: Acceleration gets its own file beside velocity.rs, one quantity per file, as Pwm beside load.rs.
+mod acceleration;
 mod electrical;
 mod load;
 mod position;
@@ -18,6 +21,7 @@ mod thermal;
 mod tuning;
 mod velocity;
 
+pub use acceleration::Acceleration;
 pub use electrical::{Current, Voltage};
 pub use load::Load;
 pub(crate) use position::Limits;

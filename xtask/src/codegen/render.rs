@@ -961,12 +961,16 @@ mod tests {
 
         let xm = Table::xm_fr9()
             .with_row(36, 2, "PWM Limit", "RW", "EEPROM")
-            .unit(r#"data_name: "PWM Limit", value: 0.113, unit: "%", sign_type: "unsigned", range: (min: 0, max: 885)"#);
+            .with_row(40, 4, "Acceleration Limit", "RW", "EEPROM")
+            .unit(r#"data_name: "PWM Limit", value: 0.113, unit: "%", sign_type: "unsigned", range: (min: 0, max: 885)"#)
+            .unit(r#"data_name: "Acceleration Limit", value: 214.577, unit: "rev/min^2", sign_type: "unsigned", range: (min: 0, max: 32767)"#);
         let files = one("xm", xm);
         let text = file(&files, "models/xm.rs");
         let c = compact(text);
         for part in [
             "implHasPwmLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"PWMLimit\",register:Self::PWM_LIMIT,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.00113,Sign::Unsigned,2,false)),range:Some((0,885))}],",
+            "acceleration_limit:Some(<SelfasHasAccelerationLimit>::ROLE),",
+            "implHasAccelerationLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"AccelerationLimit\",register:Self::ACCELERATION_LIMIT,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.37450752,Sign::Unsigned,4,false)),range:Some((0,32767))}],",
             "implHasVelocityLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"VelocityLimit\",register:Self::VELOCITY_LIMIT,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.023980824,Sign::Unsigned,4,false)),range:None}],",
             "implHasCurrentLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"CurrentLimit\",register:Self::CURRENT_LIMIT,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.00269,Sign::Unsigned,2,false)),range:None}],",
             "implHasMaxPositionLimitforXm{constROLE:RoleRegister=RoleRegister{name:\"MaxPositionLimit\",register:Self::MAX_POSITION_LIMIT,scales:&[],bounded_by:None,from_fw:0,row_range:Some((0,4095)),};}",
@@ -975,6 +979,7 @@ mod tests {
         }
         for line in [
             "/// PWM Limit: 0.113 % per raw step in every mode.",
+            "/// Acceleration Limit: 214.577 rev/min^2 per raw step in every mode.",
             "/// Max Position Limit: a position, converted with the model's position scale (`type_info`).",
             "/// Raw range 0 to 4095.",
         ] {
@@ -988,7 +993,7 @@ mod tests {
         let files = one("xm", Table::xm());
         let module = file(&files, "models.rs");
         let c = compact(module);
-        assert!(c.contains("pubusecrate::actuator::{HasCcwComplianceMargin,"));
+        assert!(c.contains("pubusecrate::actuator::{HasAccelerationLimit,HasCcwComplianceMargin,"));
         for role in &fr9::ROLES {
             assert!(c.contains(&format!("{},", role.has)), "{}", role.has);
         }

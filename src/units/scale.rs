@@ -38,8 +38,9 @@ pub enum Sign {
 /// [`Load`](crate::Load) and [`Pwm`](crate::Pwm) convert from raw only:
 /// they are measured, and written only as EEPROM limits, which the bus
 /// converts after its own checks. [`Velocity`](crate::Velocity),
-/// [`SpeedLimit`](crate::SpeedLimit) and [`Current`](crate::Current) also
-/// convert back, rounding to the nearest raw step, and never truncate.
+/// [`SpeedLimit`](crate::SpeedLimit), [`Current`](crate::Current) and
+/// [`Acceleration`](crate::Acceleration) also convert back, rounding to the
+/// nearest raw step, and never truncate.
 ///
 /// Values are `f32`: a raw value up to ±2^20 converts to SI and back to
 /// itself; beyond it, a round trip may land one step off.

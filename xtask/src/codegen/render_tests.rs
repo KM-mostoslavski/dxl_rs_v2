@@ -141,6 +141,7 @@ fn f32_of(x: f64) -> f32 {
 fn convert(quantity: Quantity, raw: i64) -> String {
     match quantity {
         Quantity::Velocity => format!("scale.velocity({raw}).rad_per_s()"),
+        Quantity::Acceleration => format!("scale.acceleration({raw}).rad_per_s2()"),
         Quantity::Current => format!("scale.current({raw}).amps()"),
         Quantity::Voltage => format!("scale.voltage({raw}).volts()"),
         Quantity::Temperature => format!("scale.temperature({raw}).celsius()"),
@@ -891,7 +892,9 @@ mod tests {
                     "xm",
                     Table::xm_fr9()
                         .with_row(36, 2, "PWM Limit", "RW", "EEPROM")
-                        .unit(r#"data_name: "PWM Limit", value: 0.113, unit: "%", sign_type: "unsigned", range: (min: 0, max: 885)"#),
+                        .with_row(40, 4, "Acceleration Limit", "RW", "EEPROM")
+                        .unit(r#"data_name: "PWM Limit", value: 0.113, unit: "%", sign_type: "unsigned", range: (min: 0, max: 885)"#)
+                        .unit(r#"data_name: "Acceleration Limit", value: 214.577, unit: "rev/min^2", sign_type: "unsigned", range: (min: 0, max: 32767)"#),
                 ),
             ],
         );
@@ -903,6 +906,8 @@ mod tests {
             "assert!(close(scale.load(100).ratio(),0.097751714));assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=1023));",
             "letrole=<XmasHasPwmLimit>::ROLE;",
             "assert!(close(scale.pwm(100).ratio(),0.113));assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=885));",
+            "letrole=<XmasHasAccelerationLimit>::ROLE;",
+            "assert!(close(scale.acceleration(100).rad_per_s2(),37.450752));assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=32767));",
             "assert!(close(scale.velocity(100).rad_per_s(),2.3980825));",
             "assert!(close(scale.current(100).amps(),0.269));",
         ] {
