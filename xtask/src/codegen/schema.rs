@@ -14,7 +14,7 @@ use std::path::Path;
 use ron::extensions::Extensions;
 use serde::Deserialize;
 
-use super::Diagnostic;
+use super::diagnostic::{Cause, Diagnostic};
 
 /// `dynamixel.ron`: model numbers and the tables each uses per protocol.
 #[derive(Debug, Deserialize)]
@@ -345,7 +345,7 @@ pub(crate) fn parse_map(path: &Path) -> Result<ModelMap, Diagnostic> {
 pub(crate) fn parse_map_str(text: &str) -> Result<ModelMap, Diagnostic> {
     options()
         .from_str(text)
-        .map_err(|e| Diagnostic::new("dynamixel", e.to_string()))
+        .map_err(|e| Diagnostic::new("dynamixel", e))
 }
 
 /// Reads one control table, named `stem` in the diagnostic.
@@ -358,11 +358,19 @@ pub(crate) fn parse_table(path: &Path, stem: &str) -> Result<ControlTable, Diagn
 pub(crate) fn parse_table_str(text: &str, stem: &str) -> Result<ControlTable, Diagnostic> {
     options()
         .from_str(&braces_to_parens(text))
-        .map_err(|e| Diagnostic::new(stem, e.to_string()))
+        .map_err(|e| Diagnostic::new(stem, e))
 }
 
 fn read(path: &Path, stem: &str) -> Result<String, Diagnostic> {
-    std::fs::read_to_string(path).map_err(|e| Diagnostic::new(stem, format!("cannot read: {e}")))
+    std::fs::read_to_string(path).map_err(|source| {
+        Diagnostic::new(
+            stem,
+            Cause::Read {
+                path: path.to_path_buf(),
+                source,
+            },
+        )
+    })
 }
 
 /// `IMPLICIT_SOME`, so optional fields (`p1`, `p2`, `default`,
@@ -410,7 +418,7 @@ pub(crate) fn braces_to_parens(text: &str) -> String {
 )]
 mod tests {
     use super::*;
-    use crate::codegen::fixtures::Dir;
+    use crate::codegen::fixtures::{Dir, Table};
 
     const TYPE_INFO: &str = "type_info: { value_of_zero_radian_position: 2048, \
         value_of_max_radian_position: 4095, value_of_min_radian_position: 0, \
@@ -436,10 +444,22 @@ mod tests {
         parse_map(&path)
     }
 
-    fn err(result: Result<ControlTable, Diagnostic>) -> String {
+    /// The RON error of a table that fails to parse.
+    fn err(result: Result<ControlTable, Diagnostic>) -> ron::Error {
         let diagnostic = result.unwrap_err();
         assert_eq!(diagnostic.file, "t");
-        diagnostic.message
+        match diagnostic.cause {
+            Cause::Parse { code, .. } => *code,
+            other => panic!("expected a parse error, got {other:?}"),
+        }
+    }
+
+    #[track_caller]
+    fn missing(code: &ron::Error, field: &str) {
+        assert!(
+            matches!(code, ron::Error::MissingStructField { field: f, .. } if *f == field),
+            "{code:?}"
+        );
     }
 
     #[test]
@@ -483,24 +503,30 @@ mod tests {
     fn row_without_access_fails() {
         let rows =
             r#"control_table: [{ address: 0, size: 2, data_name: "Model Number", area: EEPROM }],"#;
-        assert!(err(table("source: Unverified, protocols: [P1],", rows)).contains("access"));
+        missing(
+            &err(table("source: Unverified, protocols: [P1],", rows)),
+            "access",
+        );
     }
 
     #[test]
     fn row_without_area_fails() {
         let rows =
             r#"control_table: [{ address: 0, size: 2, data_name: "Model Number", access: R }],"#;
-        assert!(err(table("source: Unverified, protocols: [P1],", rows)).contains("area"));
+        missing(
+            &err(table("source: Unverified, protocols: [P1],", rows)),
+            "area",
+        );
     }
 
     #[test]
     fn table_without_source_fails() {
-        assert!(err(table("protocols: [P1],", ROWS)).contains("source"));
+        missing(&err(table("protocols: [P1],", ROWS)), "source");
     }
 
     #[test]
     fn table_without_protocols_fails() {
-        assert!(err(table("source: Unverified,", ROWS)).contains("protocols"));
+        missing(&err(table("source: Unverified,", ROWS)), "protocols");
     }
 
     #[test]
@@ -538,20 +564,20 @@ mod tests {
 
     #[test]
     fn operating_modes_value_above_255_fails() {
-        let message = err(table(
+        let code = err(table(
             "source: Unverified, protocols: [P2], operating_modes: (bounded: [300], unbounded: [], no_position: []),",
             ROWS,
         ));
-        assert!(message.contains("out of bounds"), "{message}");
+        assert_eq!(code, ron::Error::IntegerOutOfBounds);
     }
 
     #[test]
     fn operating_modes_missing_key_fails() {
-        let message = err(table(
+        let code = err(table(
             "source: Unverified, protocols: [P2], operating_modes: (bounded: [3], unbounded: []),",
             ROWS,
         ));
-        assert!(message.contains("no_position"), "{message}");
+        missing(&code, "no_position");
     }
 
     #[test]
@@ -685,11 +711,65 @@ mod tests {
     #[test]
     fn unreadable_file_names_the_stem() {
         let dir = Dir::new();
-        let d = parse_table(&dir.path().join("gone.ron"), "gone").unwrap_err();
-        assert_eq!(d.file, "gone");
-        assert!(d.message.contains("cannot read"));
-        let d = parse_map(&dir.path().join("dynamixel.ron")).unwrap_err();
+        for (path, stem) in [
+            (dir.path().join("gone.ron"), "gone"),
+            (dir.path().join("dynamixel.ron"), "dynamixel"),
+        ] {
+            let d = if stem == "dynamixel" {
+                parse_map(&path).map(|_| ()).unwrap_err()
+            } else {
+                parse_table(&path, stem).map(|_| ()).unwrap_err()
+            };
+            assert_eq!(d.file, stem);
+            let Cause::Read { path: got, source } = &d.cause else {
+                panic!("{d:?}");
+            };
+            assert_eq!((got, source.kind()), (&path, std::io::ErrorKind::NotFound));
+            assert_eq!(
+                d.to_string(),
+                format!(
+                    "control_tables/{stem}.ron: cannot read {}: {source}",
+                    path.display()
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn parse_errors_keep_position_and_code() {
+        let d = parse_map_str("(models: {").unwrap_err();
         assert_eq!(d.file, "dynamixel");
+        assert!(
+            matches!(&d.cause, Cause::Parse { line: 1, column: 10, code } if **code == ron::Error::Eof),
+            "{d:?}"
+        );
+        assert_eq!(d.cause.to_string(), "1:10: Unexpected end of RON");
+
+        let text = Table::xm().render().replace(
+            "data_name: \"Goal Position\", access: RW, area: RAM",
+            "data_name: \"Goal Position\", access: RW, area: RAMX",
+        );
+        let (line, row) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("RAMX"))
+            .unwrap();
+        let column = row.find("RAMX").unwrap() + 1;
+        let d = parse_table_str(&text, "xm").unwrap_err();
+        assert_eq!(d.file, "xm");
+        let Cause::Parse {
+            line: got_line,
+            column: got_column,
+            code,
+        } = &d.cause
+        else {
+            panic!("{d:?}");
+        };
+        assert_eq!((*got_line, *got_column), (line + 1, column));
+        assert!(
+            matches!(&**code, ron::Error::NoSuchEnumVariant { found, .. } if found == "RAMX"),
+            "{code:?}"
+        );
     }
 
     #[test]
