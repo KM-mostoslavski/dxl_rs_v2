@@ -301,7 +301,7 @@ Out of scope for FR-9:
 - NFR-10 Testability: `Transport` is mockable, and the protocol layer is tested against the e-Manual packet examples without hardware. Decided.
 - NFR-11 Responsibility split for safety:
   - Ours: torque off by default, limit checks against EEPROM in position mode (FR-3.7), fault detection on every status packet, typed errors.
-  - User's: physical limits beyond the actuator's EEPROM, joint-level and robot-level safety, deciding when to enable torque, reacting to a returned fault.
+  - User's: physical limits beyond the actuator's EEPROM, joint-level and robot-level safety, deciding when to enable torque, reacting to a returned fault, and restoring any register it changes for a run (e.g. voltage or temperature limits widened for a test), after an error too. The crate never saves or restores a value on its own. Restore decided 2026-11-09.
   - Tooling we owe: explicit `enable_torque`/`disable_torque`, fault state readable per actuator, read-back calls for verification, raw access for debugging.
 - NFR-12 Error precision is tested: every error variant has a test that builds it with distinct field values and checks that its `Display` line contains the `Id` and each deciding value (FR-6.9); every place that returns an error has a test that checks the variant and the context fields of FR-6.7; every hint of FR-6.12 and every measured outcome of FR-6.13 has a test. Decided 2026-11-03, amended 2026-11-04.
 
@@ -352,6 +352,7 @@ Out of scope for FR-9:
 - [ ] Family feature list `ax, mx, x-series, y-series, pro` (FR-7.5). Proposed; ARCHITECTURE.md and the brief differ.
 - [ ] Reference bench definition (NFR-5). Proposed.
 - [x] Precise errors: one variant per cause, full context as fixed-size fields, observed facts only, a short `Display` line with every field in `{:#?}` (FR-6.6 to FR-6.11, NFR-12). 2026-11-03, amended 2026-11-04.
+- [x] A register changed for a run (e.g. widened voltage or temperature limits) is the caller's to save and restore, after an error too; the crate never restores a value on its own (NFR-11). 2026-11-09.
 - [x] `cargo xtask` and `check_tables.py` errors follow the error rules, without FR-6.10's fixed size: one variant (Python: cause code) per cause with fields, foreign errors kept typed, advice only in a separate hint, no panic and no silent skip on any input (FR-6.14). 2026-11-09.
 - [x] Error precision cases E1 to E13 decided and built (audit Decisions table): `Request` context with the Setup step on every error (FR-6.7); `Timeout` split into no, partial, late and skipped reply, port timeout and end of stream, with the late-reply listen (FR-1.4); `Malformed` split by cause; `Missing` only for a silent ping; a `Fault` category measured on the fault path (FR-6.13); advice in `Error::hint()` (FR-6.12). 2026-11-04.
 
