@@ -10,6 +10,7 @@ location, model, register, field and the deciding values), not only its text
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import sys
 import tempfile
@@ -22,6 +23,8 @@ import check_tables  # noqa: E402
 from check_tables import Ident, RonError, Tagged, parse_ron  # noqa: E402
 
 TODAY = "2026-10-28"
+# Parser codes for inputs that crashed the parser before T210 (tested in CrashTests).
+STAGE_3_RON_CODES: set[str] = set()
 
 
 def write_fixture(root: Path, files: dict[str, str]) -> Path:
@@ -47,6 +50,10 @@ def run_main(argv: list[str]) -> tuple[int, str, str]:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = check_tables.main(argv)
     return code, out.getvalue(), err.getvalue()
+
+
+# Values that give context rather than decide the finding; the line need not repeat them.
+CONTEXT_KEYS = ("allowed", "expected", "path", "operation", "parser_code")
 
 
 def _scalars(value: object) -> list[object]:
@@ -265,7 +272,7 @@ class FixtureCase(unittest.TestCase):
         line = diagnostic.line()
         self.assertIn(f"[{cause}]", line)
         for key, value in diagnostic.values.items():
-            for scalar in _scalars(value) if key not in ("allowed", "expected") else []:
+            for scalar in _scalars(value) if key not in CONTEXT_KEYS else []:
                 self.assertIn(str(scalar), line, f"{key}={value!r} is not in the line {line!r}")
         return diagnostic
 
@@ -427,23 +434,46 @@ class ParserTests(FixtureCase):
         with self.assertRaises(RonError):
             parse_ron("( a: 1 ) )")
 
-
-    def test_cli_duplicate_key_exits_2(self) -> None:
-        code, _out, err, _diagnostics = self.check(
-            {
-                "dynamixel": '(models: { 1020: (family: "x-series", name: "A"), 1020: (family: "x-series", name: "B") })',
-            }
+    def test_every_parse_error_carries_its_parser_code(self) -> None:
+        cases = (
+            ("( a: 1, a: 2 )", "duplicate-key", 1, 9),
+            ("{ 1: (a: 1), 1: (a: 2) }", "duplicate-key", 1, 14),
+            ('( a: "open\n)', "unterminated-string", 1, 6),
+            ("( a: @ )", "unexpected-char", 1, 6),
+            ('"a\\q"', "unknown-escape", 1, 1),
+            ("( a: 1 ) )", "trailing-value", 1, 10),
+            ("( a: )", "expected-value", 1, 6),
+            ("{ a: 1, 2: 3 }", "expected-field-name", 1, 9),
+            ("{ 1: 2, a: 3 }", "expected-map-key", 1, 9),
+            ("[1 2]", "expected-separator", 1, 4),
+            ("( a: 1, b 2 )", "expected-token", 1, 11),
         )
-        self.assertEqual(code, 2)
-        self.assertIn("dynamixel.ron", err)
-        self.assertIn("1020", err)
+        for text, code, line, col in cases:
+            with self.subTest(text=text):
+                with self.assertRaises(RonError) as ctx:
+                    parse_ron(text, "t.ron")
+                self.assertEqual((ctx.exception.code, ctx.exception.line, ctx.exception.col), (code, line, col))
+                self.assertIn(code, check_tables.RON_ERROR_CODES)
+        self.assertEqual(set(check_tables.RON_ERROR_CODES), {c[1] for c in cases} | STAGE_3_RON_CODES)
 
-    def test_cli_unterminated_string_exits_2(self) -> None:
-        code, _out, err, _diagnostics = self.check(
-            {"dynamixel": "(models: {})", "broken": '(\n  source: "open\n)\n'}
+    def test_cli_duplicate_key_is_a_parse_failure(self) -> None:
+        text = '(models: { 1020: (family: "x-series", name: "A"), 1020: (family: "x-series", name: "B") })'
+        result = self.check({"dynamixel": text})
+        self.assertEqual(result.code, 4)
+        diagnostic = self.assertDiagnostic(
+            result, "ron-parse", file="dynamixel.ron", operation="parse", path=str(self.dir / "dynamixel.ron"),
+            line=1, column=text.rindex("1020") + 1, parser_code="duplicate-key",
         )
-        self.assertEqual(code, 2)
-        self.assertIn("broken.ron:2", err)
+        self.assertTrue(diagnostic.line().startswith(f"dynamixel.ron:1:{text.rindex('1020') + 1}: [ron-parse] "))
+        self.assertIn(diagnostic.line(), result.err.splitlines())
+
+    def test_cli_unterminated_string_is_a_parse_failure(self) -> None:
+        result = self.check({"dynamixel": "(models: {})", "broken": '(\n  source: "open\n)\n'})
+        self.assertEqual(result.code, 4)
+        self.assertDiagnostic(
+            result, "ron-parse", file="broken.ron", line=2, column=11, parser_code="unterminated-string"
+        )
+        self.assertIn("broken.ron:2:11: [ron-parse] unterminated string", result.err)
 
 
 class CliTests(FixtureCase):
@@ -452,20 +482,80 @@ class CliTests(FixtureCase):
     def test_clean_fixture_exits_0(self) -> None:
         self.assertPasses(self.check(clean_files()))
 
-    def test_missing_map_exits_2(self) -> None:
-        code, _out, err, _diagnostics = self.check_with(dynamixel=None)
-        self.assertEqual(code, 2)
-        self.assertIn("dynamixel.ron", err)
+    def test_missing_map_exits_3(self) -> None:
+        result = self.check_with(dynamixel=None)
+        self.assertEqual(result.code, 3)
+        diagnostic = self.assertDiagnostic(
+            result, "map-missing", file="dynamixel.ron", path=str(self.dir / "dynamixel.ron")
+        )
+        self.assertIn(str(self.dir), diagnostic.message)
+        self.assertTrue(diagnostic.hint)
+        self.assertEqual(result.out, "")
 
-    def test_unparseable_file_exits_2_naming_it(self) -> None:
-        code, _out, err, _diagnostics = self.check_with(x="( source: Unverified, control_table: [ { address: 0 ")
-        self.assertEqual(code, 2)
-        self.assertIn("x.ron", err)
+    def test_unparseable_file_exits_4_naming_it(self) -> None:
+        text = "( source: Unverified, control_table: [ { address: 0 "
+        result = self.check_with(x=text)
+        self.assertEqual(result.code, 4)
+        self.assertDiagnostic(
+            result, "ron-parse", file="x.ron", line=1, column=len(text) + 1, parser_code="expected-separator"
+        )
+
+    def test_every_file_that_does_not_parse_is_reported(self) -> None:
+        result = self.check_with(x="( source: ", ax="[1 2]")
+        self.assertEqual(result.code, 4)
+        self.assertEqual(sorted(d.file for d in result.diagnostics), ["ax.ron", "x.ron"])
+        self.assertEqual({d.code for d in result.diagnostics}, {"ron-parse"})
+
+    def test_a_file_that_is_not_utf8_exits_4(self) -> None:
+        write_fixture(self.dir, clean_files())
+        (self.dir / "bad.ron").write_bytes(b"(\n  source: \xff,\n)\n")
+        result = run_check(["--dir", str(self.dir), "--today", TODAY])
+        self.assertEqual(result.code, 4)
+        self.assertDiagnostic(
+            result, "not-utf8", file="bad.ron", operation="decode", path=str(self.dir / "bad.ron"), offset=12,
+            found="0xff",
+        )
+
+    def test_a_file_that_cannot_be_read_exits_5(self) -> None:
+        write_fixture(self.dir, clean_files())
+        (self.dir / "folder.ron").mkdir()
+        result = run_check(["--dir", str(self.dir), "--today", TODAY])
+        self.assertEqual(result.code, 5)
+        self.assertDiagnostic(
+            result, "read-failed", file="folder.ron", operation="read", path=str(self.dir / "folder.ron"),
+            errno=errno.EISDIR,
+        )
+
+    def test_the_highest_failure_class_wins(self) -> None:
+        write_fixture(self.dir, {**clean_files(), "broken": "( source: "})
+        (self.dir / "folder.ron").mkdir()
+        (self.dir / "dynamixel.ron").unlink()
+        result = run_check(["--dir", str(self.dir), "--today", TODAY])
+        self.assertEqual(result.code, 5)
+        self.assertEqual(sorted(d.code for d in result.diagnostics), ["map-missing", "read-failed", "ron-parse"])
+        self.assertEqual(sorted(d.exit_code for d in result.diagnostics), [3, 4, 5])
 
     def test_bad_arguments_exit_2(self) -> None:
-        for argv in (["--today", "28.10.2026"], ["--today", "2026-02-30"], ["--bogus"]):
+        cases = (
+            (["--today", "28.10.2026"], "today-not-iso", {"field": "--today", "found": "28.10.2026"}),
+            (["--today", "2026-02-30"], "today-not-a-date", {"field": "--today", "found": "2026-02-30"}),
+            (["--bogus"], "usage", {"file": ""}),
+        )
+        for argv, cause, fields in cases:
             with self.subTest(argv=argv):
-                self.assertEqual(run_check(["--dir", str(self.dir), *argv]).code, 2)
+                result = run_check(["--dir", str(self.dir), *argv])
+                self.assertEqual(result.code, 2)
+                diagnostic = self.assertDiagnostic(result, cause, **fields)
+                self.assertTrue(diagnostic.line().startswith(f"check_tables.py: [{cause}] "))
+                self.assertEqual(result.out, "")
+        self.assertIn("--bogus", diagnostic.message)
+        self.assertTrue(result.err.startswith("usage: "))
+
+    def test_a_dir_that_is_not_a_directory_exits_2(self) -> None:
+        missing = self.dir / "nowhere"
+        result = run_check(["--dir", str(missing)])
+        self.assertEqual(result.code, 2)
+        self.assertDiagnostic(result, "dir-not-found", file="", field="--dir", path=str(missing))
 
     def test_sections_in_order(self) -> None:
         code, out, _err, _diagnostics = self.check(clean_files())
@@ -525,7 +615,19 @@ class CliTests(FixtureCase):
         self.assertIn("x.ron", out.split("errors\n", 1)[1])
 
     def test_unknown_stem_exits_2(self) -> None:
-        self.assertEqual(self.check(clean_files(), "nope").code, 2)
+        result = self.check(clean_files(), "nope", "ax", "gone")
+        self.assertEqual(result.code, 2)
+        self.assertDiagnostic(result, "stem-unknown", file="", found=["nope", "gone"], dir=str(self.dir))
+
+    def test_one_exit_code_per_failure_class(self) -> None:
+        self.assertEqual(
+            (check_tables.EXIT_OK, check_tables.EXIT_RULE, check_tables.EXIT_USAGE, check_tables.EXIT_NO_MAP,
+             check_tables.EXIT_PARSE, check_tables.EXIT_IO),
+            (0, 1, 2, 3, 4, 5),
+        )
+        for code in range(6):
+            with self.subTest(code=code):
+                self.assertIn(f"\n    {code}  ", check_tables.__doc__)
 
     def test_markdown_prints_a_list(self) -> None:
         code, out, _err, _diagnostics = self.check(clean_files(), "--markdown", "ax", "x")

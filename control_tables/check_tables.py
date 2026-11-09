@@ -25,7 +25,15 @@ Exit codes, one per failure class (the highest wins when several occur):
 
     0  no diagnostic
     1  a rule is broken
-    2  bad arguments, a file that does not parse or a missing `dynamixel.ron`
+    2  bad command line: an unknown option, a `--today` that is not a real ISO
+       date, a `--dir` that is not a directory, a STEM that names no table
+    3  `dynamixel.ron` is missing
+    4  a file does not parse: RON syntax (with the parser's own code, line and
+       column) or bytes that are not UTF-8
+    5  a file or the directory cannot be read (I/O error)
+
+Every file that cannot be loaded is reported before the run stops; the rules
+run only once every file loads.
 
 No network.
 """
@@ -35,10 +43,11 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import os
 import re
 import sys
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, NoReturn
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MAP_FILE = "dynamixel.ron"
@@ -50,15 +59,33 @@ EMANUAL_PREFIX = "https://emanual.robotis.com/"
 # --------------------------------------------------------------------------
 
 
-class RonError(Exception):
-    """A file that does not parse: names the file, line and column."""
+# The parser's own codes, one per way a text fails to parse (`RonError.code`).
+RON_ERROR_CODES = (
+    "unexpected-char",
+    "unknown-escape",
+    "unterminated-string",
+    "expected-token",
+    "trailing-value",
+    "expected-value",
+    "expected-map-key",
+    "duplicate-key",
+    "expected-field-name",
+    "expected-separator",
+)
 
-    def __init__(self, file: str, line: int, col: int, message: str) -> None:
+
+class RonError(Exception):
+    """A file that does not parse: names the file, line and column, and the parser's code for the cause."""
+
+    # DECISION: `code` defaults to None so emanual.py, which raises RonError for a table without
+    # `control_table` and is outside this change, keeps working; every parser site passes a code.
+    def __init__(self, file: str, line: int, col: int, message: str, code: str | None = None) -> None:
         super().__init__(f"{file}:{line}:{col}: {message}")
         self.file = file
         self.line = line
         self.col = col
         self.message = message
+        self.code = code
 
 
 class Ident:
@@ -160,7 +187,7 @@ def _tokenize(text: str, file: str) -> list[_Token]:
         col = pos - line_start + 1
         m = _TOKEN_RE.match(text, pos)
         if m is None:
-            raise RonError(file, line, col, f"unexpected character {text[pos]!r}")
+            raise RonError(file, line, col, f"unexpected character {text[pos]!r}", "unexpected-char")
         kind = m.lastgroup
         if kind == "string":
             value, end = _read_string(text, pos, file, line, col)
@@ -208,11 +235,11 @@ def _read_string(text: str, start: int, file: str, line: int, col: int) -> tuple
                 out.append(chr(int(text[pos + 2 : close], 16)))
                 pos = close
             else:
-                raise RonError(file, line, col, f"unknown escape \\{e} in string")
+                raise RonError(file, line, col, f"unknown escape \\{e} in string", "unknown-escape")
         else:
             out.append(c)
         pos += 1
-    raise RonError(file, line, col, "unterminated string")
+    raise RonError(file, line, col, "unterminated string", "unterminated-string")
 
 
 class _Parser:
@@ -229,8 +256,8 @@ class _Parser:
         self.i += 1
         return tok
 
-    def error(self, tok: _Token, message: str) -> RonError:
-        return RonError(self.file, tok.line, tok.col, message)
+    def error(self, tok: _Token, message: str, code: str) -> RonError:
+        return RonError(self.file, tok.line, tok.col, message, code)
 
     def is_punct(self, tok: _Token, value: str) -> bool:
         return tok.kind == "punct" and tok.value == value
@@ -238,7 +265,7 @@ class _Parser:
     def expect(self, value: str) -> _Token:
         tok = self.next()
         if not self.is_punct(tok, value):
-            raise self.error(tok, f"expected `{value}`, found {self.describe(tok)}")
+            raise self.error(tok, f"expected `{value}`, found {self.describe(tok)}", "expected-token")
         return tok
 
     @staticmethod
@@ -253,7 +280,7 @@ class _Parser:
         value = self.value()
         tok = self.peek()
         if tok.kind != "eof":
-            raise self.error(tok, f"unexpected {self.describe(tok)} after the value")
+            raise self.error(tok, f"unexpected {self.describe(tok)} after the value", "trailing-value")
         return value
 
     def value(self) -> object:
@@ -273,7 +300,7 @@ class _Parser:
                 return self.brace()
             if tok.value == "[":
                 return self.list()
-        raise self.error(tok, f"expected a value, found {self.describe(tok)}")
+        raise self.error(tok, f"expected a value, found {self.describe(tok)}", "expected-value")
 
     def starts_record(self) -> bool:
         return self.peek().kind == "ident" and self.is_punct(self.peek(1), ":")
@@ -295,10 +322,10 @@ class _Parser:
         while not self.is_punct(self.peek(), "}"):
             key_tok = self.peek()
             if key_tok.kind not in ("int", "str"):
-                raise self.error(key_tok, f"expected a map key, found {self.describe(key_tok)}")
+                raise self.error(key_tok, f"expected a map key, found {self.describe(key_tok)}", "expected-map-key")
             self.next()
             if key_tok.value in result:
-                raise self.error(key_tok, f"duplicate key {key_tok.value}")
+                raise self.error(key_tok, f"duplicate key {key_tok.value}", "duplicate-key")
             self.expect(":")
             result[key_tok.value] = self.value()
             if not self.comma_or_close("}"):
@@ -313,9 +340,11 @@ class _Parser:
         while not self.is_punct(self.peek(), close):
             key_tok = self.next()
             if key_tok.kind != "ident":
-                raise self.error(key_tok, f"expected a field name, found {self.describe(key_tok)}")
+                raise self.error(
+                    key_tok, f"expected a field name, found {self.describe(key_tok)}", "expected-field-name"
+                )
             if key_tok.value in record:
-                raise self.error(key_tok, f"duplicate key `{key_tok.value}`")
+                raise self.error(key_tok, f"duplicate key `{key_tok.value}`", "duplicate-key")
             self.expect(":")
             value_start = self.peek().start
             record[key_tok.value] = self.value()
@@ -346,7 +375,7 @@ class _Parser:
             return True
         if self.is_punct(tok, close):
             return False
-        raise self.error(tok, f"expected `,` or `{close}`, found {self.describe(tok)}")
+        raise self.error(tok, f"expected `,` or `{close}`, found {self.describe(tok)}", "expected-separator")
 
 
 def parse_ron(text: str, file: str = "<string>") -> object:
@@ -365,24 +394,6 @@ def parse_ron(text: str, file: str = "<string>") -> object:
 # --------------------------------------------------------------------------
 
 
-class LoadError(Exception):
-    """Exit code 2: a missing `dynamixel.ron` or a file that does not parse."""
-
-
-def load(directory: Path) -> tuple[object, dict[str, object]]:
-    """Reads `dynamixel.ron` and every other `*.ron` in `directory` (stem -> value)."""
-    map_path = directory / MAP_FILE
-    if not map_path.is_file():
-        raise LoadError(f"{map_path}: missing {MAP_FILE}")
-    tables: dict[str, object] = {}
-    for path in sorted(directory.glob("*.ron")):
-        if path.name == MAP_FILE:
-            continue
-        tables[path.stem] = parse_ron(path.read_text(encoding="utf-8"), path.name)
-    model_map = parse_ron(map_path.read_text(encoding="utf-8"), MAP_FILE)
-    return model_map, tables
-
-
 # --------------------------------------------------------------------------
 # Diagnostics (SRS FR-6.14)
 # --------------------------------------------------------------------------
@@ -390,7 +401,10 @@ def load(directory: Path) -> tuple[object, dict[str, object]]:
 PROG = "check_tables.py"
 EXIT_OK = 0
 EXIT_RULE = 1
-EXIT_LOAD = 2
+EXIT_USAGE = 2
+EXIT_NO_MAP = 3
+EXIT_PARSE = 4
+EXIT_IO = 5
 
 
 class Cause(NamedTuple):
@@ -411,6 +425,19 @@ FR9_HINT = (
 # table; one code per check, and a "must be a non-empty list" check keeps one `-shape` code whose `found`
 # tells an empty list from another value; advice is static per code, as `Error::hint()` is (FR-6.12).
 CAUSES: dict[str, Cause] = {
+    # command line
+    "usage": Cause(EXIT_USAGE),
+    "today-not-iso": Cause(EXIT_USAGE),
+    "today-not-a-date": Cause(EXIT_USAGE),
+    "dir-not-found": Cause(EXIT_USAGE),
+    "stem-unknown": Cause(EXIT_USAGE),
+    # loading
+    "map-missing": Cause(EXIT_NO_MAP, "pass `--dir` the directory that holds the tables and `dynamixel.ron`"),
+    "ron-parse": Cause(EXIT_PARSE),
+    # DECISION: bytes that are not UTF-8 are content the parser cannot take, so exit 4 with the syntax errors;
+    # exit 5 is kept for the file system refusing a read.
+    "not-utf8": Cause(EXIT_PARSE, "save the file as UTF-8"),
+    "read-failed": Cause(EXIT_IO),
     # table shape
     "table-not-record": RULE,
     "control-table-missing": RULE,
@@ -725,6 +752,108 @@ def _name(value: object) -> object:
 def _shown(value: object) -> str:
     """`_name(value)` for a message, `-` when absent."""
     return "-" if value is None else str(_name(value))
+
+
+# --------------------------------------------------------------------------
+# Loading
+# --------------------------------------------------------------------------
+
+
+class LoadError(Exception):
+    """Input the check cannot take in: carries one diagnostic per file it could not load."""
+
+    def __init__(self, diagnostics: list[Diagnostic]) -> None:
+        super().__init__("\n".join(d.line() for d in diagnostics))
+        self.diagnostics = diagnostics
+
+
+_UNREAD = object()
+
+
+def _read_ron(path: Path, report: Report) -> object:
+    """Reads, decodes and parses one file; on failure records why and returns `_UNREAD`."""
+    try:
+        data = path.read_bytes()
+    except OSError as err:
+        report.add(
+            "read-failed", path.name, "", f"read failed: {err}", operation="read", path=str(path), errno=err.errno
+        )
+        return _UNREAD
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as err:
+        byte = f"0x{data[err.start]:02x}"
+        report.add(
+            "not-utf8",
+            path.name,
+            "",
+            f"byte {byte} at offset {err.start} is not UTF-8",
+            operation="decode",
+            path=str(path),
+            offset=err.start,
+            found=byte,
+        )
+        return _UNREAD
+    try:
+        return parse_ron(text, path.name)
+    except RonError as err:
+        report.add(
+            "ron-parse",
+            path.name,
+            "",
+            err.message,
+            operation="parse",
+            path=str(path),
+            line=err.line,
+            column=err.col,
+            parser_code=err.code,
+        )
+        return _UNREAD
+
+
+def read_inputs(directory: Path, report: Report) -> tuple[object, dict[str, object]]:
+    """Reads `dynamixel.ron` and every other `*.ron` in `directory` (stem -> value).
+
+    Every file it cannot take in gets a diagnostic and is left out; the map is
+    None when missing or unreadable.
+    """
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError as err:
+        report.add(
+            "read-failed",
+            str(directory),
+            "",
+            f"list failed: {err}",
+            operation="list",
+            path=str(directory),
+            errno=err.errno,
+        )
+        return None, {}
+    map_path = directory / MAP_FILE
+    if MAP_FILE not in names:
+        report.add("map-missing", MAP_FILE, "", f"{map_path} does not exist", path=str(map_path))
+    tables: dict[str, object] = {}
+    # DECISION: list the directory instead of globbing it, so an unreadable directory is a diagnostic rather
+    # than an empty table set; the names kept are those `*.ron` matched (no dot file, the map apart).
+    for name in names:
+        if not name.endswith(".ron") or name.startswith(".") or name == MAP_FILE:
+            continue
+        path = directory / name
+        value = _read_ron(path, report)
+        if value is not _UNREAD:
+            tables[path.stem] = value
+    model_map = _read_ron(map_path, report) if MAP_FILE in names else _UNREAD
+    return (None if model_map is _UNREAD else model_map), tables
+
+
+def load(directory: Path) -> tuple[object, dict[str, object]]:
+    """`read_inputs` for callers that want every file or nothing: raises LoadError naming each failure."""
+    report = Report()
+    model_map, tables = read_inputs(directory, report)
+    if report.diagnostics:
+        raise LoadError(report.diagnostics)
+    return model_map, tables
 
 
 # --------------------------------------------------------------------------
@@ -2811,17 +2940,37 @@ def render(
     return "\n".join(out) + "\n"
 
 
-def _iso_date(text: str) -> datetime.date:
+class UsageError(Exception):
+    """A command line argparse rejects; its text is argparse's message."""
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    """An ArgumentParser that raises UsageError instead of printing and exiting."""
+
+    def error(self, message: str) -> NoReturn:
+        raise UsageError(message)
+
+
+def _today(text: str | None, report: Report) -> datetime.date | None:
+    """The `--today` date, today when absent; None (and a diagnostic) when it is not a real ISO date."""
+    # DECISION: checked here rather than by an argparse `type`, whose errors all reach `error()` as one text,
+    # so a wrong format and an impossible date keep their own causes.
+    if text is None:
+        return datetime.date.today()
     if not DATE_RE.match(text):
-        raise argparse.ArgumentTypeError(f"not an ISO date YYYY-MM-DD: {text!r}")
+        report.add(
+            "today-not-iso", "", "", f"--today {text!r} is not an ISO date YYYY-MM-DD", field="--today", found=text
+        )
+        return None
     try:
         return datetime.date.fromisoformat(text)
-    except ValueError as err:
-        raise argparse.ArgumentTypeError(f"not a real date: {text!r} ({err})") from None
+    except ValueError:
+        report.add("today-not-a-date", "", "", f"--today {text!r} is not a real date", field="--today", found=text)
+        return None
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ArgumentParser(
         prog=PROG,
         description="Check the control tables and the model map (no network).",
     )
@@ -2833,7 +2982,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--today",
-        type=_iso_date,
         default=None,
         help="the 'not in the future' bound for verified dates (default: today)",
     )
@@ -2860,23 +3008,46 @@ def run(argv: list[str] | None = None) -> Outcome:
     # DECISION: `run` returns what `main` prints plus the diagnostics as data, so tests check the cause code
     # and fields of each finding (NFR-12) rather than parsing the printed text.
     parser = build_parser()
+    report = Report()
     try:
         args = parser.parse_args(argv)
+    except UsageError as err:
+        report.add("usage", "", "", str(err))
+        return _stopped(report, parser.format_usage())
     except SystemExit as exc:
         return Outcome(int(exc.code or 0), "", "", [])
-    if args.today is None:
-        args.today = datetime.date.today()
-    try:
-        model_map, tables = load(args.dir)
-    except (LoadError, RonError, OSError) as err:
-        return Outcome(EXIT_LOAD, "", f"error: {err}\n", [])
+    today = _today(args.today, report)
+    # DECISION: a `--dir` that is no directory is a bad argument (exit 2), apart from a missing map in a real
+    # directory (exit 3): the fix is the command line, not the directory's content.
+    if not args.dir.is_dir():
+        report.add("dir-not-found", "", "", f"--dir {args.dir} is not a directory", field="--dir", path=str(args.dir))
+    if report.diagnostics:
+        return _stopped(report)
+    model_map, tables = read_inputs(args.dir, report)
+    # DECISION: the rules need every file (a table left out would read as unmapped or missing), so they run
+    # only when all files load; every file that failed is reported first, not only the first one.
+    if report.diagnostics:
+        return _stopped(report)
     unknown = [stem for stem in args.stems if stem not in tables]
     if unknown:
-        return Outcome(EXIT_LOAD, "", f"error: no table named {', '.join(unknown)} in {args.dir}\n", [])
-    report, info = run_checks(model_map, tables, args.today)
+        report.add(
+            "stem-unknown",
+            "",
+            "",
+            f"no table named {', '.join(unknown)} in {args.dir}",
+            found=unknown,
+            dir=str(args.dir),
+        )
+        return _stopped(report)
+    report, info = run_checks(model_map, tables, today)
     selected = args.stems or list(tables)
-    err = "".join(f"{line}\n" for line in report.lines())
-    return Outcome(report.exit_code(), render(tables, selected, report, info, args.markdown), err, report.diagnostics)
+    out = render(tables, selected, report, info, args.markdown)
+    return Outcome(report.exit_code(), out, "".join(f"{line}\n" for line in report.lines()), report.diagnostics)
+
+
+def _stopped(report: Report, before: str = "") -> Outcome:
+    """The outcome of a run stopped before the rules: `before` and the diagnostics on stderr only."""
+    return Outcome(report.exit_code(), "", before + "".join(f"{line}\n" for line in report.lines()), report.diagnostics)
 
 
 def main(argv: list[str] | None = None) -> int:
