@@ -59,12 +59,10 @@ pub enum Cause {
     },
     /// The file is not RON of the expected shape.
     Parse(Box<ron::error::SpannedError>),
-    /// The directory of the tables could not be listed.
-    ListDir {
-        /// The directory.
+    /// A `.ron` file whose name is not UTF-8, so no map can name it.
+    NonUtf8Name {
+        /// The file.
         path: PathBuf,
-        /// The error listing it.
-        source: std::io::Error,
     },
     /// The file failed a check.
     Check(Check),
@@ -74,7 +72,7 @@ impl Cause {
     /// What to check, when the facts point at a usual cause.
     pub fn hint(&self) -> Option<&'static str> {
         match self {
-            Self::Read { .. } | Self::Parse(_) | Self::ListDir { .. } => None,
+            Self::Read { .. } | Self::Parse(_) | Self::NonUtf8Name { .. } => None,
             Self::Check(check) => check.hint(),
         }
     }
@@ -91,9 +89,7 @@ impl fmt::Display for Cause {
         match self {
             Self::Read { path, source } => write!(f, "cannot read {}: {source}", path.display()),
             Self::Parse(error) => write!(f, "{error}"),
-            Self::ListDir { path, source } => {
-                write!(f, "cannot list {}: {source}", path.display())
-            }
+            Self::NonUtf8Name { path } => write!(f, "{}: file name is not UTF-8", path.display()),
             Self::Check(check) => write!(f, "{check}"),
         }
     }

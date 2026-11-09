@@ -88,8 +88,131 @@ pub enum Failure {
     },
     /// `rustfmt` failed on a generated file.
     Rustfmt(String),
-    /// Writing the output failed.
-    Io(String),
+    /// A file system operation failed.
+    Io(IoFailure),
+}
+
+impl From<IoFailure> for Failure {
+    fn from(failure: IoFailure) -> Self {
+        Self::Io(failure)
+    }
+}
+
+/// A file system operation that failed, with its path and the error, kept
+/// typed.
+#[derive(Debug)]
+pub enum IoFailure {
+    /// Creating a directory.
+    CreateDir {
+        /// The directory.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// Listing a directory.
+    ListDir {
+        /// The directory.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// Reading the next entry of a directory being listed.
+    ReadEntry {
+        /// The directory.
+        dir: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// Reading the metadata of a file.
+    Metadata {
+        /// The file.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// Reading a file.
+    Read {
+        /// The file.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// Writing a file.
+    Write {
+        /// The file.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// Removing a file.
+    Remove {
+        /// The file.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// A `.rs` file in `src/models/` whose name is not UTF-8.
+    NonUtf8Name {
+        /// The file.
+        path: PathBuf,
+    },
+}
+
+impl IoFailure {
+    /// What to check, when the facts point at a usual cause.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            Self::NonUtf8Name { .. } => Some(
+                "codegen writes only UTF-8 names, so it did not write this file: move or remove it",
+            ),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for IoFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CreateDir { path, source } => {
+                write!(f, "cannot create directory {}: {source}", path.display())
+            }
+            Self::ListDir { path, source } => write!(f, "cannot list {}: {source}", path.display()),
+            Self::ReadEntry { dir, source } => {
+                write!(f, "cannot read an entry of {}: {source}", dir.display())
+            }
+            Self::Metadata { path, source } => {
+                write!(
+                    f,
+                    "cannot read the metadata of {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Read { path, source } => write!(f, "cannot read {}: {source}", path.display()),
+            Self::Write { path, source } => write!(f, "cannot write {}: {source}", path.display()),
+            Self::Remove { path, source } => {
+                write!(f, "cannot remove {}: {source}", path.display())
+            }
+            Self::NonUtf8Name { path } => {
+                write!(f, "{}: file name is not UTF-8", path.display())
+            }
+        }
+    }
+}
+
+/// The entries of `dir`.
+pub(crate) fn entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>, IoFailure> {
+    std::fs::read_dir(dir)
+        .map_err(|source| IoFailure::ListDir {
+            path: dir.to_path_buf(),
+            source,
+        })?
+        .map(|entry| {
+            entry.map_err(|source| IoFailure::ReadEntry {
+                dir: dir.to_path_buf(),
+                source,
+            })
+        })
+        .collect()
 }
 
 impl Failure {
@@ -97,7 +220,8 @@ impl Failure {
     pub fn hint(&self) -> Option<&'static str> {
         match self {
             Self::RustfmtNotFound { .. } => Some("run `rustup component add rustfmt`"),
-            Self::Checks { .. } | Self::Rustfmt(_) | Self::Io(_) => None,
+            Self::Io(failure) => failure.hint(),
+            Self::Checks { .. } | Self::Rustfmt(_) => None,
         }
     }
 
@@ -120,9 +244,8 @@ impl Failure {
                 &format_args!("rustfmt not found to format src/{file}"),
                 self.hint(),
             ),
-            Self::Rustfmt(message) | Self::Io(message) => {
-                push_lines(&mut out, "error", message, self.hint());
-            }
+            Self::Rustfmt(message) => push_lines(&mut out, "error", message, self.hint()),
+            Self::Io(failure) => push_lines(&mut out, "error", failure, self.hint()),
         }
         out
     }
@@ -167,7 +290,8 @@ pub fn generate(dir: &Path) -> Result<Generated, Failure> {
         }
     }
 
-    let on_disk = table_stems(dir).map_err(|d| checks(vec![d]))?;
+    let (on_disk, unnamed) = table_stems(dir)?;
+    errors.extend(unnamed);
     let outcome = resolve::resolve(&map, &tables, &on_disk);
     errors.extend(outcome.errors);
     if !errors.is_empty() {
@@ -183,28 +307,31 @@ pub fn generate(dir: &Path) -> Result<Generated, Failure> {
     })
 }
 
-/// The stems of `dir/*.ron`, except `dynamixel`.
-fn table_stems(dir: &Path) -> Result<BTreeSet<String>, Diagnostic> {
-    let unreadable = |source| {
-        Diagnostic::new(
-            "dynamixel",
-            Cause::ListDir {
-                path: dir.to_path_buf(),
-                source,
-            },
-        )
-    };
+/// The stems of `dir/*.ron`, except `dynamixel`, and a diagnostic for each
+/// `.ron` file whose name is not UTF-8, which no map can name.
+fn table_stems(dir: &Path) -> Result<(BTreeSet<String>, Vec<Diagnostic>), Failure> {
     let mut stems = BTreeSet::new();
-    for entry in std::fs::read_dir(dir).map_err(unreadable)? {
-        let path = entry.map_err(unreadable)?.path();
-        if path.extension().is_some_and(|ext| ext == "ron")
-            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-            && stem != "dynamixel"
-        {
-            stems.insert(stem.to_string());
+    let mut unnamed = Vec::new();
+    for entry in entries(dir)? {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "ron") {
+            continue;
+        }
+        let Some(stem) = path.file_stem() else {
+            continue;
+        };
+        match stem.to_str() {
+            Some("dynamixel") => {}
+            Some(stem) => {
+                stems.insert(stem.to_string());
+            }
+            None => unnamed.push(Diagnostic::new(
+                stem.to_string_lossy(),
+                Cause::NonUtf8Name { path: path.clone() },
+            )),
         }
     }
-    Ok(stems)
+    Ok((stems, unnamed))
 }
 
 /// Regenerates `src/models.rs` and `src/models/` under `root` from
@@ -384,7 +511,7 @@ mod tests {
                 (f, table)
             })
             .collect();
-        let outcome = resolve::resolve(&map, &tables, &table_stems(&dir).unwrap());
+        let outcome = resolve::resolve(&map, &tables, &table_stems(&dir).unwrap().0);
         assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
         let files = render::render(&outcome.resolved);
         Real {
@@ -936,6 +1063,44 @@ mod tests {
     }
 
     #[test]
+    fn listing_failure_names_the_directory() {
+        let dir = fixtures::Dir::new();
+        let file = dir.path().join("control_tables");
+        std::fs::write(&file, "not a directory").unwrap();
+        let failure = table_stems(&file).unwrap_err();
+        assert!(
+            matches!(&failure, Failure::Io(IoFailure::ListDir { path, .. }) if *path == file),
+            "{failure:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_utf8_table_name_is_a_diagnostic() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let root = Root::new(&xm_map(), &[("xm", Table::xm())]);
+        let odd = root
+            .control_tables()
+            .join(std::ffi::OsStr::from_bytes(b"x\xff.ron"));
+        std::fs::write(&odd, "()").unwrap();
+        std::fs::write(
+            root.control_tables()
+                .join(std::ffi::OsStr::from_bytes(b"\xff.md")),
+            "notes",
+        )
+        .unwrap();
+        let errors = checks(generate(&root.control_tables()));
+        let [error] = errors.as_slice() else {
+            panic!("{errors:?}");
+        };
+        assert_eq!(error.file, "x\u{fffd}");
+        assert!(
+            matches!(&error.cause, Cause::NonUtf8Name { path } if *path == odd),
+            "{error:?}"
+        );
+    }
+
+    #[test]
     fn summary_line() {
         let report = Report {
             written: vec![PathBuf::from("models.rs"), PathBuf::from("models/a.rs")],
@@ -972,9 +1137,14 @@ mod tests {
             Failure::Rustfmt("rustfmt failed".into()).lines(),
             ["error: rustfmt failed"]
         );
+        let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
         assert_eq!(
-            Failure::Io("src/models.rs: denied".into()).lines(),
-            ["error: src/models.rs: denied"]
+            Failure::from(IoFailure::Write {
+                path: PathBuf::from("src/models.rs"),
+                source: denied(),
+            })
+            .lines(),
+            [format!("error: cannot write src/models.rs: {}", denied())]
         );
     }
 }
