@@ -307,7 +307,7 @@ fn role_doc(role: &GenRole) -> String {
             let _ = write!(
                 doc,
                 "\n/// One raw step is 1/{} of the maximum: the full magnitude below direction bit {n} is 100 %.",
-                (1u32 << n) - 1
+                fr9::full_magnitude(n)
             );
         }
     }

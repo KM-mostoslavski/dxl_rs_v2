@@ -18,6 +18,7 @@
 //! "about" step is more than 5 % off that.
 
 use std::f64::consts::PI;
+use std::ops::RangeInclusive;
 
 use super::Diagnostic;
 use super::schema::{Access, Area, ControlTable, RawRange, Row, Source, UnitEntry};
@@ -55,6 +56,12 @@ const LOAD_STEP_TOLERANCE: f64 = 0.05;
 
 /// The units `unit_info` may give.
 const UNITS: [&str; 8] = ["deg", "rpm", "mA", "V", "°C", "%", "ms", "deg/s^2"];
+
+// DECISION: refuse ranged or unit rows outside 1..=7 bytes instead of
+// widening to i128: the e-Manual tables use 1, 2 and 4, and 8 overflows i64.
+/// The register sizes, in bytes, whose raw span fits an `i64`: a range or
+/// a `sign_type` is checked only on a row of one of these sizes.
+const SPAN_SIZES: RangeInclusive<u8> = 1..=7;
 
 /// What a role's typed value is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -347,8 +354,12 @@ impl SignKind {
     }
 
     /// The raw values a `size`-byte register holds under this sign, or
-    /// `None` for a direction bit outside the register.
+    /// `None` for a size outside [`SPAN_SIZES`] or a direction bit outside
+    /// the register.
     fn raw_span(self, size: u8) -> Option<(i64, i64)> {
+        if !SPAN_SIZES.contains(&size) {
+            return None;
+        }
         let bits = u32::from(size) * 8;
         let top = (1i64 << bits) - 1;
         match self {
@@ -476,8 +487,18 @@ fn fits(range: RawRange, sign: SignKind, size: u8) -> bool {
 /// for every row range.
 pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec<Diagnostic>) {
     for row in &table.control_table {
-        if let Some(range) = row.range
-            && !fits(range, SignKind::Unsigned, row.size)
+        let Some(range) = row.range else {
+            continue;
+        };
+        if !SPAN_SIZES.contains(&row.size) {
+            errors.push(Diagnostic::new(
+                file,
+                format!(
+                    "row {:?}: size {} is outside 1..=7 bytes, so range {}..={} cannot be checked",
+                    row.data_name, row.size, range.min, range.max
+                ),
+            ));
+        } else if !fits(range, SignKind::Unsigned, row.size)
             && !fits(range, SignKind::TwosComplement, row.size)
         {
             errors.push(Diagnostic::new(
@@ -519,6 +540,10 @@ pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec
             (None, _) => fail(format!(
                 "unknown sign_type {:?} (expected unsigned, twos_complement or direction_bit_N)",
                 entry.sign_type
+            )),
+            (Some(_), Some(row)) if !SPAN_SIZES.contains(&row.size) => fail(format!(
+                "row size {} is outside 1..=7 bytes, so sign_type {} cannot be checked",
+                row.size, entry.sign_type
             )),
             (Some(sign), Some(row)) if sign.raw_span(row.size).is_none() => fail(format!(
                 "sign_type {} does not fit a {}-byte register",
@@ -818,7 +843,7 @@ fn role_of(
                             entry.data_name,
                             entry.value,
                             entry.unit,
-                            (1u32 << n) - 1
+                            full_magnitude(n)
                         ),
                     ));
                     continue;
@@ -852,10 +877,20 @@ fn role_of(
     role
 }
 
+/// The full magnitude below direction bit `n`, 2^n − 1. Check 19 keeps `n`
+/// below the 56 bits of the widest [`SPAN_SIZES`] register.
+pub(crate) fn full_magnitude(n: u8) -> u64 {
+    (1u64 << n) - 1
+}
+
 /// The ratio step of a load whose magnitude sits below direction bit `n`:
 /// the full magnitude, 2^n − 1, is 100 %.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "exact up to 2^53; the e-Manual's direction bits are 10"
+)]
 pub(crate) fn load_step(n: u8) -> f64 {
-    1.0 / f64::from((1u32 << n) - 1)
+    1.0 / full_magnitude(n) as f64
 }
 
 /// The roles of `roles` by field.
@@ -1163,6 +1198,43 @@ mod tests {
         );
         let negative = model(Table::xm_fr9().row_range("Goal Current", -1193, 1193));
         assert_eq!(negative.file, "t");
+    }
+
+    #[test]
+    fn check19_sizes_without_a_raw_span() {
+        for size in [0, 8] {
+            assert_fails(
+                Table::xm_fr9()
+                    .without("LED")
+                    .with_row(65, size, "LED", "RW", "RAM")
+                    .row_range("LED", 0, 1),
+                &[&format!(
+                    "row \"LED\": size {size} is outside 1..=7 bytes, so range 0..=1 cannot be checked"
+                )],
+            );
+            assert_fails(
+                Table::xm_fr9().without("Present Temperature").with_row(
+                    146,
+                    size,
+                    "Present Temperature",
+                    "R",
+                    "RAM",
+                ),
+                &[&format!(
+                    "unit_info \"Present Temperature\": row size {size} is outside 1..=7 bytes, so sign_type unsigned cannot be checked"
+                )],
+            );
+        }
+        assert_fails(
+            Table::ax_fr9()
+                .without("Present Load")
+                .with_row(40, 5, "Present Load", "R", "RAM")
+                .without_unit("Present Load")
+                .unit(
+                    r#"data_name: "Present Load", value: 0.1, unit: "%", sign_type: "direction_bit_35""#,
+                ),
+            &["step 0.1 % is not about 100 % / 34359738367"],
+        );
     }
 
     #[test]
