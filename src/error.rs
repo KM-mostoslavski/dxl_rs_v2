@@ -196,7 +196,7 @@ impl Error {
                 "call disable_torque() before writing EEPROM"
             }
             Self::Validation(V::WheelSpeedUnknown { .. }) => {
-                "set_speed_limit(SpeedLimit::Unlimited) before switching to wheel mode"
+                "write Moving Speed 0 before switching to wheel mode"
             }
             Self::Validation(V::ActuatorFaulted { .. }) => "clear the fault before enabling torque",
             Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
@@ -2907,7 +2907,7 @@ mod tests {
             ),
             (
                 ValidationError::WheelSpeedUnknown { id: id(1) }.into(),
-                "set_speed_limit(SpeedLimit::Unlimited) before switching to wheel mode",
+                "write Moving Speed 0 before switching to wheel mode",
             ),
             (
                 ValidationError::ActuatorFaulted { id: id(1) }.into(),
