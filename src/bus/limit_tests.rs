@@ -449,6 +449,59 @@ mod ax12a {
         assert_quiet(&bus, quiet);
     }
 
+    /// Plan D8: a fault first reported on the reply to `disable_torque()`
+    /// from `On` (Input Voltage only) still shows the write ran: the call
+    /// returns the measured fault and the state becomes `Faulted`, yet
+    /// torque is confirmed off and the voltage limits can be restored, as
+    /// `examples/ax12_sine` does at the end of a run (NFR-11).
+    #[test]
+    fn fault_first_reported_on_disable_confirms_torque_off() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, true);
+        let mark = mark(&bus);
+        script(
+            &mut bus,
+            &[
+                p1_status(1, 0x01, &[]),
+                p1_status(1, 0x01, &[95]),
+                p1_status(1, 0x01, &[100]),
+                p1_status(1, 0x01, &[140]),
+                p1_status(1, 0, &[]),
+            ],
+        );
+        let mut ax = bus.actuator(id(1)).unwrap();
+        let off = ax.disable_torque();
+        assert!(off.as_ref().is_err_and(Error::is_hardware_fault));
+        assert_eq!(
+            off,
+            Err(FaultError::Voltage(VoltageError::BelowMin {
+                id: id(1),
+                measured: Decivolts(95),
+                min: Decivolts(100),
+                max: Decivolts(140),
+                faults: HardwareErrors::from_raw(0x01),
+                request: on(Instruction::Write, 1, "Torque Enable", 24, 1),
+            })
+            .into())
+        );
+        assert_eq!(ax.torque_state(), FAULTED);
+        assert_eq!(
+            ax.set_voltage_limits(Voltage::from_volts(6.0), Voltage::from_volts(16.0)),
+            Ok(())
+        );
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p1_write(1, 24, &[0]),
+                p1_read(1, 42, 1),
+                p1_read(1, 12, 1),
+                p1_read(1, 13, 1),
+                p1_write(1, 12, &[60, 160]),
+            ])
+        );
+        assert_done(&bus);
+    }
+
     /// Plan D4: the register check comes first: a model without the
     /// register refuses whatever its torque state.
     #[test]

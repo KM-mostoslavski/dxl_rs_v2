@@ -196,10 +196,12 @@ fn restore(
         let Some(mut a) = bus.actuator(id) else {
             continue;
         };
+        // The run enabled torque, so it must be confirmed off again before the limit write. A
+        // fault first reported on that reply still confirms it, so read the state after the call.
+        let off = a.disable_torque();
         let faulted = a.torque_state() == dxl_rs_v2::TorqueState::Faulted;
-        // The run enabled torque, so it must be confirmed off again before the limit write.
-        let result = tolerate(a.disable_torque(), faulted)
-            .and_then(|()| tolerate(a.set_voltage_limits(min, max), faulted));
+        let result =
+            tolerate(off, faulted).and_then(|()| tolerate(a.set_voltage_limits(min, max), faulted));
         match result {
             Ok(()) => println!(
                 "id {:>3}: voltage limits {:.1}-{:.1} V restored",
