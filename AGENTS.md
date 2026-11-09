@@ -165,7 +165,10 @@ A wrong address or size silently corrupts actuator state or EEPROM.
   by `match`.
 - No panic on the happy path or on any I/O or hardware error; those are
   `Result`s with typed `thiserror` (no_std) errors split into transport,
-  protocol, status, validation and setup.
+  protocol, status, fault, validation and setup.
+- Every error is precise: one variant per cause, carrying the request and
+  the values that decided it, so no second run is needed to find the cause
+  (SRS FR-6.6 to FR-6.14).
 - The only allowed panic is the SRS § 5 marker
   `unimplemented!("SRS <id>: <question>")` for a point the spec leaves open;
   where a wrong guess could corrupt actuator state or EEPROM, use
