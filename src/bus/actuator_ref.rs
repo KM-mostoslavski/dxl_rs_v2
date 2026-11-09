@@ -86,6 +86,16 @@ fn poke<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) {
 /// [`ValidationError::Unsupported`](crate::ValidationError::Unsupported)
 /// and sends nothing; [`model`](ActuatorRef::model) gives the Tier 2
 /// handle, where such a call does not compile.
+///
+/// The EEPROM limits most models share (voltage, temperature, position,
+/// velocity, current and PWM limits, Max Torque) are read the same way and
+/// written with [`write_limit`](ActuatorRef::write_limit) and its setters
+/// ([`set_voltage_limits`](ActuatorRef::set_voltage_limits),
+/// [`set_position_limits`](ActuatorRef::set_position_limits), ...): one
+/// acknowledged write with torque off, checked against the e-Manual range
+/// and, for a pair, its order. The bus follows each write: goals are then
+/// checked against the new position limits, limit mode and goal bound. ID,
+/// baud rate and the registers of one series stay raw (`raw-registers`).
 #[cfg_attr(
     all(feature = "mock", feature = "rx"),
     doc = r#"
@@ -704,8 +714,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// byte is sent, and `min` must not lie above `max`. Acknowledged, they
     /// replace the limits Setup read
     /// ([`position_limits`](Actuator::position_limits)), and on AX, RX and
-    /// MX on Protocol 1 the limit mode follows them: equal limits at the
-    /// zero tick are wheel mode. Where the two registers are apart (Y
+    /// MX on Protocol 1 the limit mode follows them: both at raw tick 0 (CW
+    /// = CCW = 0) is wheel mode. Where the two registers are apart (Y
     /// series), the one that keeps the pair ordered is written first.
     ///
     /// # Errors
@@ -963,7 +973,8 @@ impl<P: Protocol, T: Transport, C: Clock> Describe for ActuatorRef<'_, P, T, C> 
 }
 
 /// `id`, `model_number`, `name`, `position_scale` and
-/// `position_limits[_raw]` of the held actuator, as read at Setup.
+/// `position_limits[_raw]` of the held actuator, as read at Setup and kept
+/// true by its limit writes.
 impl<P: Protocol, T: Transport, C: Clock> Actuator for ActuatorRef<'_, P, T, C> {}
 
 #[cfg(test)]

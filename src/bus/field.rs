@@ -7,7 +7,8 @@
 //! tier:
 //!
 //! - one actuator: [`ActuatorRef::read`](crate::ActuatorRef::read) and
-//!   [`ActuatorRef::write`](crate::ActuatorRef::write);
+//!   [`ActuatorRef::write`](crate::ActuatorRef::write), and for the EEPROM
+//!   limits ([`LimitField`]) [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit);
 //! - many actuators: [`Bus::read_field`](crate::Bus::read_field) (both
 //!   protocols), [`Bus::sync_write`](crate::Bus::sync_write) (both
 //!   protocols) and [`Bus::sync_read`](crate::Bus::sync_read) (Protocol 2);
@@ -45,6 +46,13 @@
 //! | [`PGain`], [`DGain`] | [`Gain`] | no | any | e-Manual range |
 //! | compliance fields | [`ComplianceMargin`], [`ComplianceSlope`] | no | any | e-Manual range |
 //! | [`LedRed`], [`LedGreen`], [`LedBlue`] | `u8` | no | any | — |
+//! | [`MinVoltageLimit`], [`MaxVoltageLimit`] | [`Voltage`] | must be off | any | e-Manual range; a pair, min ≤ max |
+//! | [`TemperatureLimit`] | [`Temperature`] | must be off | any | e-Manual range |
+//! | [`MinPositionLimit`], [`MaxPositionLimit`] | [`Position`] | must be off | any | the table's position range; min ≤ max |
+//! | [`VelocityLimit`] | [`Velocity`] | must be off | any | e-Manual range |
+//! | [`CurrentLimit`] | [`Current`] | must be off | any | e-Manual range |
+//! | [`PwmLimit`] | [`Pwm`] | must be off | any | e-Manual range |
+//! | [`MaxTorque`] | [`Load`] | must be off | any | e-Manual range |
 //!
 //! Every value is also checked against the register size. A model whose
 //! table lacks the register refuses the call with
@@ -52,11 +60,20 @@
 //! table gives the register no unit refuses it with
 //! [`ValidationError::NoUnit`] (the raw form still works).
 //!
+//! The limit fields are [`LimitField`]s, written only by
+//! [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) and its
+//! setters, never by a sync or bulk write: the EEPROM ignores writes while
+//! torque is on, so they are refused then with
+//! [`ValidationError::ActuatorIsOn`], and the bus keeps the position
+//! limits, the limit mode and the goal bound it holds true to each write.
+//! Every read tier reads them.
+//!
 //! Torque Enable is not a field: a sync write gets no reply, so the bus
 //! could not keep its torque state true to the hardware. Use
 //! [`Bus::enable_torque`](crate::Bus::enable_torque) and
-//! [`Bus::disable_torque`](crate::Bus::disable_torque). Nor is any EEPROM
-//! register (limits, ID, baud rate): those stay raw (`raw-registers`).
+//! [`Bus::disable_torque`](crate::Bus::disable_torque). Nor are ID, baud
+//! rate and the registers specific to one series (Acceleration Limit,
+//! Position Limit Threshold, ...): those stay raw (`raw-registers`).
 
 use crate::Id;
 use crate::actuator::{Actuator, Cache, Describe, LimitMode, Role};

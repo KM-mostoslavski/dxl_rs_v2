@@ -35,11 +35,11 @@
 ## Tasks
 
 - [ ] T096 [human] Architect: SRS text for D1 to D7: a new FR-9 item for typed limit writes, the FR-9 "Out of scope" line on EEPROM writes, the § 8 "Typed EEPROM writes" question (limits answered; ID, baud and the rest still open), FR-6.4 for `ActuatorIsOn`.
-- [ ] T097 tables: `unit_info` for PWM Limit in `mx_64.ron` and `xm430_w350.ron`, and for any D1 register a verified table has without one, read online from the page its `unit_source` cites; `verified` date 2026-11-09. `check_tables.py` and its tests pass.
-- [ ] T098 xtask: roles `MinPositionLimit`, `MaxPositionLimit`, `VelocityLimit`, `CurrentLimit`, `PwmLimit`, `MaxTorque` (P1 CW/CCW Angle Limit as the position-limit roles there), a quantity for `Pwm`; regenerate `src/models.rs` and `src/models/`.
-- [ ] T099 core: `units::Pwm`; `ValidationError::ActuatorIsOn { id, register }` with its hint and the NFR-12 tests; the new roles in `src/actuator/roles.rs`.
-- [ ] T100 bus: the D1 fields, `LimitField`, `ActuatorRef::write_limit`, the D3 setters and getters, the D4 checks and the D5 cache updates, each with `MockTransport` tests (AX-12A on P1 and XM430-W350 on P2 at least): byte-exact packets, every refusal sends nothing, cache and limit mode after a write and after a failed write, a faulted actuator fixed through `set_voltage_limits` then `clear_fault`.
-- [ ] T101 bus: docs: the table in `field`, the `ActuatorRef` overview, the sentence "Nor is any EEPROM register … stay raw" (now: ID, baud rate and series-specific registers), rustdoc of every new item with its errors; step end (ROADMAP row, plan ticks, `docs/learnings.md`).
+- [x] T097 tables: `unit_info` for PWM Limit in `mx_64.ron` and `xm430_w350.ron`, and for any D1 register a verified table has without one, read online from the page its `unit_source` cites; `verified` date 2026-11-09. `check_tables.py` and its tests pass.
+- [x] T098 xtask: roles `MinPositionLimit`, `MaxPositionLimit`, `VelocityLimit`, `CurrentLimit`, `PwmLimit`, `MaxTorque` (P1 CW/CCW Angle Limit as the position-limit roles there), a quantity for `Pwm`; regenerate `src/models.rs` and `src/models/`.
+- [x] T099 core: `units::Pwm`; `ValidationError::ActuatorIsOn { id, register }` with its hint and the NFR-12 tests; the new roles in `src/actuator/roles.rs`.
+- [x] T100 bus: the D1 fields, `LimitField`, `ActuatorRef::write_limit`, the D3 setters and getters, the D4 checks and the D5 cache updates, each with `MockTransport` tests (AX-12A on P1 and XM430-W350 on P2 at least): byte-exact packets, every refusal sends nothing, cache and limit mode after a write and after a failed write, a faulted actuator fixed through `set_voltage_limits` then `clear_fault`.
+- [x] T101 bus: docs: the table in `field`, the `ActuatorRef` overview, the sentence "Nor is any EEPROM register … stay raw" (now: ID, baud rate and series-specific registers), rustdoc of every new item with its errors; step end (ROADMAP row, plan ticks, `docs/learnings.md`).
 
 ## Review focus
 

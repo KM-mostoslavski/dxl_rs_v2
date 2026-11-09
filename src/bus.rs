@@ -8,7 +8,11 @@
 //! (temperature, voltage, velocity, load, current, LED, gains, ...) is a
 //! [`field`]: read and written on one actuator, on many with
 //! [`Bus::read_field`] and [`Bus::sync_write`], and several at once with
-//! [`Bus::bulk_read`] and [`Bus::bulk_write`] ([`bulk`]).
+//! [`Bus::bulk_read`] and [`Bus::bulk_write`] ([`bulk`]). The EEPROM
+//! limits most models share (voltage, temperature, position, velocity,
+//! current and PWM limits, Max Torque) are fields too, read on every tier
+//! and written on one actuator only, with
+//! [`ActuatorRef::write_limit`] and its setters.
 //!
 //! Rules that hold for every call:
 //!
@@ -22,6 +26,13 @@
 //!   currents need a current mode and stay within the Current Limit, both
 //!   read at Setup. LED, speed limit and gains move nothing and are
 //!   written with torque off too.
+//! - An EEPROM limit is written only with torque off, one acknowledged
+//!   unicast write checked against its e-Manual range (and, for a pair,
+//!   its order). The bus follows it: an acknowledged position limit,
+//!   Velocity Limit or Current Limit replaces what Setup read, and on AX,
+//!   RX and MX on Protocol 1 the limit mode follows the angle limits; a
+//!   failed one leaves it unknown, and goals that depend on it are refused
+//!   until the next Setup.
 //! - A model whose table lacks a register refuses a typed call for it with
 //!   [`ValidationError::Unsupported`](crate::ValidationError::Unsupported)
 //!   before any byte; on the Tier 2 handle ([`ModelRef`]) the call does not
@@ -32,7 +43,7 @@
 //!   An X-series actuator needs a reboot before its fault clears: on
 //!   Protocol 2, [`ActuatorRef::reboot`]. Setup is the exception: it holds
 //!   such an actuator `Faulted` and lists it in [`SetupReport::faulted`]
-//!   instead of failing, so its EEPROM can still be fixed.
+//!   instead of failing, so its EEPROM limits can still be fixed.
 //! - Broadcast writes get no reply, so a loop that only writes sees a fault
 //!   on its next read.
 //! - A multi-actuator call validates every target before any byte, so a
@@ -375,8 +386,10 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// [`Faulted`](TorqueState::Faulted), and listed in
     /// [`SetupReport::faulted`]: goals and torque are refused until
     /// [`ActuatorRef::clear_fault`], which measures and returns the fault,
-    /// and its EEPROM can be fixed with `write_raw` (feature
-    /// `raw-registers`) in the meantime. On Protocol 2 its model number is
+    /// and its EEPROM limits can be fixed in the meantime
+    /// ([`ActuatorRef::set_voltage_limits`] and the other limit setters, or
+    /// `write_raw` with the `raw-registers` feature for any other
+    /// register). On Protocol 2 its model number is
     /// then read from Model Number, the ping having failed.
     ///
     /// # Errors
