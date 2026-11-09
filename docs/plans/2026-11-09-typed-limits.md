@@ -20,7 +20,7 @@
   | `PwmLimit` | PWM Limit | `Pwm` (new, a ratio 0..=1) | 66 |
   | `MaxTorque` | Max Torque (P1 EEPROM) | `Load` (a ratio of the maximum torque) | 10 |
 
-  Left raw, outside the limits most models share: Acceleration Limit (MX(2.0), PRO, PRO+, Y and RH-P12-RN: 28 of 76 tables), and the Y-only Motor and Inverter Temperature Limit, Position Limit Threshold, In-Position and Following Error Threshold (12 tables). Not limits, left for later: Moving Threshold, Torque Limit (P1 RAM), ID, baud rate, Return Delay Time, Status Return Level. (Corrected at review, 2026-11-09: Acceleration Limit is not specific to one series; whether it gets a typed field is the maintainer's call.)
+  Left raw, specific to one series: the Y-only Motor and Inverter Temperature Limit, Position Limit Threshold, In-Position and Following Error Threshold (12 tables). Acceleration Limit (MX(2.0), PRO, PRO+, Y and RH-P12-RN: 28 of 76 tables) is typed by D10. Not limits, left for later: Moving Threshold, Torque Limit (P1 RAM), ID, baud rate, Return Delay Time, Status Return Level.
 - **D2. Writes are unicast only, through a trait of their own.** New sealed `pub trait LimitField: Field` (`type Value`), implemented by the D1 fields and by `Raw<F>` (`i32`). The D1 fields implement `ReadField` (so `read`, `read_field`, `sync_read`, `bulk_read` save them, for NFR-11) but not `WriteField`: `write`, `sync_write` and `bulk_write` refuse them at compile time (Principle II). A sync or bulk write gets no reply, so the bus could neither confirm the write nor keep its cache true (D4).
 - **D3. API on `ActuatorRef`** (so on `Bus` and `DynBus` handles alike):
   - `write_limit<F: LimitField>(&mut self, field: F, value: F::Value) -> Result<(), Error>`;
