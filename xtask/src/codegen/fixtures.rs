@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
+use super::diagnostic::{Cause, Check, Diagnostic};
 use super::resolve::{Outcome, Resolved, resolve};
 use super::schema::{parse_map_str, parse_table_str};
 
@@ -645,6 +646,17 @@ pub(crate) fn outcome(map: &Map, tables: &[(&str, Table)]) -> Outcome {
         );
     }
     resolve(&map, &parsed, &on_disk)
+}
+
+/// Asserts `errors` holds `check`, every field equal, for `file`.
+#[track_caller]
+pub(crate) fn assert_check(errors: &[Diagnostic], file: &str, check: &Check) {
+    assert!(
+        errors
+            .iter()
+            .any(|d| d.file == file && matches!(&d.cause, Cause::Check(c) if c == check)),
+        "no {file} error {check:?} in {errors:?}"
+    );
 }
 
 /// Resolves `map` and `tables`, which must pass every check.

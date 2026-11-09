@@ -341,6 +341,15 @@ pub enum Check {
         /// The range's high end.
         max: i64,
     },
+    /// Check 19: a row range whose low end is above its high end.
+    RowRangeReversed {
+        /// The row.
+        register: String,
+        /// The range's low end.
+        min: i64,
+        /// The range's high end.
+        max: i64,
+    },
     /// Check 19: a row range that fits neither sign in its size.
     RowRangeDoesNotFit {
         /// The row.
@@ -395,6 +404,15 @@ pub enum Check {
         sign_type: String,
         /// The row's size.
         size: u8,
+    },
+    /// Check 19: an entry range whose low end is above its high end.
+    UnitRangeReversed {
+        /// The entry's `data_name`.
+        register: String,
+        /// The range's low end.
+        min: i64,
+        /// The range's high end.
+        max: i64,
     },
     /// Check 19: an entry range that does not fit its register and sign.
     UnitRangeDoesNotFit {
@@ -780,6 +798,9 @@ impl fmt::Display for Check {
                 f,
                 "row {register:?}: size {size} is outside 1..=7 bytes, so range {min}..={max} cannot be checked"
             ),
+            Self::RowRangeReversed { register, min, max } => {
+                write!(f, "row {register:?}: range {min}..={max} has min above max")
+            }
             Self::RowRangeDoesNotFit {
                 register,
                 min,
@@ -823,6 +844,10 @@ impl fmt::Display for Check {
             } => write!(
                 f,
                 "unit_info {register:?}: sign_type {sign_type} does not fit a {size}-byte register"
+            ),
+            Self::UnitRangeReversed { register, min, max } => write!(
+                f,
+                "unit_info {register:?}: range {min}..={max} has min above max"
             ),
             Self::UnitRangeDoesNotFit {
                 register,

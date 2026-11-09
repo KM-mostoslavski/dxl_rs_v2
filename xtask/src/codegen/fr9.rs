@@ -474,10 +474,11 @@ pub(crate) fn check_unit_source(file: &str, table: &ControlTable, errors: &mut V
     }
 }
 
-/// Whether `range` fits a `size`-byte register under `sign`.
+/// Whether `range`, low end first, fits a `size`-byte register under
+/// `sign`.
 fn fits(range: RawRange, sign: SignKind, size: u8) -> bool {
     sign.raw_span(size)
-        .is_some_and(|(lo, hi)| range.min <= range.max && range.min >= lo && range.max <= hi)
+        .is_some_and(|(lo, hi)| range.min >= lo && range.max <= hi)
 }
 
 /// Check 19 for every `unit_info` entry of a table with `unit_source`, and
@@ -487,24 +488,36 @@ pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec
         let Some(range) = row.range else {
             continue;
         };
-        let register = row.data_name.clone();
+        let register = || row.data_name.clone();
+        let reversed = range.min > range.max;
+        if reversed {
+            errors.push(Diagnostic::new(
+                file,
+                Check::RowRangeReversed {
+                    register: register(),
+                    min: range.min,
+                    max: range.max,
+                },
+            ));
+        }
         if !SPAN_SIZES.contains(&row.size) {
             errors.push(Diagnostic::new(
                 file,
                 Check::RowRangeSize {
-                    register,
+                    register: register(),
                     size: row.size,
                     min: range.min,
                     max: range.max,
                 },
             ));
-        } else if !fits(range, SignKind::Unsigned, row.size)
+        } else if !reversed
+            && !fits(range, SignKind::Unsigned, row.size)
             && !fits(range, SignKind::TwosComplement, row.size)
         {
             errors.push(Diagnostic::new(
                 file,
                 Check::RowRangeDoesNotFit {
-                    register,
+                    register: register(),
                     min: range.min,
                     max: range.max,
                     size: row.size,
@@ -555,10 +568,13 @@ pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec
                     size: row.size,
                 });
             }
-            (Some(sign), Some(row)) => {
-                if let Some(range) = entry.range
-                    && !fits(range, sign, row.size)
-                {
+            (Some(sign), Some(row)) => match entry.range {
+                Some(range) if range.min > range.max => fail(Check::UnitRangeReversed {
+                    register: register(),
+                    min: range.min,
+                    max: range.max,
+                }),
+                Some(range) if !fits(range, sign, row.size) => {
                     fail(Check::UnitRangeDoesNotFit {
                         register: register(),
                         min: range.min,
@@ -567,7 +583,8 @@ pub(crate) fn check_unit_info(file: &str, table: &ControlTable, errors: &mut Vec
                         sign_type: entry.sign_type.clone(),
                     });
                 }
-            }
+                _ => {}
+            },
             (Some(_), None) => {}
         }
         if let Some(modes) = &entry.modes {
@@ -921,7 +938,7 @@ pub(crate) fn by_field(roles: &[GenRole]) -> std::collections::BTreeMap<&'static
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codegen::fixtures::{Map, Table, outcome};
+    use crate::codegen::fixtures::{self, Map, Table, outcome};
     use crate::codegen::resolve::{GenModel, ModeRole, Outcome};
 
     fn single(table: Table) -> Outcome {
@@ -945,6 +962,11 @@ mod tests {
             "no error with {keywords:?} in {:?}",
             out.errors
         );
+    }
+
+    #[track_caller]
+    fn fails_with(table: Table, check: Check) {
+        fixtures::assert_check(&single(table).errors, "t", &check);
     }
 
     fn close(a: f64, b: f64) -> bool {
@@ -1253,6 +1275,28 @@ mod tests {
                     r#"data_name: "Present Load", value: 0.1, unit: "%", sign_type: "direction_bit_35""#,
                 ),
             &["step 0.1 % is not about 100 % / 34359738367"],
+        );
+    }
+
+    #[test]
+    fn check19_reversed_ranges() {
+        fails_with(
+            Table::xm_fr9().row_range("LED", 5, 1),
+            Check::RowRangeReversed {
+                register: "LED".into(),
+                min: 5,
+                max: 1,
+            },
+        );
+        fails_with(
+            with_unit(
+                r#"data_name: "LED", value: 1.0, unit: "V", sign_type: "unsigned", range: (min: 10, max: 2)"#,
+            ),
+            Check::UnitRangeReversed {
+                register: "LED".into(),
+                min: 10,
+                max: 2,
+            },
         );
     }
 
