@@ -343,8 +343,9 @@ roles! {
     /// PWM Limit, a ratio of the full PWM output: the EEPROM bound of the
     /// PWM output.
     PwmLimit, pwm_limit, HasPwmLimit, "PWM Limit";
-    /// Max Torque (Protocol 1), a ratio of the maximum torque: the EEPROM
-    /// bound of the torque output.
+    /// Max Torque (AX, RX, MX on Protocol 1, XL-320), a ratio of the
+    /// maximum torque: the value Torque Limit (RAM) is reset to at power-on
+    /// (e-Manual), so it bounds the output from the next power-on.
     MaxTorque, max_torque, HasMaxTorque, "Max Torque";
 }
 

@@ -26,13 +26,14 @@
 //!   currents need a current mode and stay within the Current Limit, both
 //!   read at Setup. LED, speed limit and gains move nothing and are
 //!   written with torque off too.
-//! - An EEPROM limit is written only with torque off, one acknowledged
-//!   unicast write checked against its e-Manual range (and, for a pair,
-//!   its order). The bus follows it: an acknowledged position limit,
-//!   Velocity Limit or Current Limit replaces what Setup read, and on AX,
-//!   RX and MX on Protocol 1 the limit mode follows the angle limits; a
-//!   failed one leaves it unknown, and goals that depend on it are refused
-//!   until the next Setup.
+//! - An EEPROM limit is written only while the torque state the bus holds
+//!   is off, one acknowledged unicast write checked against its e-Manual
+//!   range where the table records one (and, for a pair, its order). The
+//!   bus follows it: an acknowledged position limit, Velocity Limit or
+//!   Current Limit replaces what Setup read, and on AX, RX and MX on
+//!   Protocol 1 the limit mode follows the angle limits; a failed one
+//!   leaves it unknown, and goals that depend on it are refused until the
+//!   next Setup or an acknowledged write that determines it again.
 //! - A model whose table lacks a register refuses a typed call for it with
 //!   [`ValidationError::Unsupported`](crate::ValidationError::Unsupported)
 //!   before any byte; on the Tier 2 handle ([`ModelRef`]) the call does not

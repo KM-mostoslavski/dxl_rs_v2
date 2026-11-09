@@ -4,7 +4,8 @@ use super::scale::RegisterScale;
 
 /// A Protocol 1 load: the share of the maximum torque in use, from −1.0
 /// (full CW) to 1.0 (full CCW). Present Load reads as one; Max Torque, the
-/// EEPROM bound of the output, is one from 0.0 to 1.0, written with
+/// torque limit the actuator starts with at power-on, is one from 0.0 to
+/// 1.0, written with
 /// [`ActuatorRef::set_max_torque`](crate::ActuatorRef::set_max_torque).
 ///
 /// It is a ratio, not a torque: AX-12A Present Load(40) "is an inferred
