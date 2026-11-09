@@ -15,9 +15,10 @@ use super::diagnose::diagnose;
 use super::field::sealed::Field;
 use super::field::{ReadField, WriteField, encode_write, read_site};
 use super::id_set::IdSet;
+use super::limits::writes_moving_speed;
 use super::observe::{is_hardware_fault, observe};
 use super::slots::Bound;
-use super::slots::find;
+use super::slots::{Marks, find};
 use super::wire::{ReadMany, Wire};
 
 /// One target of a multi-actuator call, staged before anything is sent.
@@ -178,6 +179,21 @@ pub(crate) fn validate_writes<F: WriteField>(
         stage.size = reg.size;
     }
     Ok(())
+}
+
+/// Forgets that Moving Speed is 0 (plan 2026-11-09 D9) on every staged
+/// target whose staged register is its Moving Speed: a sync or bulk write
+/// gets no reply, so it never confirms a value.
+pub(crate) fn forget_speed(kinds: &[ActuatorKind], marks: &mut [Marks], stages: &[Stage]) {
+    // DECISION: the mark is forgotten once the call is validated, before a byte: a transport failure partway may still have reached the actuator.
+    for stage in stages {
+        let slot = usize::from(stage.slot);
+        if let (Some(kind), Some(marks)) = (kinds.get(slot), marks.get_mut(slot))
+            && writes_moving_speed(kind, stage.addr, usize::from(stage.size))
+        {
+            marks.speed_written(false);
+        }
+    }
 }
 
 /// The distinct register layouts `(addr, size)` of `stages`, in

@@ -44,7 +44,7 @@
 - [x] T100 bus: the D1 fields, `LimitField`, `ActuatorRef::write_limit`, the D3 setters and getters, the D4 checks and the D5 cache updates, each with `MockTransport` tests (AX-12A on P1 and XM430-W350 on P2 at least): byte-exact packets, every refusal sends nothing, cache and limit mode after a write and after a failed write, a faulted actuator fixed through `set_voltage_limits` then `clear_fault`.
 - [x] T101 bus: docs: the table in `field`, the `ActuatorRef` overview, the sentence "Nor is any EEPROM register … stay raw" (now: ID, baud rate and series-specific registers), rustdoc of every new item with its errors; step end (ROADMAP row, plan ticks, `docs/learnings.md`).
 
-- [ ] T102 bus: D8 torque confirmed off and D9 wheel-switch refusal, with tests; un-ignore the two deferred tests; close the two `docs/deferred.md` rows.
+- [x] T102 bus: D8 torque confirmed off and D9 wheel-switch refusal, with tests; un-ignore the two deferred tests; close the two `docs/deferred.md` rows.
 - [x] T103 tables, xtask, core, bus: D10 Acceleration Limit (`unit_info` from the e-Manual, quantity, `units::Acceleration`, field, setter, getter).
 
 ## Review focus

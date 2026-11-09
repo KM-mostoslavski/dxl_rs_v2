@@ -1,9 +1,9 @@
-//! EEPROM limit writes (plan 2026-11-09, D2 to D5, D8): the checks a limit
-//! write passes before a byte is sent, the packets it sends, and the cache
-//! that follows it.
+//! EEPROM limit writes (plan 2026-11-09, D2 to D5, D8, D9): the checks a
+//! limit write passes before a byte is sent, the packets it sends, and the
+//! cache that follows it.
 
 use crate::Transport;
-use crate::actuator::{Actuator, Describe, LimitMode, ModeSource, TorqueState};
+use crate::actuator::{Actuator, Describe, LimitMode, ModeSource, Role, TorqueState};
 use crate::error::{Error, Instruction, ValidationError};
 use crate::field::{LimitField, ReadField};
 use crate::models::ActuatorKind;
@@ -83,30 +83,78 @@ fn cached_limits(kind: &ActuatorKind) -> Result<Limits, ValidationError> {
 }
 
 /// Checks that a single write of `raw` to `site` keeps the position limits
-/// ordered against the other cached limit. Any other register passes.
-fn check_order(kind: &ActuatorKind, site: &Site, raw: i32) -> Result<(), ValidationError> {
+/// ordered against the other cached limit, and returns the pair it leaves.
+/// Any other register passes, with `None`.
+fn check_order(
+    kind: &ActuatorKind,
+    site: &Site,
+    raw: i32,
+) -> Result<Option<Limits>, ValidationError> {
     let registers = kind.data().limits;
     let (min, max) = if site.reg.addr == registers.min().addr {
         (raw, cached_limits(kind)?.max_raw())
     } else if site.reg.addr == registers.max().addr {
         (cached_limits(kind)?.min_raw(), raw)
     } else {
-        return Ok(());
+        return Ok(None);
     };
     // DECISION: a single position-limit write whose other limit is unknown (a failed write since Setup) is refused with LimitsUnknown: its order cannot be checked; the pair setter checks its own two values.
-    Limits::new(kind.id(), min, max).map(drop)
+    Limits::new(kind.id(), min, max).map(Some)
+}
+
+/// Whether `site` is `kind`'s minimum and `other` its maximum position
+/// limit.
+fn is_position_pair(kind: &ActuatorKind, site: &Site, other: &Site) -> bool {
+    let registers = kind.data().limits;
+    site.reg.addr == registers.min().addr && other.reg.addr == registers.max().addr
+}
+
+/// Refuses position limits `limits` that switch an AX, RX or MX on
+/// Protocol 1 to wheel mode (CW = CCW = 0) from any other mode, unless the
+/// bus knows Moving Speed is 0 (plan 2026-11-09 D9): in wheel mode Moving
+/// Speed, the last speed limit, is the goal velocity the next
+/// `enable_torque` drives (AX-12A Moving Speed(32),
+/// <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>), and with torque
+/// off there the typed API can no longer zero it. Leaving wheel mode, and
+/// every model whose mode is a register, pass.
+fn check_wheel(kind: &ActuatorKind, marks: Marks, limits: Limits) -> Result<(), ValidationError> {
+    // DECISION: on MX-64 Protocol 1 with torque control on, CW = CCW = 0 counts as a switch too (wheel mode takes over once the switch is off), and with the mode unknown since a failed angle-limit write it counts as a switch: neither is known to be wheel mode already.
+    let follows = !matches!(kind.data().mode, ModeSource::Register { .. });
+    let to_wheel = LimitMode::from_angle_limits(limits) == LimitMode::Wheel;
+    let in_wheel =
+        kind.cache().mode() == LimitMode::Wheel && kind.cache().check_mode_known().is_ok();
+    if follows && to_wheel && !in_wheel && !marks.speed_zero() {
+        Err(ValidationError::WheelSpeedUnknown { id: kind.id() })
+    } else {
+        Ok(())
+    }
+}
+
+/// Whether `len` bytes written at `addr` of `kind` cover its Moving Speed
+/// where that is also the wheel-mode goal velocity: AX, RX and MX on
+/// Protocol 1 (plan 2026-11-09 D9). `false` on every other model.
+pub(super) fn writes_moving_speed(kind: &ActuatorKind, addr: u16, len: usize) -> bool {
+    if matches!(kind.data().mode, ModeSource::Register { .. }) {
+        return false;
+    }
+    kind.data().role(Role::SpeedLimit).is_some_and(|speed| {
+        let reg = speed.register();
+        let (start, end) = (usize::from(addr), usize::from(addr) + len);
+        let speed_start = usize::from(reg.addr);
+        speed_start < end && start < speed_start + usize::from(reg.size)
+    })
 }
 
 /// A single write of `value` to limit field `F` of `kind`, whose torque
 /// state is `state` and marks `marks`, checked in the order of plan D4: the
 /// register, the torque (D8), the value's conversion, the e-Manual range,
-/// the position-limit order.
+/// the position-limit order, then the wheel switch (D9).
 ///
 /// # Errors
 ///
 /// `Unsupported`, `ActuatorIsOn`, `TorqueUnconfirmed`, `NoUnit`,
 /// `NotFinite`, `DoesNotFit`, `OutOfLimits`, `LimitsUnknown`,
-/// `InvertedLimits`.
+/// `InvertedLimits`, `WheelSpeedUnknown`.
 pub(super) fn check_single<F: LimitField>(
     kind: &ActuatorKind,
     (state, marks): (TorqueState, Marks),
@@ -115,18 +163,23 @@ pub(super) fn check_single<F: LimitField>(
     let site = fields::limit_site::<F>(kind)?;
     check_off(kind.id(), state, marks, site.name)?;
     let raw = fields::limit_raw(&site, value)?;
-    check_order(kind, &site, raw)?;
+    // DECISION: the wheel check (plan D9) comes last, after the range and order checks, before a byte: it needs the pair the write leaves, and a value refused for itself says so first.
+    if let Some(limits) = check_order(kind, &site, raw)? {
+        check_wheel(kind, marks, limits)?;
+    }
     Ok(Checked { site, raw })
 }
 
 /// A write of the pair `min` to `Lo` and `max` to `Hi`, checked in the
 /// order of plan D4: both registers, the torque (D8), both values'
-/// conversions and ranges, then `min <= max`.
+/// conversions and ranges, `min <= max`, then for the position limits the
+/// wheel switch (D9).
 ///
 /// # Errors
 ///
 /// `Unsupported`, `ActuatorIsOn` or `TorqueUnconfirmed` (naming `Lo`),
-/// `NoUnit`, `NotFinite`, `DoesNotFit`, `OutOfLimits`, `InvertedLimits`.
+/// `NoUnit`, `NotFinite`, `DoesNotFit`, `OutOfLimits`, `InvertedLimits`,
+/// `WheelSpeedUnknown`.
 pub(super) fn check_pair<Lo: LimitField, Hi: LimitField>(
     kind: &ActuatorKind,
     (state, marks): (TorqueState, Marks),
@@ -139,7 +192,10 @@ pub(super) fn check_pair<Lo: LimitField, Hi: LimitField>(
     check_off(kind.id(), state, marks, lo.name)?;
     let min = fields::limit_raw(&lo, min)?;
     let max = fields::limit_raw(&hi, max)?;
-    Limits::new(kind.id(), min, max)?;
+    let limits = Limits::new(kind.id(), min, max)?;
+    if is_position_pair(kind, &lo, &hi) {
+        check_wheel(kind, marks, limits)?;
+    }
     Ok((
         Checked { site: lo, raw: min },
         Checked { site: hi, raw: max },

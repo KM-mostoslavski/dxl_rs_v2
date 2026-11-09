@@ -326,6 +326,11 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
             &mut buf,
         )?;
         let result = self.wire.write(id, reg, bytes);
+        if limits::writes_moving_speed(self.kind, reg.addr, usize::from(reg.size)) {
+            // DECISION: every unicast write of Moving Speed moves the D9 mark, whichever field wrote it (speed limit, or goal velocity in wheel mode): known 0 when the reply shows the write of 0 ran (as D8 reads a torque write's reply), else no longer known.
+            self.marks
+                .speed_written(ran(&result) && bytes.iter().all(|&byte| byte == 0));
+        }
         let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);
         result
@@ -477,9 +482,14 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// drives (AX-12A Moving Speed(32), wheel mode: "If a value in the range
     /// of 0 ~ 1,023 is used, it is stopped by setting to 0 while rotating
     /// to CCW direction", <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>).
-    /// Write [`SpeedLimit::Unlimited`] (raw 0, stop in wheel mode) before
-    /// such a switch: once in wheel mode with torque off, this call is
-    /// refused and a goal velocity needs torque on.
+    /// So a limit write that switches to wheel mode is refused with
+    /// [`WheelSpeedUnknown`](crate::ValidationError::WheelSpeedUnknown)
+    /// unless the bus knows Moving Speed is 0: write
+    /// [`SpeedLimit::Unlimited`] (raw 0, stop in wheel mode) first. Only an
+    /// acknowledged write of 0 here (or `write(Raw(SpeedLimit), 0)`) makes
+    /// it known; any other write of Moving Speed, on any tier (a Sync
+    /// Write, which gets no reply, even of 0), a raw write and a reboot
+    /// make it unknown again.
     ///
     /// # Errors
     ///
@@ -665,8 +675,9 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// in the e-Manual range the table records, where it records one (else
     /// only the register size checks it, e.g. MX-64 on Protocol 1 voltage
     /// limits); a position limit keeps the limits ordered against the
-    /// other limit the bus holds; it fits the register. A single voltage
-    /// limit cannot be checked against the
+    /// other limit the bus holds; on AX, RX and MX on Protocol 1 it does not
+    /// switch to wheel mode while Moving Speed may be live (below); it fits
+    /// the register. A single voltage limit cannot be checked against the
     /// other one, which the bus does not hold: use
     /// [`set_voltage_limits`](Self::set_voltage_limits) to check both.
     ///
@@ -687,18 +698,24 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// leave torque unconfirmed, whatever the torque state.
     /// [`clear_fault`](Self::clear_fault) sends no reboot and keeps it.
     ///
+    /// On AX, RX and MX on Protocol 1, a write that leaves CW = CCW Angle
+    /// Limit = 0 switches the actuator to wheel mode, where Moving Speed,
+    /// the last speed limit, is the goal velocity the next
+    /// [`enable_torque`](Self::enable_torque) drives. From any other mode
+    /// (also from an unknown one, after a failed angle-limit write) it is
+    /// refused unless the bus knows Moving Speed is 0: write
+    /// [`SpeedLimit::Unlimited`] first, as
+    /// [`set_speed_limit`](Self::set_speed_limit) says. Leaving wheel mode
+    /// is never refused for it.
+    ///
     /// The bus follows the write. Acknowledged, a position limit replaces
     /// the limit Setup read, so goals are checked against it; on AX, RX and
     /// MX on Protocol 1 the limit mode follows the angle limits as Setup
     /// would have found it: CW = CCW = 0 is wheel mode, and on MX CW = CCW
     /// = 4095 (raw) is multi-turn mode, where goal positions are no longer
     /// checked against the angle limits, only against the register size. A
-    /// switch to wheel mode makes Moving Speed, the last speed limit, the
-    /// goal velocity the next [`enable_torque`](Self::enable_torque) drives:
-    /// write [`SpeedLimit::Unlimited`] first, as
-    /// [`set_speed_limit`](Self::set_speed_limit) says. A Velocity or
-    /// Current Limit the operating mode bounds its goal with replaces that
-    /// bound.
+    /// Velocity or Current Limit the operating mode bounds its goal with
+    /// replaces that bound.
     ///
     /// Failed, whatever it was written to is unknown: every goal that
     /// depends on it is refused with [`LimitsUnknown`], until the next Setup
@@ -741,6 +758,9 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///   other one.
     /// - [`LimitsUnknown`]: a position limit, and the other one is unknown
     ///   since a failed limit write.
+    /// - [`WheelSpeedUnknown`]: an angle limit that switches an AX, RX or
+    ///   MX on Protocol 1 to wheel mode while Moving Speed is not known to
+    ///   be 0.
     ///
     /// Otherwise any error of the write; a reply reporting a hardware fault
     /// marks the actuator `Faulted`.
@@ -748,6 +768,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`Unsupported`]: crate::ValidationError::Unsupported
     /// [`ActuatorIsOn`]: crate::ValidationError::ActuatorIsOn
     /// [`TorqueUnconfirmed`]: crate::ValidationError::TorqueUnconfirmed
+    /// [`WheelSpeedUnknown`]: crate::ValidationError::WheelSpeedUnknown
     /// [`NoUnit`]: crate::ValidationError::NoUnit
     /// [`NotFinite`]: crate::ValidationError::NotFinite
     /// [`DoesNotFit`]: crate::ValidationError::DoesNotFit
@@ -803,10 +824,11 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// mode, and on MX both at raw 4095 is multi-turn mode, where goal
     /// positions are checked only against the register size. In wheel mode
     /// Moving Speed, the last speed limit, is the goal velocity the next
-    /// [`enable_torque`](Self::enable_torque) drives: write
-    /// [`SpeedLimit::Unlimited`] before the switch. Where the two registers
-    /// are apart (Y series), the one that keeps the pair ordered is written
-    /// first.
+    /// [`enable_torque`](Self::enable_torque) drives, so the switch is
+    /// refused with [`WheelSpeedUnknown`] unless an acknowledged
+    /// [`SpeedLimit::Unlimited`] wrote Moving Speed = 0 first; leaving wheel
+    /// mode is not refused. Where the two registers are apart (Y series),
+    /// the one that keeps the pair ordered is written first.
     ///
     /// Failed, the limits (and on Protocol 1 the limit mode) are unknown
     /// until the next Setup or an acknowledged call of this. On a faulted
@@ -819,11 +841,13 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// As [`write_limit`](Self::write_limit); [`InvertedLimits`] when `min`
     /// is above `max`; [`ActuatorIsOn`] and [`TorqueUnconfirmed`] name the
-    /// minimum register.
+    /// minimum register; [`WheelSpeedUnknown`] for a switch to wheel mode
+    /// with Moving Speed not known to be 0.
     ///
     /// [`InvertedLimits`]: crate::ValidationError::InvertedLimits
     /// [`ActuatorIsOn`]: crate::ValidationError::ActuatorIsOn
     /// [`TorqueUnconfirmed`]: crate::ValidationError::TorqueUnconfirmed
+    /// [`WheelSpeedUnknown`]: crate::ValidationError::WheelSpeedUnknown
     pub fn set_position_limits(&mut self, min: Position, max: Position) -> Result<(), Error> {
         let (lo, hi) = limits::check_pair::<MinPositionLimit, MaxPositionLimit>(
             self.kind,
@@ -1068,7 +1092,8 @@ impl<T: Transport, C: Clock> ActuatorRef<'_, P2, T, C> {
     /// the backup (bit 1). The bus does not read it: `Off` then still
     /// means goal writes are refused until
     /// [`enable_torque`](Self::enable_torque). Torque is no longer
-    /// confirmed off once the instruction is sent: [`write_limit`](Self::write_limit) and the
+    /// confirmed off, and Moving Speed no longer known to be 0, once the
+    /// instruction is sent: [`write_limit`](Self::write_limit) and the
     /// limit setters are refused with
     /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
     /// until an acknowledged [`disable_torque`](Self::disable_torque).

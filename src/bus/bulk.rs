@@ -408,7 +408,7 @@ where
     S: Slots,
     B: WriteParts,
 {
-    let (kinds, states, bounds, _) = slots.split_mut();
+    let (kinds, states, bounds, marks) = slots.split_mut();
     let mut staging = Staging {
         kinds,
         states,
@@ -423,6 +423,7 @@ where
     if stages.is_empty() {
         return Ok(());
     }
+    group::forget_speed(kinds, marks, stages);
     let entries = stages.iter().filter_map(|stage| {
         let kind = kinds.get(usize::from(stage.slot))?;
         Some((kind.id(), stage.addr, stage.data()))

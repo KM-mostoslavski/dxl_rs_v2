@@ -57,11 +57,16 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///   next Setup. [`write_limit`](ActuatorRef::write_limit) and the
     ///   limit setters write a limit and keep them true.
     ///
-    /// Any address may hold Torque Enable, so once the write is sent,
-    /// whatever its reply, torque is no longer confirmed off (plan
-    /// 2026-11-09 D8): limit writes are refused with
+    /// Any address may hold Torque Enable or Moving Speed, so once the
+    /// write is sent, whatever its reply, torque is no longer confirmed off
+    /// and Moving Speed no longer known to be 0 (plan 2026-11-09 D8, D9):
+    /// limit writes are refused with
     /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
-    /// until an acknowledged [`disable_torque`](ActuatorRef::disable_torque).
+    /// until an acknowledged [`disable_torque`](ActuatorRef::disable_torque),
+    /// and a switch to wheel mode with
+    /// [`WheelSpeedUnknown`](crate::ValidationError::WheelSpeedUnknown)
+    /// until an acknowledged
+    /// [`set_speed_limit(SpeedLimit::Unlimited)`](ActuatorRef::set_speed_limit).
     ///
     /// # Errors
     ///

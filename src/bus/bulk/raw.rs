@@ -168,8 +168,8 @@ where
 }
 
 /// Checks every target of a raw Bulk Write, then sends it. Every target's
-/// marks are forgotten (plan 2026-11-09 D8): its bytes may touch Torque
-/// Enable.
+/// marks are forgotten (plan 2026-11-09 D8, D9): its bytes may touch
+/// Torque Enable or Moving Speed.
 pub(in crate::bus) fn bulk_write_raw<T, C, S>(
     wire: &mut Wire<'_, P2, T, C>,
     slots: &mut S,
@@ -191,7 +191,7 @@ where
     if targets.is_empty() {
         return Ok(());
     }
-    // DECISION: a raw Bulk Write forgets its targets' marks once validated, before a byte: it gets no reply, and a transport failure partway may still have reached them.
+    // DECISION: a raw Bulk Write forgets its targets' marks once validated, before a byte (as forget_speed does): it gets no reply, and a transport failure partway may still have reached them.
     for &RawWrite { id, .. } in targets {
         if let Some(marks) = find(kinds, id).and_then(|index| marks.get_mut(index)) {
             marks.forget();
@@ -316,9 +316,10 @@ impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
     /// gets no reply, so a fault shows on the next read. An empty call
     /// sends nothing.
     ///
-    /// As `write_raw` does, it leaves every target's torque unconfirmed,
-    /// once the call passed its checks: a limit write to a target needs an
-    /// acknowledged `disable_torque()` again.
+    /// As `write_raw` does, it leaves every target's torque unconfirmed and
+    /// its Moving Speed unknown, once the call passed its checks: a limit
+    /// write to a target needs an acknowledged `disable_torque()` again
+    /// (and a switch to wheel mode a Moving Speed = 0 write).
     ///
     /// Protocol 1 has no Bulk Write, so the method does not exist there:
     ///

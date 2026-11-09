@@ -17,22 +17,34 @@ pub(crate) type Bound = Option<u32>;
 
 /// What the bus has confirmed about one actuator since Setup, beside its
 /// torque state, from replies it got and writes it sent (plan 2026-11-09
-/// D8). Clear after Setup: the bus reads no Torque Enable there (FR-2.7).
-// DECISION: the D8 mark lives in a slot array of its own beside the torque states, not in TorqueState (pub, its slice lent by torque_states()) nor in Cache (no spare byte left), so both keep their size_of.
+/// D8, D9). Both marks are clear after Setup: the bus reads neither Torque
+/// Enable nor Moving Speed there (FR-2.7, FR-9.6).
+// DECISION: the D8/D9 marks live in a slot array of their own beside the torque states, not in TorqueState (pub, its slice lent by torque_states()) nor in Cache (no spare byte left), so both keep their size_of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Marks {
     /// Torque is confirmed off: a Torque Enable = 0 write ran, and nothing
     /// that may turn torque on was sent since (D8).
     torque_off: bool,
+    /// Moving Speed is known to be 0: an acknowledged unicast write of 0,
+    /// and no other write of it since (D9).
+    speed_zero: bool,
 }
 
 impl Marks {
     /// Nothing confirmed, as after Setup.
-    pub(crate) const CLEAR: Self = Self { torque_off: false };
+    pub(crate) const CLEAR: Self = Self {
+        torque_off: false,
+        speed_zero: false,
+    };
 
     /// Whether torque is confirmed off (D8).
     pub(crate) const fn torque_off(self) -> bool {
         self.torque_off
+    }
+
+    /// Whether Moving Speed is known to be 0 (D9).
+    pub(crate) const fn speed_zero(self) -> bool {
+        self.speed_zero
     }
 
     /// After a Torque Enable = 0 write: confirmed off when `ran`, the reply
@@ -45,6 +57,12 @@ impl Marks {
     /// bytes, a reboot.
     pub(crate) fn forget_torque_off(&mut self) {
         self.torque_off = false;
+    }
+
+    /// After a write of Moving Speed: known to be 0 when `zero`, an
+    /// acknowledged unicast write of 0; else no longer known.
+    pub(crate) fn speed_written(&mut self, zero: bool) {
+        self.speed_zero = zero;
     }
 
     /// After a write that may touch any register (a raw write) or a
@@ -203,7 +221,10 @@ mod tests {
     }
 
     /// Every mark set, as no Setup leaves it.
-    const ALL: Marks = Marks { torque_off: true };
+    const ALL: Marks = Marks {
+        torque_off: true,
+        speed_zero: true,
+    };
 
     #[test]
     fn empty_slots() {
@@ -222,17 +243,20 @@ mod tests {
         assert_eq!(marks, [Marks::CLEAR; 2]);
     }
 
-    /// Plan D8: a ran torque-off write sets the mark; anything that may
-    /// turn torque on, a raw write or a reboot clears it.
+    /// Plan D8, D9: each mark moves on its own; a raw write or a reboot
+    /// forgets both.
     #[test]
-    fn marks_move() {
+    fn marks_move_one_at_a_time() {
         let mut marks = Marks::default();
         assert_eq!(marks, Marks::CLEAR);
         marks.torque_off_written(true);
-        assert!(marks.torque_off());
+        marks.speed_written(true);
+        assert!(marks.torque_off() && marks.speed_zero());
         marks.forget_torque_off();
-        assert!(!marks.torque_off());
+        assert!(!marks.torque_off() && marks.speed_zero());
         marks.torque_off_written(true);
+        marks.speed_written(false);
+        assert!(marks.torque_off() && !marks.speed_zero());
         marks.torque_off_written(false);
         assert!(!marks.torque_off());
         let mut marks = ALL;

@@ -105,10 +105,11 @@ where
     F: WriteField,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states, bounds, _) = slots.split_mut();
+    let (kinds, states, bounds, marks) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_values(stages.len(), values.len())?;
     group::validate_writes::<F>(kinds, states, bounds, stages, values)?;
+    group::forget_speed(kinds, marks, stages);
     for (addr, size) in group::groups(stages) {
         wire.set_context(group::layout_context::<F>(kinds, stages, (addr, size)));
         let sent = wire.sync_write(addr, size, group::entries(kinds, stages, (addr, size)));
@@ -385,6 +386,12 @@ assert_eq!(present, [512, 612]);
     /// whose models put the field at different addresses get one
     /// instruction each, with each model's own scale. Not atomic across
     /// layouts on the wire; a fault shows on the next read.
+    ///
+    /// A Sync Write gets no reply, so one of Moving Speed (the speed limit,
+    /// or the goal velocity in wheel mode, on AX, RX and MX on Protocol 1)
+    /// leaves the bus not knowing it is 0, even when it writes 0: a later
+    /// switch to wheel mode needs an acknowledged
+    /// [`set_speed_limit`](crate::ActuatorRef::set_speed_limit) first.
     ///
     /// # Errors
     ///

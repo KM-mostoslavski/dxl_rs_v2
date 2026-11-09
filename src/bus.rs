@@ -30,8 +30,9 @@
 //!   off: an acknowledged `disable_torque()` since Setup, with no
 //!   `enable_torque()`, reboot or raw write after it. It is one
 //!   acknowledged unicast write checked against its e-Manual range where
-//!   the table records one (and, for a pair, its order). The bus follows
-//!   it: an acknowledged position limit,
+//!   the table records one (and, for a pair, its order); on AX, RX and MX
+//!   on Protocol 1 a switch to wheel mode also needs Moving Speed written
+//!   0 first. The bus follows it: an acknowledged position limit,
 //!   Velocity Limit or Current Limit replaces what Setup read, and on AX,
 //!   RX and MX on Protocol 1 the limit mode follows the angle limits; a
 //!   failed one leaves it unknown, and goals that depend on it are refused

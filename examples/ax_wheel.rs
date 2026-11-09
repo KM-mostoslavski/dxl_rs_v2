@@ -14,9 +14,10 @@
 //! crate, `a.set_position_limits(zero, zero)` with `zero = a.position_scale().to_position(0)`
 //! (or `a.write_limit(Raw(MinPositionLimit), 0)` then `a.write_limit(Raw(MaxPositionLimit), 0)`):
 //! the bus switches the actuator to wheel mode on the acknowledged write, with no power cycle
-//! and no new Setup. It takes the write only after `a.disable_torque()` confirmed torque off.
-//! Write `a.set_speed_limit(SpeedLimit::Unlimited)` first: in wheel mode Moving Speed, the last
-//! speed limit, is the goal velocity the next `enable_torque` drives. This example leaves the
+//! and no new Setup. It takes the write only after `a.disable_torque()` confirmed torque off
+//! and `a.set_speed_limit(SpeedLimit::Unlimited)` wrote Moving Speed = 0: in wheel mode Moving
+//! Speed, the last speed limit, is the goal velocity the next `enable_torque` drives, so the
+//! switch is refused (`WheelSpeedUnknown`) until the bus knows it is 0. This example leaves the
 //! limits alone: actuators in joint mode are listed and skipped.
 //!
 //! In wheel mode the e-Manual gives AX and RX Moving Speed as a share of output ("only the

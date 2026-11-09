@@ -48,7 +48,7 @@
 //! | [`LedRed`], [`LedGreen`], [`LedBlue`] | `u8` | no | any | — |
 //! | [`MinVoltageLimit`], [`MaxVoltageLimit`] | [`Voltage`] | confirmed off | any | e-Manual range; a pair, min ≤ max |
 //! | [`TemperatureLimit`] | [`Temperature`] | confirmed off | any | e-Manual range |
-//! | [`MinPositionLimit`], [`MaxPositionLimit`] | [`Position`] | confirmed off | any | e-Manual range of the limit row (verified tables only); min ≤ max |
+//! | [`MinPositionLimit`], [`MaxPositionLimit`] | [`Position`] | confirmed off | no switch to wheel mode with Moving Speed not known 0 | e-Manual range of the limit row (verified tables only); min ≤ max |
 //! | [`VelocityLimit`] | [`Velocity`] | confirmed off | any | e-Manual range |
 //! | [`CurrentLimit`] | [`Current`] | confirmed off | any | e-Manual range |
 //! | [`PwmLimit`] | [`Pwm`] | confirmed off | any | e-Manual range |
@@ -82,7 +82,12 @@
 //! Enable(64) is cleared to '0'",
 //! <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>, 2026-11-09);
 //! the AX, RX and MX Protocol 1 pages document no such lock, so there the
-//! bus check is the only guard. Every read tier reads them.
+//! bus check is the only guard. On those models an angle-limit write that
+//! switches to wheel mode is refused with
+//! [`ValidationError::WheelSpeedUnknown`] until an acknowledged unicast
+//! write of Moving Speed = 0 (`set_speed_limit(SpeedLimit::Unlimited)`),
+//! which any other write of Moving Speed on any tier undoes. Every read
+//! tier reads them.
 //!
 //! Torque Enable is not a field: a sync write gets no reply, so the bus
 //! could not keep its torque state true to the hardware. Use

@@ -195,6 +195,9 @@ impl Error {
             Self::Validation(V::TorqueUnconfirmed { .. }) => {
                 "call disable_torque() before writing EEPROM"
             }
+            Self::Validation(V::WheelSpeedUnknown { .. }) => {
+                "set_speed_limit(SpeedLimit::Unlimited) before switching to wheel mode"
+            }
             Self::Validation(V::ActuatorFaulted { .. }) => "clear the fault before enabling torque",
             Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
             Self::Validation(V::NoUnit { .. }) => "use the register's raw form",
@@ -613,6 +616,7 @@ impl fmt::Display for FeatureHint {
 ///         | V::ActuatorIsOff { .. }
 ///         | V::ActuatorIsOn { .. }
 ///         | V::TorqueUnconfirmed { .. }
+///         | V::WheelSpeedUnknown { .. }
 ///         | V::ActuatorFaulted { .. }
 ///         | V::NotFinite { .. }
 ///         | V::DoesNotFit { .. }
@@ -718,6 +722,21 @@ pub enum ValidationError {
         id: Id,
         /// The EEPROM register's name, as the control table writes it.
         register: &'static str,
+    },
+
+    /// A limit write would switch an AX, RX or MX on Protocol 1 to wheel
+    /// mode (CW = CCW Angle Limit = 0) while the bus does not know Moving
+    /// Speed is 0, so nothing is sent (plan 2026-11-09 D9). In wheel mode
+    /// Moving Speed, the last speed limit, is the goal velocity the next
+    /// `enable_torque()` drives (AX-12A Moving Speed(32),
+    /// <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>). Only an
+    /// acknowledged unicast write of Moving Speed = 0 makes it known;
+    /// Setup, any other write of it, a raw write and a reboot leave it
+    /// unknown.
+    #[error("id {}: Moving Speed not known to be 0, wheel mode not set", id.get())]
+    WheelSpeedUnknown {
+        /// The actuator the write was for.
+        id: Id,
     },
 
     /// Torque was to be enabled on a faulted actuator.
@@ -2367,6 +2386,10 @@ mod tests {
                 "id 7: torque not confirmed off, CCW Angle Limit not written",
             ),
             (
+                ValidationError::WheelSpeedUnknown { id: id(8) },
+                "id 8: Moving Speed not known to be 0, wheel mode not set",
+            ),
+            (
                 ValidationError::ActuatorFaulted { id: id(4) },
                 "id 4: faulted",
             ),
@@ -2875,6 +2898,10 @@ mod tests {
                 }
                 .into(),
                 "call disable_torque() before writing EEPROM",
+            ),
+            (
+                ValidationError::WheelSpeedUnknown { id: id(1) }.into(),
+                "set_speed_limit(SpeedLimit::Unlimited) before switching to wheel mode",
             ),
             (
                 ValidationError::ActuatorFaulted { id: id(1) }.into(),
