@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let period = Duration::from_millis(env_u32("DXL_PERIOD_MS", 500).into());
 
     let mut bus = SerialBus::<P1>::open(&path, env_u32("DXL_BAUD", 1_000_000))?;
-    let held = bus.autoscan()?;
+    let held = bus.autoscan()?.actuators;
     let ids: Vec<Id> = held.iter().map(Actuator::id).collect();
     let names: Vec<&str> = held.iter().map(Actuator::name).collect();
     let in_wheel = |wheel: bool| -> Vec<Id> {

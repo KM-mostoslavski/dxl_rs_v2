@@ -31,9 +31,14 @@ pub(crate) trait Slots {
     /// Empties the list. States become `Off`, bounds `None`.
     fn clear(&mut self);
 
-    /// Appends `kind` with state `Off` and goal bound `bound`.
+    /// Appends `kind` with torque state `state` and goal bound `bound`.
     /// `TooManyActuators` past capacity.
-    fn push(&mut self, kind: ActuatorKind, bound: Bound) -> Result<(), SetupError>;
+    fn push(
+        &mut self,
+        kind: ActuatorKind,
+        bound: Bound,
+        state: TorqueState,
+    ) -> Result<(), SetupError>;
 }
 
 /// The slots of a `Bus`: a list of at most `N` actuators, `N` states and
@@ -86,7 +91,12 @@ impl<const N: usize> Slots for FixedSlots<'_, N> {
         self.bounds.fill(None);
     }
 
-    fn push(&mut self, kind: ActuatorKind, bound: Bound) -> Result<(), SetupError> {
+    fn push(
+        &mut self,
+        kind: ActuatorKind,
+        bound: Bound,
+        state: TorqueState,
+    ) -> Result<(), SetupError> {
         let index = self.actuators.len();
         self.actuators
             .push(kind)
@@ -100,8 +110,8 @@ impl<const N: usize> Slots for FixedSlots<'_, N> {
                     .collect(),
                 declared: false,
             })?;
-        if let Some(state) = self.states.get_mut(index) {
-            *state = TorqueState::Off;
+        if let Some(slot) = self.states.get_mut(index) {
+            *slot = state;
         }
         if let Some(slot) = self.bounds.get_mut(index) {
             *slot = bound;
@@ -158,7 +168,9 @@ mod tests {
             let mut bounds = [None; 3];
             let mut slots = FixedSlots::new(&mut actuators, &mut states, &mut bounds);
             for n in [1, 4, 7] {
-                slots.push(xm430(n), Some(u32::from(n))).unwrap();
+                slots
+                    .push(xm430(n), Some(u32::from(n)), TorqueState::Off)
+                    .unwrap();
             }
             let (kinds, held, limits) = slots.split_mut();
             assert_eq!((kinds.len(), held.len()), (3, 3));
@@ -184,10 +196,10 @@ mod tests {
             let mut states = [TorqueState::Off; 2];
             let mut bounds = [None; 2];
             let mut slots = FixedSlots::new(&mut actuators, &mut states, &mut bounds);
-            slots.push(xm430(1), None).unwrap();
-            slots.push(xm430(2), None).unwrap();
+            slots.push(xm430(1), None, TorqueState::Off).unwrap();
+            slots.push(xm430(2), None, TorqueState::Off).unwrap();
             assert_eq!(
-                slots.push(xm430(3), None),
+                slots.push(xm430(3), None, TorqueState::Off),
                 Err(SetupError::TooManyActuators {
                     capacity: 2,
                     ids: [1, 2, 3].map(crate::bus::testing::id).into_iter().collect(),
@@ -203,8 +215,8 @@ mod tests {
             let mut states = [TorqueState::Faulted; 2];
             let mut bounds = [None; 2];
             let mut slots = FixedSlots::new(&mut actuators, &mut states, &mut bounds);
-            slots.push(xm430(1), Some(9)).unwrap();
-            slots.push(xm430(2), Some(9)).unwrap();
+            slots.push(xm430(1), Some(9), TorqueState::Off).unwrap();
+            slots.push(xm430(2), Some(9), TorqueState::Off).unwrap();
             slots.clear();
             assert!(slots.kinds().is_empty());
             assert_eq!(states, [TorqueState::Off; 2]);

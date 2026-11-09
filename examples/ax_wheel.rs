@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut bus = SerialBus::<P1>::open(&path, env_u32("DXL_BAUD", 1_000_000))?;
     let mut wheels = Vec::new();
-    for a in bus.autoscan()? {
+    for a in bus.autoscan()?.actuators {
         if a.limit_mode() == LimitMode::Wheel {
             wheels.push(a.id());
         } else {

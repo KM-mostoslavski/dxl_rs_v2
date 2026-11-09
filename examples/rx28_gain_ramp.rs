@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(_) => SerialBus::open(&path, baud)?,
     };
-    let held = bus.autoscan()?;
+    let held = bus.autoscan()?.actuators;
     let ids: Vec<Id> = held.iter().map(Actuator::id).collect();
     let names: Vec<&str> = held.iter().map(Actuator::name).collect();
     println!("found {} actuators", ids.len());

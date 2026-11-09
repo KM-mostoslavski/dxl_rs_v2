@@ -1,12 +1,14 @@
 //! Setup: find the actuators, read what the bus must know about each, and
 //! hold them with torque off (research R-6, R-9).
 
-use crate::actuator::{Describe, LimitMode, ModelNumber};
+use crate::actuator::{Describe, LimitMode, ModelNumber, TorqueState};
 use crate::error::{
-    Error, Instruction, Request, SetupError, StatusError, Step, TransportError, ValidationError,
+    Error, Instruction, Request, SetupError, StatusError, StatusReport, Step, TransportError,
+    ValidationError,
 };
 use crate::models::{self, ActuatorKind};
 use crate::protocol::{Clock, Pong, Protocol};
+use crate::register::Register;
 use crate::{Id, IdSet, Transport};
 
 use super::diagnose::diagnose_unknown;
@@ -14,16 +16,33 @@ use super::field;
 use super::slots::Slots;
 use super::wire::Wire;
 
+/// What a successful Setup holds: returned by `declare` and `autoscan` on
+/// [`Bus`](crate::Bus) and `DynBus`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SetupReport<'a> {
+    /// The held actuators, ascending by `Id`, as
+    /// [`Bus::actuators`](crate::Bus::actuators) returns them.
+    pub actuators: &'a [ActuatorKind],
+    /// The held actuators whose Setup replies reported only a hardware
+    /// fault: held [`Faulted`](crate::TorqueState::Faulted), so torque and
+    /// goals are refused until
+    /// [`clear_fault`](crate::ActuatorRef::clear_fault), which also measures
+    /// and returns the fault. Empty when no actuator reported one.
+    pub faulted: IdSet,
+}
+
 /// Declared Setup: pings only the listed actuators.
 ///
 /// Replaces what `slots` held. The list is checked before any byte: more
 /// than `N` entries, a repeated `Id` or a model this build cannot drive on
-/// `P` fail at once. On any error `slots` is left empty.
+/// `P` fail at once. On any error `slots` is left empty. Returns the
+/// actuators held `Faulted`.
 pub(crate) fn declare<P, T, C, S, I, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     list: I,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -44,7 +63,7 @@ fn declare_all<P, T, C, S, I, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     list: I,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -73,18 +92,28 @@ where
     for &(id, model) in &entries {
         ActuatorKind::new(P::VERSION, model, 0, id).map(drop)?;
     }
+    let mut held_faulted = IdSet::new();
     for &(id, declared) in &entries {
         wire.set_context(Request::NONE.step(Step::Ping));
-        let pong = match wire.ping(id) {
+        let mut faulted = false;
+        // DECISION: a ping reporting only a hardware fault is an answer; on
+        // Protocol 2 its model number and firmware are lost with the error,
+        // so Model Number is read as on Protocol 1, and firmware is read
+        // only where the model's table depends on it.
+        let (model_number, firmware) = match wire.ping(id) {
             Err(Error::Transport(TransportError::NoReply { timeout_us, .. })) => {
                 return Err(SetupError::Missing { id, timeout_us }.into());
             }
+            Err(Error::Status(status)) if hardware_only(&status) => {
+                faulted = true;
+                (None, None)
+            }
             Err(err) => return Err(diagnose_unknown(wire, id, Some(declared.get()), err)),
-            Ok(pong) => pong,
+            Ok(pong) => (pong.model_number, pong.firmware),
         };
-        let found = match pong.model_number {
+        let found = match model_number {
             Some(number) => number,
-            None => read_model_number(wire, id)
+            None => read_model_number(wire, id, &mut faulted)
                 .map_err(|err| diagnose_unknown(wire, id, Some(declared.get()), err))?,
         };
         if found != declared.get() {
@@ -95,22 +124,25 @@ where
             }
             .into());
         }
-        init_one(wire, slots, id, declared, pong.firmware)?;
+        if init_one(wire, slots, id, declared, firmware, faulted)? {
+            held_faulted.insert(id);
+        }
     }
-    Ok(())
+    Ok(held_faulted)
 }
 
 /// Setup by scanning: a P2 broadcast ping, or a P1 sweep of IDs 0..=252.
 ///
 /// Replaces what `slots` held. Every reply is collected first; a corrupted
-/// reply, a reply reporting an error, two replies with one `Id`, or more
-/// than `N` replies fail Setup before anything else is sent. The replies are
+/// reply, a reply reporting an error other than only a hardware fault, two
+/// replies with one `Id`, or more than `N` replies fail Setup before
+/// anything else is sent. The replies are
 /// then set up in `Id` order like declared actuators. On any error `slots`
-/// is left empty.
+/// is left empty. Returns the actuators held `Faulted`.
 pub(crate) fn autoscan<P, T, C, S, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -129,7 +161,7 @@ where
 fn autoscan_all<P, T, C, S, const N: usize>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
-) -> Result<(), Error>
+) -> Result<IdSet, Error>
 where
     P: Protocol,
     T: Transport,
@@ -168,18 +200,24 @@ where
         None => {}
     }
     pongs.sort_unstable_by_key(|pong| pong.id);
+    let mut held_faulted = IdSet::new();
     for pong in &pongs {
+        let mut faulted = pong.fault.is_some();
         let model = match pong.model_number {
             Some(number) => number,
-            None => read_model_number(wire, pong.id)
+            None => read_model_number(wire, pong.id, &mut faulted)
                 .map_err(|err| diagnose_unknown(wire, pong.id, None, err))?,
         };
-        init_one(wire, slots, pong.id, ModelNumber(model), pong.firmware)?;
+        let model = ModelNumber(model);
+        if init_one(wire, slots, pong.id, model, pong.firmware, faulted)? {
+            held_faulted.insert(pong.id);
+        }
     }
-    Ok(())
+    Ok(held_faulted)
 }
 
-/// Adds one scan reply to `pongs`, or says why Setup fails.
+/// Adds one scan reply to `pongs`, or says why Setup fails. A reply that
+/// reports only a hardware fault is added like a clean one.
 fn collect<const N: usize>(
     pongs: &mut heapless::Vec<Pong, N>,
     reply: Result<Pong, Error>,
@@ -191,13 +229,15 @@ fn collect<const N: usize>(
             .instruction(Instruction::Ping)
             .id(id)
             .step(Step::Scan);
-        let _ = pongs.push(pong);
-        return Err(StatusError {
+        let status = StatusError {
             id,
             report,
             request,
+        };
+        if !hardware_only(&status) {
+            let _ = pongs.push(pong);
+            return Err(status.into());
         }
-        .into());
     }
     if pongs.iter().any(|held| held.id == id) {
         return Err(ValidationError::DuplicateId { id }.into());
@@ -212,18 +252,66 @@ fn collect<const N: usize>(
     })
 }
 
-/// Reads Model Number, which every table has at the same place.
+/// Reads Model Number, which every table has at the same place. Sets
+/// `faulted` if the reply reports only a hardware fault.
 fn read_model_number<P: Protocol, T: Transport, C: Clock>(
     wire: &mut Wire<'_, P, T, C>,
     id: Id,
+    faulted: &mut bool,
 ) -> Result<u16, Error> {
     wire.set_context(Request::NONE.step(Step::ModelNumber));
-    let raw = wire.read_value(id, models::MODEL_NUMBER)?;
+    let raw = read_value(wire, id, models::MODEL_NUMBER, faulted)?;
     Ok(u16::try_from(raw).unwrap_or(u16::MAX))
 }
 
+/// Whether `status` reports a hardware fault and nothing else: on
+/// Protocol 1 only Input Voltage, Overheating or Overload, on Protocol 2
+/// the alert bit with no error code. The instruction then ran, and the
+/// reply's data is the register's value.
+fn hardware_only(status: &StatusError) -> bool {
+    match status.report {
+        StatusReport::P1(flags) => flags.0 != 0 && flags.0 == flags.hardware().raw(),
+        StatusReport::P2 { alert, code } => alert && code.is_none(),
+    }
+}
+
+/// `result` of a Setup exchange, with a reply that reports only a hardware
+/// fault taken as an answer: `faulted` is set and the data it carried is
+/// kept. Any other result as it is.
+fn tolerate(result: Result<(), Error>, faulted: &mut bool) -> Result<(), Error> {
+    match result {
+        // DECISION: the data is trusted as diagnose.rs trusts it (decided
+        // 2026-11-04). `protocol::check` zero-fills a faulted reply of the
+        // wrong length, which cannot be told apart here; flagged in the PR.
+        Err(Error::Status(status)) if hardware_only(&status) => {
+            *faulted = true;
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+/// As [`Wire::read_value`], through [`tolerate`].
+fn read_value<P: Protocol, T: Transport, C: Clock>(
+    wire: &mut Wire<'_, P, T, C>,
+    id: Id,
+    reg: Register,
+    faulted: &mut bool,
+) -> Result<i32, Error> {
+    let mut buf = [0; 4];
+    let request = wire
+        .context()
+        .filled(reg.request().instruction(Instruction::Read).id(id));
+    let bytes = reg.buf(&mut buf).map_err(|e| e.within(request))?;
+    tolerate(wire.read(id, reg, bytes), faulted)?;
+    reg.decode(bytes).map_err(|e| e.within(request).into())
+}
+
 /// Builds one actuator of `model` at `id` from what it reports, and pushes
-/// it with torque `Off`. `firmware` is the version a P2 ping returned.
+/// it with torque `Off`, or `Faulted` if `faulted` (its ping or Model Number
+/// reply reported only a hardware fault) or a reply here does. Returns
+/// whether it is held `Faulted`. `firmware` is the version a P2 ping
+/// returned.
 ///
 /// 1. Firmware, read only where the model's table depends on it or has a
 ///    register only from some firmware on (MX-64 Protocol 1 Realtime
@@ -236,14 +324,15 @@ fn read_model_number<P: Protocol, T: Transport, C: Clock>(
 /// 5. The EEPROM bound of the goal that mode uses, where the model's table
 ///    records one: Velocity Limit in velocity mode, Current Limit in
 ///    current and current-based position mode (FR-9.3).
-/// 6. The slot, `Off`. No torque write.
+/// 6. The slot, `Off` or `Faulted`. No torque write.
 fn init_one<P, T, C, S>(
     wire: &mut Wire<'_, P, T, C>,
     slots: &mut S,
     id: Id,
     model: ModelNumber,
     firmware: Option<u8>,
-) -> Result<(), Error>
+    mut faulted: bool,
+) -> Result<bool, Error>
 where
     P: Protocol,
     T: Transport,
@@ -255,7 +344,7 @@ where
         (Some(firmware), _) => firmware,
         (None, Some(reg)) => {
             step(wire, Step::Firmware);
-            let read = wire.read_value(id, reg);
+            let read = read_value(wire, id, reg, &mut faulted);
             let read = read.map_err(|err| diagnose_unknown(wire, id, Some(model.get()), err));
             u8::try_from(read?).unwrap_or(u8::MAX)
         }
@@ -265,16 +354,16 @@ where
     kind.cache_mut().record_firmware(firmware);
     let data = kind.data();
     step(wire, Step::PositionLimits);
-    let min = wire.read_value(id, data.limits.min());
+    let min = read_value(wire, id, data.limits.min(), &mut faulted);
     let min = super::diagnose::diagnosed(wire, &kind, min)?;
-    let max = wire.read_value(id, data.limits.max());
+    let max = read_value(wire, id, data.limits.max(), &mut faulted);
     let max = super::diagnose::diagnosed(wire, &kind, max)?;
     let limits = kind.cache_mut().record_limits(min, max)?;
     let mode = match data.mode.register() {
         Some(reg) => {
             step(wire, Step::OperatingMode);
             let mut value = [0];
-            let read = wire.read(id, reg, &mut value);
+            let read = tolerate(wire.read(id, reg, &mut value), &mut faulted);
             super::diagnose::diagnosed(wire, &kind, read)?;
             let [value] = value;
             data.mode
@@ -294,13 +383,18 @@ where
     {
         Some(reg) => {
             step(wire, Step::GoalBound);
-            let read = wire.read_value(id, reg);
+            let read = read_value(wire, id, reg, &mut faulted);
             Some(super::diagnose::diagnosed(wire, &kind, read)?.cast_unsigned())
         }
         None => None,
     };
-    slots.push(kind, bound)?;
-    Ok(())
+    let state = if faulted {
+        TorqueState::Faulted
+    } else {
+        TorqueState::Off
+    };
+    slots.push(kind, bound, state)?;
+    Ok(faulted)
 }
 
 #[cfg(test)]
@@ -312,10 +406,9 @@ mod tests {
 
     use super::*;
     use crate::bus::testing::*;
-    use crate::error::{Decivolts, FaultError, Instruction, VoltageError};
+    use crate::error::Instruction;
     use crate::protocol::{P1, P2, ProtocolVersion};
     use crate::transport::MockTime;
-    use crate::units::HardwareErrors;
 
     fn model(n: u16) -> ModelNumber {
         ModelNumber(n)
@@ -412,7 +505,13 @@ mod tests {
         let time = MockTime::new();
         let mut bus = test_bus::<P2, 32>(&time);
         let mark = mark(&bus);
-        assert_eq!(bus.declare([]), Ok(&[] as &[ActuatorKind]));
+        assert_eq!(
+            bus.declare([]),
+            Ok(SetupReport {
+                actuators: &[],
+                faulted: IdSet::new(),
+            })
+        );
         assert_quiet(&bus, mark);
     }
 
@@ -420,6 +519,7 @@ mod tests {
     mod x_series {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
+        use crate::error::P2Code;
 
         fn xm430_bus(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
             let mut bus = test_bus(time);
@@ -558,42 +658,135 @@ mod tests {
             assert!(bus.actuators().is_empty());
         }
 
+        /// FR-2.7: a reply reporting only a hardware fault holds the
+        /// actuator `Faulted` instead of failing Setup.
         #[test]
-        fn fault_at_setup_fails_setup() {
+        fn fault_at_setup_holds_faulted() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
             line(&mut bus)
                 .reply_to(1, &p2_status(1, 0x80, &[0xFC, 0x03, XM430_FW]))
-                .reply_to(2, &p2_status(1, 0x80, &[0x01]))
-                .reply_to(3, &p2_status(1, 0x80, &150u16.to_le_bytes()))
-                .reply_to(4, &p2_status(1, 0x80, &95u16.to_le_bytes()))
-                .reply_to(5, &p2_status(1, 0x80, &140u16.to_le_bytes()));
-            let err = bus.declare([(id(1), model(XM430))]).unwrap_err();
-            assert_eq!(
-                err,
-                Error::Fault(FaultError::Voltage(VoltageError::AboveMax {
-                    id: id(1),
-                    measured: Decivolts(150),
-                    min: Decivolts(95),
-                    max: Decivolts(140),
-                    faults: HardwareErrors::from_raw(0x01),
-                    request: Request::NONE
-                        .instruction(Instruction::Ping)
-                        .id(id(1))
-                        .step(Step::Ping),
-                }))
-            );
+                .reply_to(2, &p2_status(1, 0x80, &XM430.to_le_bytes()))
+                .reply_to(3, &p2_status(1, 0x80, &1000i32.to_le_bytes()))
+                .reply_to(4, &p2_status(1, 0x80, &3000i32.to_le_bytes()))
+                .reply_to(5, &p2_status(1, 0x80, &[3]));
+            let report = bus.declare([(id(1), model(XM430))]).unwrap();
+            assert_eq!(report.faulted, ids(&[1]));
+            assert_eq!(report.actuators[0].position_limits_raw(), Some(1000..=3000));
+            assert_eq!(bus.torque_states(), [TorqueState::Faulted]);
             assert_eq!(
                 sent(&bus),
                 concat(&[
                     p2_instruction(1, PING, &[]),
-                    p2_read(1, 70, 1),
-                    p2_read(1, 144, 2),
-                    p2_read(1, 34, 2),
-                    p2_read(1, 32, 2),
+                    p2_read(1, 0, 2),
+                    xm430_p2_reads_sent(1),
                 ])
             );
+            assert_done(&bus);
+        }
+
+        #[test]
+        fn fault_on_mode_read_only_holds_faulted() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p2_pong(1, XM430, XM430_FW))
+                .reply_to(2, &p2_status(1, 0, &1000i32.to_le_bytes()))
+                .reply_to(3, &p2_status(1, 0, &3000i32.to_le_bytes()))
+                .reply_to(4, &p2_status(1, 0x80, &[3]));
+            let report = bus.declare([(id(1), model(XM430))]).unwrap();
+            assert_eq!(report.faulted, ids(&[1]));
+            assert_eq!(bus.torque_states(), [TorqueState::Faulted]);
+            assert_eq!(sent(&bus), xm430_p2_sent(1));
+        }
+
+        /// FR-2.7: any other error in a Setup reply still fails it.
+        #[test]
+        fn p2_alert_with_error_code_fails_setup() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            line(&mut bus).reply_to(1, &p2_status(1, 0x84, &[0xFC, 0x03, XM430_FW]));
+            assert_eq!(
+                bus.declare([(id(1), model(XM430))]),
+                Err(StatusError {
+                    id: id(1),
+                    report: StatusReport::P2 {
+                        alert: true,
+                        code: Some(P2Code::DataRange),
+                    },
+                    request: Request::NONE
+                        .instruction(Instruction::Ping)
+                        .id(id(1))
+                        .step(Step::Ping),
+                }
+                .into())
+            );
             assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn faulted_with_unknown_mode_fails_setup() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p2_pong(1, XM430, XM430_FW))
+                .reply_to(2, &p2_status(1, 0, &0i32.to_le_bytes()))
+                .reply_to(3, &p2_status(1, 0, &4095i32.to_le_bytes()))
+                .reply_to(4, &p2_status(1, 0x80, &[2]));
+            assert_eq!(
+                bus.declare([(id(1), model(XM430))]),
+                Err(SetupError::UnknownOperatingMode {
+                    id: id(1),
+                    value: 2,
+                    register: "Operating Mode",
+                }
+                .into())
+            );
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn faulted_at_setup_refuses_enable_torque() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            let at = xm430_p2(line(&mut bus), 1, 1, 0, 4095, 3);
+            line(&mut bus)
+                .reply_to(at, &p2_pong(2, XM430, XM430_FW))
+                .reply_to(at + 1, &p2_status(2, 0, &0i32.to_le_bytes()))
+                .reply_to(at + 2, &p2_status(2, 0, &4095i32.to_le_bytes()))
+                .reply_to(at + 3, &p2_status(2, 0x80, &[3]));
+            let list = [1, 2].map(|n| (id(n), model(XM430)));
+            assert_eq!(bus.declare(list).unwrap().faulted, ids(&[2]));
+            assert_eq!(
+                bus.torque_states(),
+                [TorqueState::Off, TorqueState::Faulted]
+            );
+            let mark = mark(&bus);
+            assert_eq!(
+                bus.enable_torque(bus.ids()),
+                Err(ValidationError::ActuatorFaulted { id: id(2) }.into())
+            );
+            assert_quiet(&bus, mark);
+            assert_eq!(
+                bus.torque_states(),
+                [TorqueState::Off, TorqueState::Faulted]
+            );
+        }
+
+        #[test]
+        fn second_declare_clears_a_held_fault() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P2, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p2_pong(1, XM430, XM430_FW))
+                .reply_to(2, &p2_status(1, 0, &1000i32.to_le_bytes()))
+                .reply_to(3, &p2_status(1, 0, &3000i32.to_le_bytes()))
+                .reply_to(4, &p2_status(1, 0x80, &[3]));
+            bus.declare([(id(1), model(XM430))]).unwrap();
+            xm430_p2(line(&mut bus), 5, 1, 1000, 3000, 3);
+            let report = bus.declare([(id(1), model(XM430))]).unwrap();
+            assert_eq!(report.faulted, IdSet::new());
+            assert_eq!(bus.torque_states(), [TorqueState::Off]);
         }
 
         #[test]
@@ -603,7 +796,7 @@ mod tests {
             let next = xm430_p2(line(&mut bus), 1, 1, 0, 4095, 3);
             bus.declare([(id(1), model(XM430))]).unwrap();
             xm430_p2(line(&mut bus), next, 2, 0, 4095, 3);
-            let held = bus.declare([(id(2), model(XM430))]).unwrap();
+            let held = bus.declare([(id(2), model(XM430))]).unwrap().actuators;
             assert_eq!(held.len(), 1);
             assert_eq!(held[0].id(), id(2));
             assert_eq!(
@@ -626,7 +819,7 @@ mod tests {
                 at = xm430_p2(line(&mut bus), at, n, 0, 4095, 3);
             }
             let list = [3, 1, 2].map(|n| (id(n), model(XM430)));
-            let held = bus.declare(list).unwrap();
+            let held = bus.declare(list).unwrap().actuators;
             let ids: [u8; 3] = core::array::from_fn(|i| held[i].id().get());
             assert_eq!(ids, [1, 2, 3]);
             assert_eq!(
@@ -702,52 +895,33 @@ mod tests {
             assert_eq!(sent(&bus), xm430_p2_sent(1));
             assert!(bus.actuators().is_empty());
         }
-
-        #[test]
-        fn p1_model_read_fault_fails_setup() {
-            let time = MockTime::new();
-            let mut bus = test_bus::<P1, 32>(&time);
-            line(&mut bus)
-                .reply_to(1, &p1_status(1, 0, &[]))
-                .reply_to(2, &p1_status(1, 0x20, &XM430.to_le_bytes()));
-            assert_eq!(
-                bus.declare([(id(1), model(XM430))]),
-                Err(FaultError::Overload {
-                    id: id(1),
-                    faults: HardwareErrors::from_raw(0x20),
-                    request: read(1, "Model Number", 0, 2, Step::ModelNumber),
-                }
-                .into())
-            );
-            assert!(bus.actuators().is_empty());
-        }
     }
 
     #[cfg(feature = "ax")]
     mod ax {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
+        use crate::error::{Decivolts, FaultError, P1Flags, VoltageError};
+        use crate::units::HardwareErrors;
 
         #[test]
-        fn p1_scan_voltage_fault_is_measured_below_min() {
+        fn p1_scan_voltage_fault_is_held_and_measured_by_clear_fault() {
             let time = MockTime::new();
             let mut bus = test_bus::<P1, 32>(&time);
             line(&mut bus)
                 .reply_to(2, &p1_status(1, 0x01, &[]))
                 .reply_to(254, &p1_status(1, 0x01, &AX12.to_le_bytes()))
-                .reply_to(255, &p1_status(1, 0x01, &[97]))
-                .reply_to(256, &p1_status(1, 0x01, &[105]))
-                .reply_to(257, &p1_status(1, 0x01, &[130]));
-            let err = bus.autoscan().unwrap_err();
-            assert!(matches!(
-                err,
-                Error::Fault(FaultError::Voltage(VoltageError::BelowMin {
-                    measured: Decivolts(97),
-                    min: Decivolts(105),
-                    max: Decivolts(130),
-                    ..
-                }))
-            ));
+                .reply_to(255, &p1_status(1, 0x01, &0u16.to_le_bytes()))
+                .reply_to(256, &p1_status(1, 0x01, &1023u16.to_le_bytes()))
+                .reply_to(257, &p1_status(1, 0x01, &[]))
+                .reply_to(258, &p1_status(1, 0x01, &[97]))
+                .reply_to(259, &p1_status(1, 0x01, &[105]))
+                .reply_to(260, &p1_status(1, 0x01, &[130]));
+            let report = bus.autoscan().unwrap();
+            assert_eq!(report.faulted, ids(&[1]));
+            assert_eq!(report.actuators[0].position_limits_raw(), Some(0..=1023));
+            assert_eq!(bus.torque_states(), [TorqueState::Faulted]);
+            let err = bus.actuator(id(1)).unwrap().clear_fault().unwrap_err();
             assert_eq!(
                 err,
                 Error::Fault(FaultError::Voltage(VoltageError::BelowMin {
@@ -756,20 +930,75 @@ mod tests {
                     min: Decivolts(105),
                     max: Decivolts(130),
                     faults: HardwareErrors::from_raw(0x01),
-                    request: Request::NONE
-                        .instruction(Instruction::Ping)
-                        .id(id(1))
-                        .step(Step::Scan),
+                    request: Request::NONE.instruction(Instruction::Ping).id(id(1)),
                 }))
             );
             assert_eq!(err.to_string(), "id 1: voltage 9.7 V below 10.5 V");
             assert_eq!(format!("{err:?}"), err.to_string());
             assert!(sent(&bus).ends_with(&concat(&[
                 p1_read(1, 0, 2),
+                p1_read(1, 6, 2),
+                p1_read(1, 8, 2),
+                p1_instruction(1, PING, &[]),
                 p1_read(1, 42, 1),
                 p1_read(1, 12, 1),
                 p1_read(1, 13, 1),
             ])));
+            assert_eq!(bus.torque_states(), [TorqueState::Faulted]);
+        }
+
+        #[test]
+        fn p1_scan_instruction_and_voltage_flags_fail() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            line(&mut bus).reply_to(2, &p1_status(1, 0x41, &[]));
+            assert_eq!(
+                bus.autoscan(),
+                Err(StatusError {
+                    id: id(1),
+                    report: StatusReport::P1(P1Flags(0x41)),
+                    request: Request::NONE
+                        .instruction(Instruction::Ping)
+                        .id(id(1))
+                        .step(Step::Scan),
+                }
+                .into())
+            );
+            assert!(bus.actuators().is_empty());
+        }
+
+        #[test]
+        fn p1_model_read_fault_holds_faulted() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p1_status(1, 0, &[]))
+                .reply_to(2, &p1_status(1, 0x20, &AX12.to_le_bytes()))
+                .reply_to(3, &p1_status(1, 0, &0u16.to_le_bytes()))
+                .reply_to(4, &p1_status(1, 0, &1023u16.to_le_bytes()));
+            let report = bus.declare([(id(1), model(AX12))]).unwrap();
+            assert_eq!(report.faulted, ids(&[1]));
+            assert_eq!(report.actuators[0].position_limits_raw(), Some(0..=1023));
+            assert_eq!(bus.torque_states(), [TorqueState::Faulted]);
+            assert_eq!(sent(&bus), ax12_p1_sent(1));
+        }
+
+        #[test]
+        fn p1_instruction_and_voltage_flags_fail_setup() {
+            let time = MockTime::new();
+            let mut bus = test_bus::<P1, 32>(&time);
+            line(&mut bus)
+                .reply_to(1, &p1_status(1, 0, &[]))
+                .reply_to(2, &p1_status(1, 0x41, &AX12.to_le_bytes()));
+            assert_eq!(
+                bus.declare([(id(1), model(AX12))]),
+                Err(StatusError {
+                    id: id(1),
+                    report: StatusReport::P1(P1Flags(0x41)),
+                    request: read(1, "Model Number", 0, 2, Step::ModelNumber),
+                }
+                .into())
+            );
             assert!(bus.actuators().is_empty());
         }
 
@@ -828,7 +1057,10 @@ mod tests {
             for n in 1..=8 {
                 at = angle_p1(line(&mut bus), at, n, RX28, 0, 1023);
             }
-            let held = bus.declare((1..=8).map(|n| (id(n), model(RX28)))).unwrap();
+            let held = bus
+                .declare((1..=8).map(|n| (id(n), model(RX28))))
+                .unwrap()
+                .actuators;
             assert_eq!(held.len(), 8);
             assert!(
                 held.iter()
@@ -949,7 +1181,13 @@ mod tests {
         fn p2_autoscan_empty_is_bounded() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
-            assert_eq!(bus.autoscan(), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(
+                bus.autoscan(),
+                Ok(SetupReport {
+                    actuators: &[],
+                    faulted: IdSet::new(),
+                })
+            );
             assert_eq!(
                 sent(&bus),
                 [0xFF, 0xFF, 0xFD, 0x00, 0xFE, 0x03, 0x00, 0x01, 0x31, 0x42]
@@ -961,7 +1199,13 @@ mod tests {
         fn p1_autoscan_empty_is_bounded() {
             let time = MockTime::new();
             let mut bus = test_bus::<P1, 32>(&time);
-            assert_eq!(bus.autoscan(), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(
+                bus.autoscan(),
+                Ok(SetupReport {
+                    actuators: &[],
+                    faulted: IdSet::new(),
+                })
+            );
             assert_eq!(sent(&bus), p1_sweep());
             assert!(
                 time.now() <= 253 * 10_000 + 10_000,
@@ -1001,28 +1245,26 @@ mod tests {
             assert!(bus.actuators().is_empty());
         }
 
+        /// FR-2.7, autoscan side.
+        #[cfg(feature = "x-series")]
         #[test]
-        fn pong_with_alert_fails() {
+        fn pong_with_alert_is_held() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
             let [lo, hi] = XM430.to_le_bytes();
             line(&mut bus)
                 .reply_to(1, &p2_status(3, 0x80, &[lo, hi, XM430_FW]))
-                .reply_to(2, &p2_status(3, 0x80, &[0x10]));
+                .reply_to(2, &p2_status(3, 0x80, &1000i32.to_le_bytes()))
+                .reply_to(3, &p2_status(3, 0x80, &3000i32.to_le_bytes()))
+                .reply_to(4, &p2_status(3, 0x80, &[3]));
+            let report = bus.autoscan().unwrap();
+            assert_eq!(report.faulted, ids(&[3]));
+            assert_eq!(bus.torque_states(), [FAULTED]);
             assert_eq!(
-                bus.autoscan(),
-                Err(FaultError::ElectricalShock {
-                    id: id(3),
-                    faults: HardwareErrors::from_raw(0x10),
-                    request: Request::NONE
-                        .instruction(Instruction::Ping)
-                        .id(id(3))
-                        .step(Step::Scan),
-                }
-                .into())
+                sent(&bus),
+                concat(&[broadcast_ping(), xm430_p2_reads_sent(3)])
             );
-            assert_eq!(sent(&bus), concat(&[broadcast_ping(), p2_read(3, 70, 1)]));
-            assert!(bus.actuators().is_empty());
+            assert_done(&bus);
         }
 
         #[test]
@@ -1089,7 +1331,13 @@ mod tests {
         fn autoscan_replaces_a_declared_list() {
             let time = MockTime::new();
             let mut bus = test_bus::<P2, 32>(&time);
-            assert_eq!(bus.declare([]), Ok(&[] as &[ActuatorKind]));
+            assert_eq!(
+                bus.declare([]),
+                Ok(SetupReport {
+                    actuators: &[],
+                    faulted: IdSet::new(),
+                })
+            );
             line(&mut bus).reply_to(1, &p2_pong(1, 9999, 1));
             assert!(bus.autoscan().is_err());
             assert!(bus.actuators().is_empty());
@@ -1111,7 +1359,7 @@ mod tests {
                 for n in [1, 2, 3] {
                     at = xm430_p2_reads(line(&mut bus), at, n, 0, 4095, 3);
                 }
-                let held = bus.autoscan().unwrap();
+                let held = bus.autoscan().unwrap().actuators;
                 let ids: [u8; 3] = core::array::from_fn(|i| held[i].id().get());
                 assert_eq!(ids, [1, 2, 3]);
                 assert_eq!(
@@ -1134,7 +1382,7 @@ mod tests {
                     let mut bus = test_bus::<P2, 32>(&time);
                     line(&mut bus).reply_to(1, &p2_pong(4, 1190, fw));
                     xm430_p2_reads(line(&mut bus), 2, 4, 0, 4095, 3);
-                    let held = bus.autoscan().unwrap();
+                    let held = bus.autoscan().unwrap().actuators;
                     assert_eq!(
                         matches!(held[0], ActuatorKind::Xl330M077Fw52(_)),
                         fw52,
@@ -1181,7 +1429,7 @@ mod tests {
                     .reply_to(6, &p1_status(5, 0, &[]));
                 let at = angle_p1_reads(line(&mut bus), 254, 1, RX28, 0, 1023);
                 angle_p1_reads(line(&mut bus), at, 5, RX28, 0, 1023);
-                let held = bus.autoscan().unwrap();
+                let held = bus.autoscan().unwrap().actuators;
                 assert_eq!(held.len(), 2);
                 assert!(matches!(held[0], ActuatorKind::Rx28(_)));
                 assert!(matches!(held[1], ActuatorKind::Rx28(_)));

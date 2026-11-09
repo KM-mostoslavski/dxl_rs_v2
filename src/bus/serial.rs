@@ -11,7 +11,7 @@ use super::{Bus, Config};
 /// use dxl_rs_v2::{Error, P2, SerialBus};
 ///
 /// let mut bus = SerialBus::<P2>::open("/dev/ttyUSB0", 1_000_000)?;
-/// for actuator in bus.autoscan()? {
+/// for actuator in bus.autoscan()?.actuators {
 ///     println!("{actuator:?}");
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())

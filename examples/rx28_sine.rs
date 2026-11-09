@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cycles = env_u32("DXL_CYCLES", 3);
 
     let mut bus = SerialBus::<P1>::open(&path, env_u32("DXL_BAUD", 1_000_000))?;
-    let ids: Vec<Id> = bus.autoscan()?.iter().map(|a| a.id()).collect();
+    let ids: Vec<Id> = bus.autoscan()?.actuators.iter().map(|a| a.id()).collect();
     println!("found {} actuators", ids.len());
 
     let mut centers = Vec::new();

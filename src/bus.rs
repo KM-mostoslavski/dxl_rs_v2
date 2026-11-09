@@ -30,7 +30,9 @@
 //!   that actuator [`Faulted`](crate::TorqueState::Faulted) on the same call.
 //!   Only [`ActuatorRef::clear_fault`] clears it, after asking the actuator.
 //!   An X-series actuator needs a reboot before its fault clears: on
-//!   Protocol 2, [`ActuatorRef::reboot`].
+//!   Protocol 2, [`ActuatorRef::reboot`]. Setup is the exception: it holds
+//!   such an actuator `Faulted` and lists it in [`SetupReport::faulted`]
+//!   instead of failing, so its EEPROM can still be fixed.
 //! - Broadcast writes get no reply, so a loop that only writes sees a fault
 //!   on its next read.
 //! - A multi-actuator call validates every target before any byte, so a
@@ -117,6 +119,7 @@ pub use id_set::{IdSet, IdSetIter};
 pub use model_ref::ModelRef;
 #[cfg(feature = "std")]
 pub use serial::SerialBus;
+pub use setup::SetupReport;
 
 use slots::{Bound, FixedSlots, Slots, find};
 use wire::Wire;
@@ -363,6 +366,16 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Nothing is written. It never sweeps the bus. No other register is
     /// read after Setup unless a call asks for it (FR-9.6).
     ///
+    /// An actuator whose replies report only a hardware fault (Protocol 1:
+    /// Input Voltage, Overheating, Overload; Protocol 2: the alert bit with
+    /// no error code) is held all the same, with torque
+    /// [`Faulted`](TorqueState::Faulted), and listed in
+    /// [`SetupReport::faulted`]: goals and torque are refused until
+    /// [`ActuatorRef::clear_fault`], which measures and returns the fault,
+    /// and its EEPROM can be fixed with `write_raw` (feature
+    /// `raw-registers`) in the meantime. On Protocol 2 its model number is
+    /// then read from Model Number, the ping having failed.
+    ///
     /// # Errors
     ///
     /// Before anything is sent:
@@ -378,8 +391,11 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     ///   its model's lists (or outside its torque switch's values).
     /// - [`ValidationError::InvertedLimits`]: its minimum limit is above its
     ///   maximum.
-    /// - [`Error::Status`] (a hardware fault fails Setup), and any transport
-    ///   or protocol error of a read.
+    /// - [`Error::Status`]: a reply reporting any other error (Protocol 1
+    ///   Angle Limit, Range, Checksum or Instruction, even beside a hardware
+    ///   flag; a Protocol 2 error code), measured into [`Error::Fault`] when
+    ///   it also reports a hardware fault; and any transport or protocol
+    ///   error of a read.
     ///
     /// [`SetupError::TooManyActuators`]: crate::SetupError::TooManyActuators
     /// [`ValidationError::DuplicateId`]: crate::ValidationError::DuplicateId
@@ -388,13 +404,16 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// [`SetupError::WrongModel`]: crate::SetupError::WrongModel
     /// [`SetupError::UnknownOperatingMode`]: crate::SetupError::UnknownOperatingMode
     /// [`ValidationError::InvertedLimits`]: crate::ValidationError::InvertedLimits
-    pub fn declare<I>(&mut self, list: I) -> Result<&[ActuatorKind], Error>
+    pub fn declare<I>(&mut self, list: I) -> Result<SetupReport<'_>, Error>
     where
         I: IntoIterator<Item = (Id, ModelNumber)>,
     {
         let (mut wire, mut slots) = self.split();
-        setup::declare::<P, T, C, _, _, N>(&mut wire, &mut slots, list)?;
-        Ok(self.actuators())
+        let faulted = setup::declare::<P, T, C, _, _, N>(&mut wire, &mut slots, list)?;
+        Ok(SetupReport {
+            actuators: self.actuators(),
+            faulted,
+        })
     }
 
     /// Setup by scanning (P2 broadcast ping, P1 sweep 0..=252). Available
@@ -406,13 +425,14 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// waiting `scan_timeout`, which takes about 2.5 s at the default when
     /// few IDs answer. Each actuator found is then set up like
     /// [`declare`](Bus::declare) does, in `Id` order, and held with torque
-    /// `Off`.
+    /// `Off`, or `Faulted` and listed in [`SetupReport::faulted`] when its
+    /// replies report only a hardware fault, as `declare` does.
     ///
     /// # Errors
     ///
     /// - [`Error::Protocol`]: a corrupted reply to the scan.
-    /// - [`Error::Status`]: a reply reporting an error (a hardware fault
-    ///   fails Setup).
+    /// - [`Error::Status`]: a reply reporting any error other than only a
+    ///   hardware fault (see [`declare`](Bus::declare)).
     /// - [`ValidationError::DuplicateId`]: two replies with one `Id`.
     /// - [`SetupError::TooManyActuators`]: more than `N` replies.
     /// - [`SetupError::UnsupportedModel`]: a model this build has no table
@@ -422,10 +442,13 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// [`ValidationError::DuplicateId`]: crate::ValidationError::DuplicateId
     /// [`SetupError::TooManyActuators`]: crate::SetupError::TooManyActuators
     /// [`SetupError::UnsupportedModel`]: crate::SetupError::UnsupportedModel
-    pub fn autoscan(&mut self) -> Result<&[ActuatorKind], Error> {
+    pub fn autoscan(&mut self) -> Result<SetupReport<'_>, Error> {
         let (mut wire, mut slots) = self.split();
-        setup::autoscan::<P, T, C, _, N>(&mut wire, &mut slots)?;
-        Ok(self.actuators())
+        let faulted = setup::autoscan::<P, T, C, _, N>(&mut wire, &mut slots)?;
+        Ok(SetupReport {
+            actuators: self.actuators(),
+            faulted,
+        })
     }
 
     /// Held actuators, ascending by `Id`.

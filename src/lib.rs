@@ -22,7 +22,8 @@ mod units;
 
 pub use actuator::{Actuator, LimitMode, Model, ModelNumber, TorqueState};
 pub use bus::{
-    ActuatorRef, Bus, Config, DefaultClock, IdSet, IdSetIter, ModelRef, NoClock, bulk, field,
+    ActuatorRef, Bus, Config, DefaultClock, IdSet, IdSetIter, ModelRef, NoClock, SetupReport, bulk,
+    field,
 };
 #[cfg(feature = "std")]
 pub use bus::{DynBus, SerialBus};
