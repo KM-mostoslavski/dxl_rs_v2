@@ -4,18 +4,22 @@ use crate::Transport;
 use crate::actuator::{Actuator, Cache, Describe, ModelData, TorqueState};
 use crate::error::{Error, StatusError, StatusReport};
 use crate::field::{
-    DGain, GoalCurrent, GoalPosition, GoalVelocity, HardwareErrorStatus, Led, Moving, PGain,
-    PresentCurrent, PresentLoad, PresentPosition, PresentTemperature, PresentVelocity,
-    PresentVoltage, Raw, ReadField, RealtimeTick, SpeedLimit as SpeedLimitField, WriteField,
+    CurrentLimit, DGain, GoalCurrent, GoalPosition, GoalVelocity, HardwareErrorStatus, Led,
+    LimitField, MaxPositionLimit, MaxTorque, MaxVoltageLimit, MinPositionLimit, MinVoltageLimit,
+    Moving, PGain, PresentCurrent, PresentLoad, PresentPosition, PresentTemperature,
+    PresentVelocity, PresentVoltage, PwmLimit, Raw, ReadField, RealtimeTick,
+    SpeedLimit as SpeedLimitField, TemperatureLimit, VelocityLimit, WriteField,
 };
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, P2, Protocol};
 use crate::units::{
-    Current, Gain, HardwareErrors, Load, Position, SpeedLimit, Temperature, Tick, Velocity, Voltage,
+    Current, Gain, HardwareErrors, Load, Position, Pwm, SpeedLimit, Temperature, Tick, Velocity,
+    Voltage,
 };
 
 use super::diagnose::diagnosed;
 use super::field::{self as fields, sealed::Decode};
+use super::limits;
 use super::observe::{after_torque_write, check_clear, observe};
 use super::slots::Bound;
 use super::wire::Wire;
@@ -114,7 +118,7 @@ assert!(load < 0.0, "bit 10 set: CW load");
 pub struct ActuatorRef<'b, P: Protocol, T: Transport, C: Clock> {
     pub(super) kind: &'b mut ActuatorKind,
     pub(super) state: &'b mut TorqueState,
-    pub(super) bound: Bound,
+    pub(super) bound: &'b mut Bound,
     pub(super) wire: Wire<'b, P, T, C>,
 }
 
@@ -124,7 +128,7 @@ impl<'b, P: Protocol, T: Transport, C: Clock> ActuatorRef<'b, P, T, C> {
     pub(crate) fn new(
         kind: &'b mut ActuatorKind,
         state: &'b mut TorqueState,
-        bound: Bound,
+        bound: &'b mut Bound,
         wire: Wire<'b, P, T, C>,
     ) -> Self {
         Self {
@@ -154,7 +158,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// MX on Protocol 1). Goal velocities and currents are checked against
     /// it (FR-9.3).
     pub fn goal_bound_raw(&self) -> Option<u32> {
-        self.bound
+        *self.bound
     }
 
     /// Turns torque on: one acknowledged write of Torque Enable = 1.
@@ -278,7 +282,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         let (reg, bytes) = fields::encode_write::<F>(
             self.kind,
             self.state.check_goal(id),
-            self.bound,
+            *self.bound,
             value,
             &mut buf,
         )?;
@@ -594,6 +598,252 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// As [`read`](Self::read); `Unsupported` on models without it.
     pub fn d_gain(&mut self) -> Result<Gain, Error> {
         self.read(DGain)
+    }
+
+    /// Writes EEPROM limit `F`: one acknowledged unicast write of its
+    /// register, with torque off, no read-back. `Raw(F)` writes the
+    /// register value, with the same checks. The pair setters
+    /// ([`set_voltage_limits`](Self::set_voltage_limits),
+    /// [`set_position_limits`](Self::set_position_limits)) and the named
+    /// setters below call it.
+    ///
+    /// Everything is checked before a byte is sent, in this order: the
+    /// model has the register; torque is not [`On`](TorqueState::On) (the
+    /// actuator ignores EEPROM writes then; `Off` and `Faulted` both pass,
+    /// so an actuator held faulted at Setup can be fixed); the value
+    /// converts to a register value with the unit its control table gives;
+    /// it lies in the e-Manual range the table records; a position limit
+    /// keeps the limits ordered against the other limit the bus holds; it
+    /// fits the register. A single voltage limit cannot be checked against
+    /// the other one, which the bus does not hold: use
+    /// [`set_voltage_limits`](Self::set_voltage_limits) to check both.
+    ///
+    /// The bus follows the write. Acknowledged, a position limit replaces
+    /// the limit Setup read, so goals are checked against it; on AX, RX and
+    /// MX on Protocol 1 the limit mode follows the angle limits as Setup
+    /// would have found it (CW = CCW = 0 is wheel mode); a Velocity or
+    /// Current Limit the operating mode bounds its goal with replaces that
+    /// bound. Failed, whatever it was written to is unknown: every goal
+    /// that depends on it is refused with
+    /// [`LimitsUnknown`] until the next Setup.
+    ///
+    /// ```
+    /// use dxl_rs_v2::field::{MaxVoltageLimit, Raw, TemperatureLimit};
+    /// use dxl_rs_v2::{ActuatorRef, Clock, Error, P1, Temperature, Transport};
+    ///
+    /// fn widen<T: Transport, C: Clock>(ax: &mut ActuatorRef<'_, P1, T, C>) -> Result<(), Error> {
+    ///     ax.disable_torque()?;
+    ///     ax.write_limit(TemperatureLimit, Temperature::from_celsius(75.0))?;
+    ///     ax.write_limit(Raw(MaxVoltageLimit), 160)
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Refused with nothing sent:
+    /// - [`Unsupported`]: the model's table lacks the register.
+    /// - [`ActuatorIsOn`]: torque is [`On`](TorqueState::On).
+    /// - [`NoUnit`]: a typed value, and the table gives the register no
+    ///   unit (an unverified table): use `Raw(F)`.
+    /// - [`NotFinite`], [`DoesNotFit`]: the value maps to no register
+    ///   value.
+    /// - [`OutOfLimits`]: outside the e-Manual range.
+    /// - [`InvertedLimits`]: a position limit on the wrong side of the
+    ///   other one.
+    /// - [`LimitsUnknown`]: a position limit, and the other one is unknown
+    ///   since a failed limit write.
+    ///
+    /// Otherwise any error of the write; a reply reporting a hardware fault
+    /// marks the actuator `Faulted`.
+    ///
+    /// [`Unsupported`]: crate::ValidationError::Unsupported
+    /// [`ActuatorIsOn`]: crate::ValidationError::ActuatorIsOn
+    /// [`NoUnit`]: crate::ValidationError::NoUnit
+    /// [`NotFinite`]: crate::ValidationError::NotFinite
+    /// [`DoesNotFit`]: crate::ValidationError::DoesNotFit
+    /// [`OutOfLimits`]: crate::ValidationError::OutOfLimits
+    /// [`InvertedLimits`]: crate::ValidationError::InvertedLimits
+    /// [`LimitsUnknown`]: crate::ValidationError::LimitsUnknown
+    pub fn write_limit<F: LimitField>(&mut self, field: F, value: F::Value) -> Result<(), Error> {
+        let _ = field;
+        let write = limits::check_single::<F>(self.kind, *self.state, value)?;
+        self.send_limits(write, None)
+    }
+
+    /// Sets Min and Max Voltage Limit, in volts: the input voltages outside
+    /// which the actuator reports a fault. One acknowledged write of both
+    /// where the registers are adjacent (every model), with torque off.
+    ///
+    /// Checked as [`write_limit`](Self::write_limit), both values before a
+    /// byte is sent, and `min` must not lie above `max`.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit); [`InvertedLimits`] when `min`
+    /// is above `max`, in raw units; [`ActuatorIsOn`] names Min Voltage
+    /// Limit.
+    ///
+    /// [`InvertedLimits`]: crate::ValidationError::InvertedLimits
+    /// [`ActuatorIsOn`]: crate::ValidationError::ActuatorIsOn
+    pub fn set_voltage_limits(&mut self, min: Voltage, max: Voltage) -> Result<(), Error> {
+        let (lo, hi) = limits::check_pair::<MinVoltageLimit, MaxVoltageLimit>(
+            self.kind,
+            *self.state,
+            min,
+            max,
+        )?;
+        self.send_limits(lo, Some(hi))
+    }
+
+    /// Sets the EEPROM position limits, in radians: Min and Max Position
+    /// Limit, or CW and CCW Angle Limit (AX, RX, MX on Protocol 1,
+    /// XL-320). One acknowledged write of both where the registers are
+    /// adjacent, else one each, with torque off.
+    ///
+    /// Checked as [`write_limit`](Self::write_limit), both values before a
+    /// byte is sent, and `min` must not lie above `max`. Acknowledged, they
+    /// replace the limits Setup read
+    /// ([`position_limits`](Actuator::position_limits)), and on AX, RX and
+    /// MX on Protocol 1 the limit mode follows them: equal limits at the
+    /// zero tick are wheel mode. Where the two registers are apart (Y
+    /// series), the one that keeps the pair ordered is written first.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit); [`InvertedLimits`] when `min`
+    /// is above `max`; [`ActuatorIsOn`] names the minimum register.
+    ///
+    /// [`InvertedLimits`]: crate::ValidationError::InvertedLimits
+    /// [`ActuatorIsOn`]: crate::ValidationError::ActuatorIsOn
+    pub fn set_position_limits(&mut self, min: Position, max: Position) -> Result<(), Error> {
+        let (lo, hi) = limits::check_pair::<MinPositionLimit, MaxPositionLimit>(
+            self.kind,
+            *self.state,
+            min,
+            max,
+        )?;
+        let (first, second) = limits::ordered(self.kind, lo, hi);
+        self.send_limits(first, Some(second))
+    }
+
+    /// Sets Temperature Limit, in °C: above it the actuator reports
+    /// overheating. One acknowledged write, with torque off.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit).
+    pub fn set_temperature_limit(&mut self, limit: Temperature) -> Result<(), Error> {
+        self.write_limit(TemperatureLimit, limit)
+    }
+
+    /// Sets Velocity Limit, in rad/s (MX(2.0), X, Y, PRO). One acknowledged
+    /// write, with torque off. In velocity mode it then bounds goal
+    /// velocities, as the value Setup read did.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// without it.
+    pub fn set_velocity_limit(&mut self, limit: Velocity) -> Result<(), Error> {
+        self.write_limit(VelocityLimit, limit)
+    }
+
+    /// Sets Current Limit, in amperes (MX(2.0), X, Y, PRO). One
+    /// acknowledged write, with torque off. In current and current-based
+    /// position mode it then bounds goal currents, as the value Setup read
+    /// did.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// without it.
+    pub fn set_current_limit(&mut self, limit: Current) -> Result<(), Error> {
+        self.write_limit(CurrentLimit, limit)
+    }
+
+    /// Sets PWM Limit, a ratio of the full PWM output (MX(2.0), X, Y, PRO).
+    /// One acknowledged write, with torque off.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// without it.
+    pub fn set_pwm_limit(&mut self, limit: Pwm) -> Result<(), Error> {
+        self.write_limit(PwmLimit, limit)
+    }
+
+    /// Sets Max Torque, a ratio of the maximum torque from 0 to 1 (AX, RX,
+    /// MX on Protocol 1). One acknowledged write, with torque off.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// without it; `DoesNotFit` for a negative ratio.
+    pub fn set_max_torque(&mut self, limit: Load) -> Result<(), Error> {
+        self.write_limit(MaxTorque, limit)
+    }
+
+    /// Reads Min and Max Voltage Limit, in volts, `(min, max)`: one read
+    /// of both where the registers are adjacent (every model). Never
+    /// cached: each call asks the actuator.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `NoUnit` where the table gives no unit (read
+    /// `Raw(MinVoltageLimit)` and `Raw(MaxVoltageLimit)`).
+    pub fn voltage_limits(&mut self) -> Result<(Voltage, Voltage), Error> {
+        self.read_pair::<MinVoltageLimit, MaxVoltageLimit>()
+    }
+
+    /// Reads Temperature Limit, in °C. Never cached.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read).
+    pub fn temperature_limit(&mut self) -> Result<Temperature, Error> {
+        self.read(TemperatureLimit)
+    }
+
+    /// Reads Velocity Limit, in rad/s (MX(2.0), X, Y, PRO). Never cached;
+    /// [`goal_bound_raw`](Self::goal_bound_raw) is the bound the bus
+    /// holds.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `Unsupported` on models without it.
+    pub fn velocity_limit(&mut self) -> Result<Velocity, Error> {
+        self.read(VelocityLimit)
+    }
+
+    /// Reads Current Limit, in amperes (MX(2.0), X, Y, PRO). Never cached;
+    /// [`goal_bound_raw`](Self::goal_bound_raw) is the bound the bus
+    /// holds.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `Unsupported` on models without it.
+    pub fn current_limit(&mut self) -> Result<Current, Error> {
+        self.read(CurrentLimit)
+    }
+
+    /// Reads PWM Limit, a ratio of the full PWM output (MX(2.0), X, Y,
+    /// PRO). Never cached.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `Unsupported` on models without it.
+    pub fn pwm_limit(&mut self) -> Result<Pwm, Error> {
+        self.read(PwmLimit)
+    }
+
+    /// Reads Max Torque, a ratio of the maximum torque (AX, RX, MX on
+    /// Protocol 1). Never cached.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `Unsupported` on models without it.
+    pub fn max_torque(&mut self) -> Result<Load, Error> {
+        self.read(MaxTorque)
     }
 
     /// Reads and decodes `reg`, the actuator's fault report, as

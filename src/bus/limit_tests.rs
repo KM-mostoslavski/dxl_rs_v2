@@ -1,0 +1,949 @@
+//! Typed EEPROM limits on the bus (plan 2026-11-09, D1 to D7), byte for
+//! byte on a scripted line: the setters' packets, every refusal before a
+//! byte, the cache that follows a write, and the getters.
+//!
+//! Register addresses, sizes, units and ranges are those of the models'
+//! control tables, verified against their e-Manual pages: AX-12A
+//! (<https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>, 2026-11-03) and
+//! XM430-W350 units (<https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>,
+//! 2026-11-09).
+
+extern crate std;
+
+/// `instruction` of `register` at `addr` (`len` bytes) on actuator `n`.
+#[cfg(any(feature = "ax", feature = "x-series"))]
+fn on(
+    instruction: crate::error::Instruction,
+    n: u8,
+    register: &'static str,
+    addr: u16,
+    len: u16,
+) -> crate::error::Request {
+    crate::error::Request::NONE
+        .instruction(instruction)
+        .id(crate::bus::testing::id(n))
+        .register(register)
+        .addr(addr)
+        .len(len)
+}
+
+#[cfg(feature = "ax")]
+mod ax12a {
+    use super::on;
+    use crate::actuator::{Actuator, LimitMode, ModelNumber};
+    use crate::bus::testing::*;
+    use crate::error::{Error, Instruction, TransportError, ValidationError};
+    use crate::field::{
+        GoalVelocity, MaxPositionLimit, MaxVoltageLimit, MinPositionLimit, MinVoltageLimit, Raw,
+        TemperatureLimit,
+    };
+    use crate::protocol::P1;
+    use crate::transport::MockTime;
+    use crate::units::{Current, Load, Position, Pwm, Temperature, Velocity, Voltage};
+    use crate::{IdSet, TorqueState};
+
+    /// An AX-12A at ID 1 with these angle limits, torque `on` or off.
+    fn ax12(time: &MockTime, cw: u16, ccw: u16, on: bool) -> TestBus<'_, P1> {
+        let mut bus = test_bus(time);
+        ax12_p1(line(&mut bus), 1, 1, cw, ccw);
+        bus.declare([(id(1), ModelNumber(AX12))]).unwrap();
+        if on {
+            ack(&mut bus, 1);
+            bus.actuator(id(1)).unwrap().enable_torque().unwrap();
+        }
+        bus
+    }
+
+    /// The angle `raw` ticks of an AX-12A stand for.
+    fn at(bus: &mut TestBus<'_, P1>, raw: i32) -> Position {
+        bus.actuator(id(1))
+            .unwrap()
+            .position_scale()
+            .to_position(raw)
+    }
+
+    /// Plan D3, D5: Min Voltage Limit(12) and Max Voltage Limit(13) are
+    /// adjacent, so the pair is one Write; voltages are not cached.
+    #[test]
+    fn voltage_limits_are_one_write() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let mark = mark(&bus);
+        ack(&mut bus, 1);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        let before = ax.kind().clone();
+        ax.set_voltage_limits(Voltage::from_volts(9.5), Voltage::from_volts(14.0))
+            .unwrap();
+        assert_eq!(*ax.kind(), before);
+        assert_eq!(sent_since(&bus, mark), p1_write(1, 12, &[95, 140]));
+        assert_done(&bus);
+    }
+
+    /// Plan D3: each single setter writes its register, in its table's unit.
+    #[test]
+    fn each_setter_writes_its_register() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let mark = mark(&bus);
+        let mut sent = std::vec::Vec::new();
+        for (call, packet) in [
+            (0, p1_write(1, 11, &[70])),
+            (1, p1_write(1, 14, &1023u16.to_le_bytes())),
+            (2, p1_write(1, 14, &512u16.to_le_bytes())),
+            (3, p1_write(1, 13, &[160])),
+            (4, p1_write(1, 12, &[60])),
+        ] {
+            ack(&mut bus, 1);
+            let mut ax = bus.actuator(id(1)).unwrap();
+            let result = match call {
+                0 => ax.set_temperature_limit(Temperature::from_celsius(70.0)),
+                1 => ax.set_max_torque(Load::from_ratio(1.0)),
+                2 => ax.set_max_torque(Load::from_ratio(0.5)),
+                3 => ax.write_limit(Raw(MaxVoltageLimit), 160),
+                _ => ax.write_limit(MinVoltageLimit, Voltage::from_volts(6.0)),
+            };
+            assert_eq!(result, Ok(()), "call {call}");
+            sent.extend(packet);
+        }
+        assert_eq!(sent_since(&bus, mark), sent);
+        assert_done(&bus);
+    }
+
+    /// Plan D4, D5: CW(6) and CCW(8) Angle Limit are one Write; the cache
+    /// follows, and goals are checked against the new limits.
+    #[test]
+    fn position_limits_move_the_goal_check() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let (min, max) = (at(&mut bus, 200), at(&mut bus, 800));
+        let mark = mark(&bus);
+        ack(&mut bus, 1);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.set_position_limits(min, max).unwrap();
+        assert_eq!(ax.position_limits_raw(), Some(200..=800));
+        assert_eq!(ax.limit_mode(), LimitMode::Bounded);
+        ack(&mut bus, 1);
+        bus.actuator(id(1)).unwrap().enable_torque().unwrap();
+        assert_eq!(
+            bus.actuator(id(1)).unwrap().set_goal_position_raw(100),
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw: 100,
+                min: 200,
+                max: 800
+            }
+            .into())
+        );
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[p1_write(1, 6, &[200, 0, 0x20, 0x03]), p1_write(1, 24, &[1]),])
+        );
+    }
+
+    /// Plan D5: on Protocol 1 the limit mode follows the angle limits as
+    /// Setup would have recorded it: CW = CCW = 0 is wheel mode, and back.
+    #[test]
+    fn angle_limits_switch_wheel_mode_and_back() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let mark = mark(&bus);
+        ack(&mut bus, 1);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.write_limit(Raw(MaxPositionLimit), 0).unwrap();
+        assert_eq!(ax.limit_mode(), LimitMode::Wheel);
+        assert_eq!(ax.position_limits_raw(), Some(0..=0));
+        script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.enable_torque().unwrap();
+        assert_eq!(
+            ax.set_goal_position_raw(512),
+            Err(ValidationError::NotPositionMode { id: id(1) }.into())
+        );
+        assert_eq!(ax.write(Raw(GoalVelocity), 1024 + 300), Ok(()));
+        script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.disable_torque().unwrap();
+        let (cw, ccw) = (
+            ax.position_scale().to_position(0),
+            ax.position_scale().to_position(1023),
+        );
+        ax.set_position_limits(cw, ccw).unwrap();
+        assert_eq!(ax.limit_mode(), LimitMode::Bounded);
+        assert_eq!(ax.position_limits_raw(), Some(0..=1023));
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p1_write(1, 8, &[0, 0]),
+                p1_write(1, 24, &[1]),
+                p1_write(1, 32, &(1024u16 + 300).to_le_bytes()),
+                p1_write(1, 24, &[0]),
+                p1_write(1, 6, &[0, 0, 0xFF, 0x03]),
+            ])
+        );
+        assert_done(&bus);
+    }
+
+    /// Plan D4: with torque on every limit write is refused, naming the
+    /// register, and nothing is sent.
+    #[test]
+    fn torque_on_refuses_every_limit() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, true);
+        let (min, max) = (at(&mut bus, 200), at(&mut bus, 800));
+        let mark = mark(&bus);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        let on = |register| {
+            Err(ValidationError::ActuatorIsOn {
+                id: id(1),
+                register,
+            }
+            .into())
+        };
+        assert_eq!(
+            ax.set_voltage_limits(Voltage::from_volts(9.5), Voltage::from_volts(14.0)),
+            on("Min Voltage Limit")
+        );
+        assert_eq!(ax.set_position_limits(min, max), on("CW Angle Limit"));
+        assert_eq!(
+            ax.set_temperature_limit(Temperature::from_celsius(70.0)),
+            on("Temperature Limit")
+        );
+        assert_eq!(ax.set_max_torque(Load::from_ratio(1.0)), on("Max Torque"));
+        assert_eq!(
+            ax.write_limit(Raw(MaxPositionLimit), 900),
+            on("CCW Angle Limit")
+        );
+        assert_eq!(ax.torque_state(), TorqueState::On);
+        assert_quiet(&bus, mark);
+    }
+
+    /// Plan D4: the register check comes first: a model without the
+    /// register refuses whatever its torque state.
+    #[test]
+    fn registers_the_ax_lacks_are_unsupported() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, true);
+        let mark = mark(&bus);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        let missing = |register| {
+            Err(ValidationError::Unsupported {
+                id: id(1),
+                register,
+            }
+            .into())
+        };
+        assert_eq!(
+            ax.set_velocity_limit(Velocity::from_rad_per_s(1.0)),
+            missing("Velocity Limit")
+        );
+        assert_eq!(
+            ax.set_current_limit(Current::from_amps(1.0)),
+            missing("Current Limit")
+        );
+        assert_eq!(ax.set_pwm_limit(Pwm::from_ratio(0.5)), missing("PWM Limit"));
+        assert_eq!(
+            ax.velocity_limit(),
+            missing("Velocity Limit").map(|()| Velocity::ZERO)
+        );
+        assert_quiet(&bus, mark);
+    }
+
+    /// Plan D4: values outside the e-Manual range, inverted pairs and
+    /// values that convert to no register value send nothing.
+    #[test]
+    fn bad_values_send_nothing() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 200, 800, false);
+        let (low, high) = (at(&mut bus, 900), at(&mut bus, 100));
+        let mark = mark(&bus);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        let v = Voltage::from_volts;
+        let out = |raw, min, max| {
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw,
+                min,
+                max,
+            }
+            .into())
+        };
+        let inverted = |min, max| {
+            Err(ValidationError::InvertedLimits {
+                id: id(1),
+                min,
+                max,
+            }
+            .into())
+        };
+        assert_eq!(ax.set_voltage_limits(v(4.0), v(14.0)), out(40, 50, 160));
+        assert_eq!(ax.set_voltage_limits(v(9.5), v(16.5)), out(165, 50, 160));
+        assert_eq!(
+            ax.set_temperature_limit(Temperature::from_celsius(101.0)),
+            out(101, 0, 100)
+        );
+        assert_eq!(
+            ax.write_limit(Raw(MaxPositionLimit), 1024),
+            out(1024, 0, 1023)
+        );
+        assert_eq!(ax.set_voltage_limits(v(14.0), v(9.5)), inverted(140, 95));
+        assert_eq!(ax.set_position_limits(low, high), inverted(900, 100));
+        assert_eq!(
+            ax.write_limit(Raw(MinPositionLimit), 900),
+            inverted(900, 800)
+        );
+        assert_eq!(
+            ax.write_limit(Raw(MaxPositionLimit), 100),
+            inverted(200, 100)
+        );
+        assert_eq!(
+            ax.set_voltage_limits(v(f32::NAN), v(14.0)),
+            Err(ValidationError::NotFinite {
+                request: on(Instruction::Write, 1, "Min Voltage Limit", 12, 1),
+            }
+            .into())
+        );
+        assert_eq!(
+            ax.set_max_torque(Load::from_ratio(-0.5)),
+            Err(ValidationError::DoesNotFit {
+                raw: -512,
+                size: 2,
+                request: on(Instruction::Write, 1, "Max Torque", 14, 2),
+            }
+            .into())
+        );
+        assert_eq!(ax.position_limits_raw(), Some(200..=800));
+        assert_quiet(&bus, mark);
+    }
+
+    /// Plan D4: `Faulted` passes the torque check, like `Off`.
+    #[test]
+    fn faulted_actuator_takes_limit_writes() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P1, 32>(&time);
+        hold(&mut bus, AX12, 1, (0, 1023), LimitMode::Bounded, FAULTED);
+        ack(&mut bus, 1);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            ax.set_voltage_limits(Voltage::from_volts(6.0), Voltage::from_volts(16.0)),
+            Ok(())
+        );
+        assert_eq!(ax.torque_state(), FAULTED);
+        assert_eq!(sent(&bus), p1_write(1, 12, &[60, 160]));
+    }
+
+    /// Plan D4, FR-2.7, FR-8.1: an AX-12A held `Faulted` at Setup (its
+    /// input voltage outside its limits) is fixed with the typed setter,
+    /// then cleared and enabled, as kmr needs (NFR-11).
+    #[test]
+    fn faulted_at_setup_is_fixed_with_set_voltage_limits() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P1, 32>(&time);
+        line(&mut bus)
+            .reply_to(1, &p1_status(1, 0x01, &[]))
+            .reply_to(2, &p1_status(1, 0x01, &AX12.to_le_bytes()))
+            .reply_to(3, &p1_status(1, 0x01, &0u16.to_le_bytes()))
+            .reply_to(4, &p1_status(1, 0x01, &1023u16.to_le_bytes()))
+            .reply_to(5, &p1_status(1, 0, &[]))
+            .reply_to(6, &p1_status(1, 0, &[]))
+            .reply_to(7, &p1_status(1, 0, &[]));
+        let report = bus.declare([(id(1), ModelNumber(AX12))]).unwrap();
+        assert_eq!(report.faulted, [id(1)].into_iter().collect::<IdSet>());
+        let mark = mark(&bus);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            ax.enable_torque(),
+            Err(ValidationError::ActuatorFaulted { id: id(1) }.into())
+        );
+        assert_eq!(
+            ax.set_voltage_limits(Voltage::from_volts(6.0), Voltage::from_volts(16.0)),
+            Ok(())
+        );
+        assert_eq!(ax.torque_state(), FAULTED);
+        assert_eq!(ax.clear_fault(), Ok(()));
+        assert_eq!(ax.enable_torque(), Ok(()));
+        assert_eq!(ax.torque_state(), ON);
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p1_write(1, 12, &[60, 160]),
+                p1_instruction(1, PING, &[]),
+                p1_write(1, 24, &[1]),
+            ])
+        );
+    }
+
+    /// Plan D5: a position-limit write that times out leaves the limits and
+    /// the wheel/joint mode unknown: every goal is refused until Setup.
+    #[test]
+    fn failed_angle_limit_write_refuses_goals() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 0, false);
+        let (min, max) = (at(&mut bus, 0), at(&mut bus, 1023));
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            ax.set_position_limits(min, max),
+            Err(TransportError::NoReply {
+                request: on(Instruction::Write, 1, "CW Angle Limit", 6, 4),
+                timeout_us: 10_000,
+            }
+            .into())
+        );
+        assert_eq!(ax.position_limits_raw(), None);
+        let unknown: Result<(), Error> = Err(ValidationError::LimitsUnknown { id: id(1) }.into());
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .write_limit(Raw(MinPositionLimit), 10),
+            unknown
+        );
+        assert_quiet(&bus, quiet);
+        ack(&mut bus, 1);
+        bus.actuator(id(1)).unwrap().enable_torque().unwrap();
+        let quiet = mark(&bus);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.set_goal_position_raw(512), unknown);
+        assert_eq!(ax.write(Raw(GoalVelocity), 300), unknown);
+        assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D3: the getters read their registers, one read each, never
+    /// cached; the voltage pair is one read of both.
+    #[test]
+    fn getters_read_their_registers() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let mark = mark(&bus);
+        script(
+            &mut bus,
+            &[
+                p1_status(1, 0, &[60, 140]),
+                p1_status(1, 0, &[70]),
+                p1_status(1, 0, &1023u16.to_le_bytes()),
+                p1_status(1, 0, &200u16.to_le_bytes()),
+            ],
+        );
+        let mut ax = bus.actuator(id(1)).unwrap();
+        let (min, max) = ax.voltage_limits().unwrap();
+        assert!((min.volts() - 6.0).abs() < 1e-5 && (max.volts() - 14.0).abs() < 1e-5);
+        assert_eq!(ax.temperature_limit().unwrap().celsius(), 70.0);
+        assert_eq!(ax.max_torque().unwrap().ratio(), 1.0);
+        let cw = ax.read(MinPositionLimit).unwrap();
+        assert_eq!(cw, ax.position_scale().to_position(200));
+        assert_eq!(ax.position_limits_raw(), Some(0..=1023));
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p1_read(1, 12, 2),
+                p1_read(1, 11, 1),
+                p1_read(1, 14, 2),
+                p1_read(1, 6, 2),
+            ])
+        );
+        assert_done(&bus);
+    }
+
+    /// Plan D2: limit fields are read fields, so a multi-actuator read
+    /// saves them before a run (NFR-11).
+    #[test]
+    fn limits_read_on_many() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let mark = mark(&bus);
+        line(&mut bus).reply(&p1_status(1, 0, &[70]));
+        let mut out = [Temperature::default()];
+        bus.read_field(TemperatureLimit, [id(1)], &mut out).unwrap();
+        assert_eq!(out[0].celsius(), 70.0);
+        assert_eq!(sent_since(&bus, mark), p1_read(1, 11, 1));
+    }
+}
+
+#[cfg(feature = "x-series")]
+mod xm430 {
+    use super::on;
+    use crate::actuator::{Actuator, Describe, LimitMode, ModelNumber};
+    use crate::bus::testing::*;
+    use crate::error::{Error, Instruction, TransportError, ValidationError};
+    use crate::field::{GoalCurrent, GoalVelocity, MaxPositionLimit, MaxVoltageLimit, Raw};
+    use crate::protocol::P2;
+    use crate::transport::MockTime;
+    use crate::units::{Current, Position, Pwm, Temperature, Velocity, Voltage};
+
+    /// An XM430-W350 at ID 1, limits 1000..=3000, in Operating Mode `mode`,
+    /// torque off.
+    fn xm430(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
+        let mut bus = test_bus(time);
+        xm430_p2(line(&mut bus), 1, 1, 1000, 3000, mode);
+        bus.declare([(id(1), ModelNumber(XM430))]).unwrap();
+        bus
+    }
+
+    fn enable(bus: &mut TestBus<'_, P2>) {
+        ack(bus, 1);
+        bus.actuator(id(1)).unwrap().enable_torque().unwrap();
+    }
+
+    fn at(bus: &mut TestBus<'_, P2>, raw: i32) -> Position {
+        bus.actuator(id(1))
+            .unwrap()
+            .position_scale()
+            .to_position(raw)
+    }
+
+    /// Plan D3: every setter's packet. Max Voltage Limit(32) comes before
+    /// Min Voltage Limit(34), and Max Position Limit(48) before Min(52):
+    /// each pair is one Write from the lower address.
+    #[test]
+    fn each_setter_writes_its_register() {
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 3);
+        let (min, max) = (at(&mut bus, 500), at(&mut bus, 3500));
+        let velocity = bus
+            .actuator(id(1))
+            .unwrap()
+            .kind()
+            .data()
+            .role(crate::actuator::Role::VelocityLimit)
+            .unwrap()
+            .scale(LimitMode::Bounded)
+            .unwrap()
+            .velocity(100);
+        let mark = mark(&bus);
+        let mut sent = std::vec::Vec::new();
+        for (call, packet) in [
+            (0, p2_write(1, 32, &[160, 0, 100, 0])),
+            (1, p2_write(1, 31, &[75])),
+            (2, p2_write(1, 36, &442u16.to_le_bytes())),
+            (3, p2_write(1, 38, &372u16.to_le_bytes())),
+            (4, p2_write(1, 44, &100u32.to_le_bytes())),
+            (
+                5,
+                p2_write(
+                    1,
+                    48,
+                    &[3500i32.to_le_bytes(), 500i32.to_le_bytes()].concat(),
+                ),
+            ),
+        ] {
+            ack(&mut bus, 1);
+            let mut xm = bus.actuator(id(1)).unwrap();
+            let result = match call {
+                0 => xm.set_voltage_limits(Voltage::from_volts(10.0), Voltage::from_volts(16.0)),
+                1 => xm.set_temperature_limit(Temperature::from_celsius(75.0)),
+                2 => xm.set_pwm_limit(Pwm::from_ratio(0.5)),
+                3 => xm.set_current_limit(Current::from_amps(1.0)),
+                4 => xm.set_velocity_limit(velocity),
+                _ => xm.set_position_limits(min, max),
+            };
+            assert_eq!(result, Ok(()), "call {call}");
+            sent.extend(packet);
+        }
+        assert_eq!(sent_since(&bus, mark), sent);
+        assert_eq!(
+            bus.actuator(id(1)).unwrap().position_limits_raw(),
+            Some(500..=3500)
+        );
+        assert_done(&bus);
+    }
+
+    /// Plan D4: torque on, out of range, inverted, not finite: nothing is
+    /// sent.
+    #[test]
+    fn refusals_send_nothing() {
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 3);
+        enable(&mut bus);
+        let before = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_pwm_limit(Pwm::from_ratio(0.5)),
+            Err(ValidationError::ActuatorIsOn {
+                id: id(1),
+                register: "PWM Limit"
+            }
+            .into())
+        );
+        assert_quiet(&bus, before);
+        ack(&mut bus, 1);
+        bus.actuator(id(1)).unwrap().disable_torque().unwrap();
+        let quiet = mark(&bus);
+        let mut xm = bus.actuator(id(1)).unwrap();
+        let v = Voltage::from_volts;
+        let out = |raw, min, max| {
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw,
+                min,
+                max,
+            }
+            .into())
+        };
+        assert_eq!(xm.set_voltage_limits(v(9.0), v(16.0)), out(90, 95, 160));
+        assert_eq!(xm.set_pwm_limit(Pwm::from_ratio(1.01)), out(894, 0, 885));
+        assert_eq!(
+            xm.set_current_limit(Current::from_amps(3.3)),
+            out(1227, 0, 1193)
+        );
+        assert_eq!(
+            xm.set_voltage_limits(v(16.0), v(10.0)),
+            Err(ValidationError::InvertedLimits {
+                id: id(1),
+                min: 160,
+                max: 100
+            }
+            .into())
+        );
+        assert_eq!(
+            xm.set_velocity_limit(Velocity::from_rad_per_s(f32::INFINITY)),
+            Err(ValidationError::NotFinite {
+                request: on(Instruction::Write, 1, "Velocity Limit", 44, 4),
+            }
+            .into())
+        );
+        assert_eq!(
+            xm.write_limit(Raw(MaxPositionLimit), 999),
+            Err(ValidationError::InvertedLimits {
+                id: id(1),
+                min: 1000,
+                max: 999
+            }
+            .into())
+        );
+        assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D6: a model whose table has no unit for the register (an
+    /// unverified XM430-W210) refuses the typed form; the raw form works.
+    #[test]
+    fn no_unit_refuses_the_typed_form_only() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P2, 32>(&time);
+        hold(&mut bus, 1030, 1, (0, 4095), LimitMode::Bounded, OFF);
+        let mut xm = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            xm.set_voltage_limits(Voltage::from_volts(10.0), Voltage::from_volts(16.0)),
+            Err(ValidationError::NoUnit {
+                id: id(1),
+                register: "Min Voltage Limit",
+                mode: LimitMode::Bounded,
+            }
+            .into())
+        );
+        assert_eq!(
+            xm.set_temperature_limit(Temperature::from_celsius(70.0)),
+            Err(ValidationError::NoUnit {
+                id: id(1),
+                register: "Temperature Limit",
+                mode: LimitMode::Bounded,
+            }
+            .into())
+        );
+        assert!(sent(&bus).is_empty());
+        ack(&mut bus, 1);
+        let mut xm = bus.actuator(id(1)).unwrap();
+        assert_eq!(xm.write_limit(Raw(MaxVoltageLimit), 160), Ok(()));
+        assert_eq!(sent(&bus), p2_write(1, 32, &160u16.to_le_bytes()));
+    }
+
+    /// Plan D5: a position-limit write moves the goal check.
+    #[test]
+    fn position_limits_move_the_goal_check() {
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 3);
+        let max = at(&mut bus, 3800);
+        ack(&mut bus, 1);
+        bus.actuator(id(1))
+            .unwrap()
+            .write_limit(MaxPositionLimit, max)
+            .unwrap();
+        enable(&mut bus);
+        let mark = mark(&bus);
+        ack(&mut bus, 1);
+        let mut xm = bus.actuator(id(1)).unwrap();
+        assert_eq!(xm.position_limits_raw(), Some(1000..=3800));
+        assert_eq!(xm.set_goal_position_raw(3700), Ok(()));
+        assert_eq!(
+            xm.set_goal_position_raw(3801),
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw: 3801,
+                min: 1000,
+                max: 3800
+            }
+            .into())
+        );
+        assert_eq!(
+            sent_since(&bus, mark),
+            p2_write(1, 116, &3700i32.to_le_bytes())
+        );
+    }
+
+    /// Plan D5: in velocity mode a Velocity Limit write replaces the goal
+    /// bound; in current mode a Current Limit write does; in position mode
+    /// neither is a bound.
+    #[test]
+    fn bound_limits_replace_the_goal_bound() {
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 1);
+        assert_eq!(
+            bus.actuator(id(1)).unwrap().goal_bound_raw(),
+            Some(XM430_VELOCITY_LIMIT)
+        );
+        ack(&mut bus, 1);
+        bus.actuator(id(1))
+            .unwrap()
+            .write_limit(Raw(crate::field::VelocityLimit), 100)
+            .unwrap();
+        assert_eq!(bus.actuator(id(1)).unwrap().goal_bound_raw(), Some(100));
+        enable(&mut bus);
+        let mark = mark(&bus);
+        let mut xm = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            xm.write(Raw(GoalVelocity), -101),
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw: -101,
+                min: -100,
+                max: 100
+            }
+            .into())
+        );
+        assert!(sent_since(&bus, mark).is_empty());
+
+        let mut bus = xm430(&time, 0);
+        ack(&mut bus, 1);
+        bus.actuator(id(1))
+            .unwrap()
+            .write_limit(Raw(crate::field::CurrentLimit), 500)
+            .unwrap();
+        assert_eq!(bus.actuator(id(1)).unwrap().goal_bound_raw(), Some(500));
+        enable(&mut bus);
+        assert_eq!(
+            bus.actuator(id(1)).unwrap().write(Raw(GoalCurrent), 501),
+            Err(ValidationError::OutOfLimits {
+                id: id(1),
+                raw: 501,
+                min: -500,
+                max: 500
+            }
+            .into())
+        );
+
+        let mut bus = xm430(&time, 3);
+        ack(&mut bus, 1);
+        bus.actuator(id(1))
+            .unwrap()
+            .write_limit(Raw(crate::field::VelocityLimit), 100)
+            .unwrap();
+        assert_eq!(bus.actuator(id(1)).unwrap().goal_bound_raw(), None);
+    }
+
+    /// Plan D5: a Velocity Limit write that times out in velocity mode
+    /// leaves the goal bound unknown: goal velocities are refused until
+    /// Setup.
+    #[test]
+    fn failed_bound_write_refuses_bounded_goals() {
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 1);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .write_limit(Raw(crate::field::VelocityLimit), 100),
+            Err(TransportError::NoReply {
+                request: on(Instruction::Write, 1, "Velocity Limit", 44, 4),
+                timeout_us: 10_000,
+            }
+            .into())
+        );
+        enable(&mut bus);
+        let mark = mark(&bus);
+        let mut xm = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            xm.set_goal_velocity(Velocity::ZERO),
+            Err(ValidationError::LimitsUnknown { id: id(1) }.into())
+        );
+        assert!(sent_since(&bus, mark).is_empty());
+    }
+
+    /// Plan D5: a position-limit write that times out leaves the limits
+    /// unknown: bounded goals are refused, extended-mode goals still pass.
+    #[test]
+    fn failed_position_write_refuses_bounded_goals() {
+        let time = MockTime::new();
+        for (mode, goal) in [
+            (3, Err(ValidationError::LimitsUnknown { id: id(1) }.into())),
+            (4, Ok(())),
+        ] {
+            let mut bus = xm430(&time, mode);
+            let max = at(&mut bus, 3500);
+            assert!(matches!(
+                bus.actuator(id(1))
+                    .unwrap()
+                    .write_limit(MaxPositionLimit, max),
+                Err(Error::Transport(_))
+            ));
+            assert_eq!(bus.actuator(id(1)).unwrap().position_limits_raw(), None);
+            enable(&mut bus);
+            if goal.is_ok() {
+                ack(&mut bus, 1);
+            }
+            assert_eq!(
+                bus.actuator(id(1)).unwrap().set_goal_position_raw(2000),
+                goal,
+                "mode {mode}"
+            );
+        }
+    }
+
+    /// Plan D3: the getters' reads and values.
+    #[test]
+    fn getters_read_their_registers() {
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 3);
+        let mark = mark(&bus);
+        script(
+            &mut bus,
+            &[
+                p2_status(1, 0, &[160, 0, 100, 0]),
+                p2_status(1, 0, &[80]),
+                p2_status(1, 0, &200u32.to_le_bytes()),
+                p2_status(1, 0, &1000u16.to_le_bytes()),
+                p2_status(1, 0, &885u16.to_le_bytes()),
+            ],
+        );
+        let mut xm = bus.actuator(id(1)).unwrap();
+        let (min, max) = xm.voltage_limits().unwrap();
+        assert!((min.volts() - 10.0).abs() < 1e-5, "{min:?}");
+        assert!((max.volts() - 16.0).abs() < 1e-5, "{max:?}");
+        assert_eq!(xm.temperature_limit().unwrap().celsius(), 80.0);
+        let scale = |role| {
+            xm.kind()
+                .data()
+                .role(role)
+                .unwrap()
+                .scale(LimitMode::Bounded)
+                .unwrap()
+        };
+        let velocity = scale(crate::actuator::Role::VelocityLimit).velocity(200);
+        let current = scale(crate::actuator::Role::CurrentLimit).current(1000);
+        assert_eq!(xm.velocity_limit(), Ok(velocity));
+        assert_eq!(xm.current_limit(), Ok(current));
+        assert!((xm.pwm_limit().unwrap().ratio() - 1.000_05).abs() < 1e-4);
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p2_read(1, 32, 4),
+                p2_read(1, 31, 1),
+                p2_read(1, 44, 4),
+                p2_read(1, 38, 2),
+                p2_read(1, 36, 2),
+            ])
+        );
+        assert_done(&bus);
+    }
+
+    /// Plan D3: `DynBus` lends the same handle, with the same setters.
+    #[cfg(feature = "std")]
+    #[test]
+    fn dyn_bus_handle_sets_limits() {
+        use crate::{Config, DynBus};
+        let time = MockTime::new();
+        let mut line = crate::transport::MockTransport::new(&time);
+        let next = xm430_p2(&mut line, 1, 1, 1000, 3000, 3);
+        line.reply_to(next, &p2_status(1, 0, &[]));
+        let mut bus = DynBus::<P2, _, _>::new(line, time.ticker(10), Config::new());
+        bus.declare([(id(1), ModelNumber(XM430))]).unwrap();
+        let mut xm = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            xm.set_voltage_limits(Voltage::from_volts(10.0), Voltage::from_volts(16.0)),
+            Ok(())
+        );
+        let (line, _) = bus.into_parts();
+        assert!(line.sent().ends_with(&p2_write(1, 32, &[160, 0, 100, 0])));
+        line.assert_done();
+    }
+}
+
+#[cfg(feature = "y-series")]
+mod ym070 {
+    use crate::actuator::{Actuator, LimitMode};
+    use crate::bus::testing::*;
+    use crate::field::{MaxPositionLimit, MinPositionLimit, Raw};
+    use crate::protocol::P2;
+    use crate::transport::MockTime;
+
+    /// YM070-210-M001 model number.
+    const YM070: u16 = 4000;
+
+    /// Plan D3: Max Position Limit(76) and Min Position Limit(84) are apart:
+    /// one Write each, the minimum first unless it lies above the maximum
+    /// the bus holds.
+    #[test]
+    fn apart_position_limits_keep_the_pair_ordered() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P2, 32>(&time);
+        hold(&mut bus, YM070, 1, (-1000, 1000), LimitMode::Bounded, OFF);
+        let scale = bus.actuator(id(1)).unwrap().position_scale();
+        script(&mut bus, &std::vec![p2_status(1, 0, &[]); 5]);
+        let mut ym = bus.actuator(id(1)).unwrap();
+        ym.set_position_limits(scale.to_position(-500), scale.to_position(500))
+            .unwrap();
+        assert_eq!(ym.position_limits_raw(), Some(-500..=500));
+        ym.set_position_limits(scale.to_position(2000), scale.to_position(3000))
+            .unwrap();
+        assert_eq!(ym.position_limits_raw(), Some(2000..=3000));
+        ym.write_limit(Raw(MinPositionLimit), 2500).unwrap();
+        assert_eq!(ym.position_limits_raw(), Some(2500..=3000));
+        assert_eq!(
+            sent(&bus),
+            concat(&[
+                p2_write(1, 84, &(-500i32).to_le_bytes()),
+                p2_write(1, 76, &500i32.to_le_bytes()),
+                p2_write(1, 76, &3000i32.to_le_bytes()),
+                p2_write(1, 84, &2000i32.to_le_bytes()),
+                p2_write(1, 84, &2500i32.to_le_bytes()),
+            ])
+        );
+        assert_eq!(
+            ym_refuses(&mut bus),
+            Err(crate::ValidationError::InvertedLimits {
+                id: id(1),
+                min: 2500,
+                max: 2000
+            }
+            .into())
+        );
+    }
+
+    /// A Max Position Limit below the held minimum, refused.
+    fn ym_refuses(bus: &mut TestBus<'_, P2>) -> Result<(), crate::Error> {
+        bus.actuator(id(1))
+            .unwrap()
+            .write_limit(Raw(MaxPositionLimit), 2000)
+    }
+
+    /// Plan D5: the second write of an apart pair failing leaves the limits
+    /// unknown.
+    #[test]
+    fn apart_pair_failing_halfway_forgets_the_limits() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P2, 32>(&time);
+        hold(&mut bus, YM070, 1, (-1000, 1000), LimitMode::Bounded, OFF);
+        let scale = bus.actuator(id(1)).unwrap().position_scale();
+        ack(&mut bus, 1);
+        let mut ym = bus.actuator(id(1)).unwrap();
+        assert!(
+            ym.set_position_limits(scale.to_position(-500), scale.to_position(500))
+                .is_err()
+        );
+        assert_eq!(ym.position_limits_raw(), None);
+        assert_eq!(
+            sent(&bus),
+            concat(&[
+                p2_write(1, 84, &(-500i32).to_le_bytes()),
+                p2_write(1, 76, &500i32.to_le_bytes()),
+            ])
+        );
+    }
+}

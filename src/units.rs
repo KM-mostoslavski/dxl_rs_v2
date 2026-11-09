@@ -10,7 +10,7 @@
 mod electrical;
 mod load;
 mod position;
-// DECISION: Pwm gets its own file beside load.rs, one ratio type per file, so Load's read-only docs stay as they are.
+// DECISION: Pwm gets its own file beside load.rs, one ratio type per file.
 mod pwm;
 mod scale;
 mod status;

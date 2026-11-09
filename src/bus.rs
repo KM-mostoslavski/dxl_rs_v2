@@ -88,6 +88,9 @@ pub mod field;
 mod fr9_tests;
 mod group;
 mod id_set;
+#[cfg(test)]
+mod limit_tests;
+mod limits;
 mod model_ref;
 mod multi;
 mod observe;
@@ -484,7 +487,7 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
         let (kinds, states, bounds) = slots.into_split();
         let kind = kinds.get_mut(index)?;
         let state = states.get_mut(index)?;
-        let bound = bounds.get(index).copied().flatten();
+        let bound = bounds.get_mut(index)?;
         Some(ActuatorRef::new(kind, state, bound, wire))
     }
 

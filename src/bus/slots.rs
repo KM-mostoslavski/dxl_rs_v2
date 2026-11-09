@@ -64,11 +64,18 @@ impl<'a, const N: usize> FixedSlots<'a, N> {
     }
 
     /// The held actuators, their states and bounds, same length and order,
-    /// for as long as the bus is borrowed.
-    pub(crate) fn into_split(self) -> Held<'a> {
+    /// for as long as the bus is borrowed. The bounds are mutable: a
+    /// handle's limit write keeps its actuator's bound true.
+    pub(crate) fn into_split(
+        self,
+    ) -> (
+        &'a mut [ActuatorKind],
+        &'a mut [TorqueState],
+        &'a mut [Bound],
+    ) {
         let len = self.actuators.len();
         let states = self.states.get_mut(..len).unwrap_or_default();
-        let bounds = self.bounds.get(..len).unwrap_or_default();
+        let bounds = self.bounds.get_mut(..len).unwrap_or_default();
         (self.actuators, states, bounds)
     }
 }

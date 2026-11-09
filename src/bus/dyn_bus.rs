@@ -187,7 +187,7 @@ impl<P: Protocol, T: Transport, C: Clock> DynBus<P, T, C> {
         let index = find(&self.actuators, id)?;
         let kind = self.actuators.get_mut(index)?;
         let state = self.states.get_mut(index)?;
-        let bound = self.bounds.get(index).copied().flatten();
+        let bound = self.bounds.get_mut(index)?;
         let wire = Wire::new(&mut self.transport, &mut self.clock, &self.config);
         Some(ActuatorRef::new(kind, state, bound, wire))
     }

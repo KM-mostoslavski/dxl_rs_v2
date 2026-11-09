@@ -699,6 +699,13 @@ impl LimitMode {
 /// alike. Limits follow the operating mode: in [`LimitMode::Unbounded`]
 /// only `Register::encode` stops a value that does not fit the register. No
 /// constructor fills limits from a control table.
+///
+/// A limit write the bus cannot confirm leaves part of it unknown until
+/// the next Setup builds a new cache: the limits
+/// ([`forget_limits`](Cache::forget_limits)), the mode
+/// ([`forget_mode`](Cache::forget_mode)) or the goal bound
+/// ([`forget_bound`](Cache::forget_bound)). Every goal that depends on it
+/// is then refused with [`ValidationError::LimitsUnknown`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cache {
     /// The actuator's ID. Never changes.
@@ -709,8 +716,27 @@ pub struct Cache {
     /// The firmware version Setup learned (a Protocol 2 ping, or a read
     /// where the model's table depends on it); 0 when it was not needed.
     firmware: u8,
-    /// The EEPROM limits, or `None` until Setup records them.
+    // DECISION: the unknown state of a failed limit write (plan 2026-11-09 D5) lives in Cache's padding byte, beside the checks that refuse goals, so every tier sees it and Cache stays 16 bytes.
+    /// What a failed limit write left unknown besides the limits.
+    unknown: Unknown,
+    /// The EEPROM limits, or `None` until Setup records them, or after a
+    /// failed limit write.
     limits: Option<Limits>,
+}
+
+/// What a failed EEPROM limit write left unknown in a [`Cache`] besides its
+/// limits, until the next Setup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unknown {
+    /// Nothing: the mode and the goal bound are what Setup read, or what
+    /// an acknowledged write set since.
+    Nothing,
+    /// The EEPROM bound of the goal the mode uses (Velocity Limit or
+    /// Current Limit): that goal is refused.
+    Bound,
+    /// The limit mode itself, which follows the angle limits on AX, RX and
+    /// MX on Protocol 1: every goal is refused.
+    Mode,
 }
 
 impl Cache {
@@ -732,6 +758,7 @@ impl Cache {
             id,
             mode: LimitMode::Bounded,
             firmware: 0,
+            unknown: Unknown::Nothing,
             limits: None,
         }
     }
@@ -775,6 +802,28 @@ impl Cache {
         self.mode = mode;
     }
 
+    /// Forgets the limits after a failed write of one: a bounded goal is
+    /// refused with `LimitsUnknown` until the next Setup.
+    pub(crate) fn forget_limits(&mut self) {
+        self.limits = None;
+    }
+
+    /// Forgets the limit mode after a failed write of an angle limit it
+    /// follows: every goal is refused with `LimitsUnknown` until the next
+    /// Setup.
+    pub(crate) fn forget_mode(&mut self) {
+        self.unknown = Unknown::Mode;
+    }
+
+    /// Forgets the EEPROM bound of the goal the mode uses after a failed
+    /// write of it: that goal is refused with `LimitsUnknown` until the
+    /// next Setup. A forgotten mode stays forgotten.
+    pub(crate) fn forget_bound(&mut self) {
+        if matches!(self.unknown, Unknown::Nothing) {
+            self.unknown = Unknown::Bound;
+        }
+    }
+
     /// Checks goal tick `raw` against the limit mode and returns it.
     ///
     /// - [`LimitMode::Bounded`]: `raw` must lie in the recorded limits, both
@@ -785,13 +834,16 @@ impl Cache {
     /// # Errors
     ///
     /// - [`ValidationError::LimitsUnknown`]: bounded, and no limits were
-    ///   recorded.
+    ///   recorded or they were forgotten; or the mode was forgotten.
     /// - [`ValidationError::OutOfLimits`]: bounded, and `raw` is outside
     ///   them.
     /// - [`ValidationError::NotPositionMode`]: the mode ignores goal
     ///   positions, whether limits are known or not.
     #[allow(dead_code, reason = "used by bus-1")]
     pub(crate) fn check_goal(&self, raw: i32) -> Result<i32, ValidationError> {
+        if matches!(self.unknown, Unknown::Mode) {
+            return Err(ValidationError::LimitsUnknown { id: self.id });
+        }
         match (self.mode, self.limits) {
             (LimitMode::Bounded, None) => Err(ValidationError::LimitsUnknown { id: self.id }),
             (LimitMode::Bounded, Some(limits))
@@ -815,37 +867,47 @@ impl Cache {
         self.mode
     }
 
-    /// Checks that the recorded mode uses a goal velocity.
+    /// Checks that the recorded mode uses a goal velocity, and that the mode
+    /// and its goal bound are known.
     ///
     /// # Errors
     ///
-    /// [`ValidationError::NotVelocityMode`] in any other mode.
+    /// - [`ValidationError::LimitsUnknown`]: the mode was forgotten, or the
+    ///   mode uses a goal velocity and its bound was forgotten.
+    /// - [`ValidationError::NotVelocityMode`] in any other mode.
     #[allow(dead_code, reason = "used by the bus part of FR-9")]
     pub(crate) const fn check_goal_velocity(&self) -> Result<(), ValidationError> {
-        if self.mode.allows_goal_velocity() {
-            Ok(())
-        } else {
-            Err(ValidationError::NotVelocityMode {
+        match (self.unknown, self.mode.allows_goal_velocity()) {
+            (Unknown::Mode, _) | (Unknown::Bound, true) => {
+                Err(ValidationError::LimitsUnknown { id: self.id })
+            }
+            (_, true) => Ok(()),
+            (_, false) => Err(ValidationError::NotVelocityMode {
                 id: self.id,
                 mode: self.mode,
-            })
+            }),
         }
     }
 
-    /// Checks that the recorded mode uses a goal current.
+    /// Checks that the recorded mode uses a goal current, and that the mode
+    /// and its goal bound are known.
     ///
     /// # Errors
     ///
-    /// [`ValidationError::NotCurrentMode`] in any other mode.
+    /// - [`ValidationError::LimitsUnknown`]: the mode was forgotten, or the
+    ///   mode uses a goal current and its bound was forgotten.
+    /// - [`ValidationError::NotCurrentMode`] in any other mode.
     #[allow(dead_code, reason = "used by the bus part of FR-9")]
     pub(crate) const fn check_goal_current(&self) -> Result<(), ValidationError> {
-        if self.mode.allows_goal_current() {
-            Ok(())
-        } else {
-            Err(ValidationError::NotCurrentMode {
+        match (self.unknown, self.mode.allows_goal_current()) {
+            (Unknown::Mode, _) | (Unknown::Bound, true) => {
+                Err(ValidationError::LimitsUnknown { id: self.id })
+            }
+            (_, true) => Ok(()),
+            (_, false) => Err(ValidationError::NotCurrentMode {
                 id: self.id,
                 mode: self.mode,
-            })
+            }),
         }
     }
 }
@@ -1069,16 +1131,18 @@ mod tests {
     }
 
     #[test]
-    fn cache_holds_only_id_mode_firmware_and_limits() {
+    fn cache_holds_only_id_mode_firmware_limits_and_unknowns() {
         let Cache {
             id: _,
             mode: _,
             firmware: _,
             limits: _,
+            unknown: _,
         } = Cache::new(id(3));
         let mut cache = Cache::new(id(3));
         assert_eq!(cache.limits(), None);
         assert_eq!(cache.mode, LimitMode::Bounded);
+        assert_eq!(cache.unknown, Unknown::Nothing);
         assert_eq!(cache.firmware(), 0);
         cache.record_firmware(40);
         assert_eq!(cache.firmware(), 40);
@@ -1589,6 +1653,61 @@ mod tests {
             for cache in [known, unknown] {
                 for raw in [2000, 1000, i32::MIN, i32::MAX] {
                     assert_eq!(cache.check_goal(raw), refused);
+                }
+            }
+        }
+
+        #[test]
+        fn forgotten_limits_refuse_bounded_goals_only() {
+            let mut cache = limited(id(3));
+            cache.forget_limits();
+            assert_eq!(cache.limits(), None);
+            assert_eq!(
+                cache.check_goal(2000),
+                Err(ValidationError::LimitsUnknown { id: id(3) })
+            );
+            cache.record_mode(LimitMode::Unbounded);
+            assert_eq!(cache.check_goal(5000), Ok(5000));
+        }
+
+        #[test]
+        fn forgotten_mode_refuses_every_goal() {
+            let unknown = Err(ValidationError::LimitsUnknown { id: id(4) });
+            for mode in ALL_MODES {
+                let mut cache = limited(id(4));
+                cache.record_mode(mode);
+                cache.forget_mode();
+                cache.forget_bound();
+                assert_eq!(cache.check_goal(2000), unknown.map(|()| 0), "{mode:?}");
+                assert_eq!(cache.check_goal_velocity(), unknown, "{mode:?}");
+                assert_eq!(cache.check_goal_current(), unknown, "{mode:?}");
+                cache.record_limits(1000, 3000).unwrap();
+                cache.record_mode(LimitMode::Bounded);
+                assert_eq!(cache.check_goal(2000), unknown.map(|()| 0), "{mode:?}");
+            }
+        }
+
+        #[test]
+        fn forgotten_bound_refuses_the_goal_it_bounds() {
+            let unknown = Err(ValidationError::LimitsUnknown { id: id(4) });
+            for mode in ALL_MODES {
+                let mut cache = limited(id(4));
+                cache.record_mode(mode);
+                cache.forget_bound();
+                let velocity = if mode.allows_goal_velocity() {
+                    unknown
+                } else {
+                    Err(ValidationError::NotVelocityMode { id: id(4), mode })
+                };
+                let current = if mode.allows_goal_current() {
+                    unknown
+                } else {
+                    Err(ValidationError::NotCurrentMode { id: id(4), mode })
+                };
+                assert_eq!(cache.check_goal_velocity(), velocity, "{mode:?}");
+                assert_eq!(cache.check_goal_current(), current, "{mode:?}");
+                if mode.allows_goal_position() {
+                    assert_eq!(cache.check_goal(2000), Ok(2000), "{mode:?}");
                 }
             }
         }

@@ -65,7 +65,7 @@ use crate::models::ActuatorKind;
 use crate::register::{Access, Register};
 use crate::units::{
     ComplianceMargin, ComplianceSlope, Current, Gain, HardwareErrors, Load, Position,
-    PositionScale, RegisterScale, Temperature, Tick, Velocity, Voltage,
+    PositionScale, Pwm, RegisterScale, Temperature, Tick, Velocity, Voltage,
 };
 
 pub(crate) mod sealed {
@@ -197,6 +197,34 @@ pub trait WriteField: Field + Rule {
     type Value: Copy + Encode;
 }
 
+/// An EEPROM limit field: written only by
+/// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit), one
+/// acknowledged unicast write with torque off.
+///
+/// The limit fields are not [`WriteField`]s, so
+/// [`Bus::sync_write`](crate::Bus::sync_write),
+/// [`Bus::bulk_write`](crate::Bus::bulk_write) and
+/// [`ActuatorRef::write`](crate::ActuatorRef::write) refuse them at compile
+/// time: a broadcast write gets no reply, so the bus could neither confirm
+/// it nor keep the limits it holds true to the actuator.
+///
+/// ```compile_fail,E0277
+/// use dxl_rs_v2::field::MaxVoltageLimit;
+/// use dxl_rs_v2::{Bus, Clock, Error, Id, P2, Transport, Voltage};
+///
+/// fn widen<T: Transport, C: Clock>(bus: &mut Bus<P2, T, C>, ids: [Id; 2]) -> Result<(), Error> {
+///     bus.sync_write(MaxVoltageLimit, ids, &[Voltage::from_volts(16.0); 2])
+/// }
+/// ```
+///
+/// They are [`ReadField`]s, so every read tier saves them, e.g. before a
+/// run that changes them (NFR-11). [`Raw`] of a limit field writes its raw
+/// register value, with the same checks.
+pub trait LimitField: Field {
+    /// The type of one actuator's value.
+    type Value: Copy + Encode;
+}
+
 /// The raw register value (`i32`) of field `F`, e.g. `Raw(GoalPosition)`.
 ///
 /// Sizes 1 and 2 read unsigned, size 4 as an `i32`, as the register holds
@@ -236,6 +264,10 @@ impl<F: ReadField> ReadField for Raw<F> {
 }
 
 impl<F: WriteField> WriteField for Raw<F> {
+    type Value = i32;
+}
+
+impl<F: LimitField> LimitField for Raw<F> {
     type Value = i32;
 }
 
@@ -564,6 +596,67 @@ role_field!(
     TorqueCtrlModeEnable,
     TorqueCtrlModeEnable
 );
+role_field!(
+    /// Min Voltage Limit, in volts ([`Voltage`]): the EEPROM bound below
+    /// which the actuator reports an input voltage fault. Every model. A
+    /// [`LimitField`].
+    MinVoltageLimit,
+    MinVoltageLimit
+);
+role_field!(
+    /// Max Voltage Limit, in volts ([`Voltage`]): the EEPROM bound above
+    /// which the actuator reports an input voltage fault. Every model. A
+    /// [`LimitField`].
+    MaxVoltageLimit,
+    MaxVoltageLimit
+);
+role_field!(
+    /// Temperature Limit, in °C ([`Temperature`]): the EEPROM bound above
+    /// which the actuator reports overheating. A [`LimitField`].
+    TemperatureLimit,
+    TemperatureLimit
+);
+role_field!(
+    /// Min Position Limit, or CW Angle Limit (AX, RX, MX on Protocol 1,
+    /// XL-320), in radians ([`Position`]): the lower EEPROM position limit,
+    /// which goals are checked against in position mode. Every model. A
+    /// [`LimitField`].
+    MinPositionLimit,
+    MinPositionLimit
+);
+role_field!(
+    /// Max Position Limit, or CCW Angle Limit (AX, RX, MX on Protocol 1,
+    /// XL-320), in radians ([`Position`]): the upper EEPROM position limit,
+    /// which goals are checked against in position mode. Every model. A
+    /// [`LimitField`].
+    MaxPositionLimit,
+    MaxPositionLimit
+);
+role_field!(
+    /// Velocity Limit, in rad/s ([`Velocity`]): the EEPROM bound of Goal
+    /// Velocity's magnitude. MX(2.0), X, Y, PRO. A [`LimitField`].
+    VelocityLimit,
+    VelocityLimit
+);
+role_field!(
+    /// Current Limit, in amperes ([`Current`]): the EEPROM bound of Goal
+    /// Current's magnitude. MX(2.0), X, Y, PRO. A [`LimitField`].
+    CurrentLimit,
+    CurrentLimit
+);
+role_field!(
+    /// PWM Limit, a ratio of the full PWM output ([`Pwm`]). MX(2.0), X, Y,
+    /// PRO. A [`LimitField`].
+    PwmLimit,
+    PwmLimit
+);
+role_field!(
+    /// Max Torque, a ratio of the maximum torque ([`Load`]): the EEPROM
+    /// bound of the torque output. AX, RX, MX on Protocol 1. A
+    /// [`LimitField`].
+    MaxTorque,
+    MaxTorque
+);
 
 impl Rule for GoalVelocity {
     const MOVES: bool = true;
@@ -676,6 +769,36 @@ read_values! {
     CwComplianceSlope: ComplianceSlope;
     CcwComplianceSlope: ComplianceSlope;
     TorqueCtrlModeEnable: bool;
+    MinVoltageLimit: Voltage;
+    MaxVoltageLimit: Voltage;
+    TemperatureLimit: Temperature;
+    MinPositionLimit: Position;
+    MaxPositionLimit: Position;
+    VelocityLimit: Velocity;
+    CurrentLimit: Current;
+    PwmLimit: Pwm;
+    MaxTorque: Load;
+}
+
+/// Declares the limit fields; a limit writes the type it reads.
+macro_rules! limit_values {
+    ($($field:ident),* $(,)?) => {$(
+        impl LimitField for $field {
+            type Value = <$field as ReadField>::Value;
+        }
+    )*};
+}
+
+limit_values! {
+    MinVoltageLimit,
+    MaxVoltageLimit,
+    TemperatureLimit,
+    MinPositionLimit,
+    MaxPositionLimit,
+    VelocityLimit,
+    CurrentLimit,
+    PwmLimit,
+    MaxTorque,
 }
 
 write_values! {
@@ -729,6 +852,7 @@ scaled_decode! {
     Velocity => velocity;
     Load => load;
     Current => current;
+    Pwm => pwm;
     crate::units::SpeedLimit => speed_limit;
 }
 
@@ -747,6 +871,30 @@ impl Encode for Current {
 impl Encode for crate::units::SpeedLimit {
     fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
         Ok(scale_of(site)?.speed_limit_to_raw(self)?.cast_signed())
+    }
+}
+
+impl Encode for Pwm {
+    fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
+        Ok(scale_of(site)?.pwm_to_raw(self)?.cast_signed())
+    }
+}
+
+impl Encode for Voltage {
+    fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
+        Ok(scale_of(site)?.raw_of_si(self.volts())?.cast_signed())
+    }
+}
+
+impl Encode for Temperature {
+    fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
+        Ok(scale_of(site)?.raw_of_si(self.celsius())?.cast_signed())
+    }
+}
+
+impl Encode for Load {
+    fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
+        Ok(scale_of(site)?.raw_of_si(self.ratio())?.cast_signed())
     }
 }
 
@@ -899,6 +1047,38 @@ pub(crate) fn encode_write<'o, F: WriteField>(
         .encode(raw, out)
         .map_err(|err| err.within(request))?;
     Ok((site.reg, bytes))
+}
+
+/// The site of limit field `F` on `kind`, checked before anything is
+/// sent: the model has the register, writable.
+///
+/// # Errors
+///
+/// [`ValidationError::Unsupported`].
+pub(crate) fn limit_site<F: LimitField>(kind: &ActuatorKind) -> Result<Site, ValidationError> {
+    let site = F::site(kind)?;
+    if site.reg.access == Access::RW {
+        Ok(site)
+    } else {
+        Err(ValidationError::Unsupported {
+            id: site.id,
+            register: site.name,
+        })
+    }
+}
+
+/// The register value of limit `value` at `site`, checked against the
+/// e-Manual range the table records for it.
+///
+/// # Errors
+///
+/// The value's conversion error (`NoUnit`, `NotFinite`, `DoesNotFit`),
+/// then `OutOfLimits`.
+pub(crate) fn limit_raw<V: Encode>(site: &Site, value: V) -> Result<i32, ValidationError> {
+    let raw = value
+        .to_raw(site)
+        .map_err(|err| err.within(site.request(Instruction::Write)))?;
+    in_range(site, raw)
 }
 
 /// The goal role whose EEPROM bound Setup reads in limit mode `mode`: Goal

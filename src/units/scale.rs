@@ -34,12 +34,12 @@ pub enum Sign {
 /// let scale = RegisterScale::new(0.1, Sign::Unsigned, 1, false);
 /// ```
 ///
-/// Read-only quantities ([`Voltage`](crate::Voltage),
-/// [`Temperature`](crate::Temperature), [`Load`](crate::Load)) convert from
-/// raw only. Writable ones ([`Velocity`](crate::Velocity),
-/// [`SpeedLimit`](crate::SpeedLimit), [`Current`](crate::Current),
-/// [`Pwm`](crate::Pwm)) also convert back, rounding to the nearest raw
-/// step, and never truncate.
+/// [`Voltage`](crate::Voltage), [`Temperature`](crate::Temperature) and
+/// [`Load`](crate::Load) convert from raw only: they are measured, and
+/// written only as EEPROM limits, which the bus converts after its own
+/// checks. [`Velocity`](crate::Velocity), [`SpeedLimit`](crate::SpeedLimit),
+/// [`Current`](crate::Current) and [`Pwm`](crate::Pwm) also convert back,
+/// rounding to the nearest raw step, and never truncate.
 ///
 /// Values are `f32`: a raw value up to ±2^20 converts to SI and back to
 /// itself; beyond it, a round trip may land one step off.

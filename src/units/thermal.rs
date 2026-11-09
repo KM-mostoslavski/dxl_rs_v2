@@ -2,8 +2,12 @@
 
 use super::scale::RegisterScale;
 
-/// A temperature in degrees Celsius, held as an `f32`. Read-only: the
-/// internal temperature is measured, never written.
+/// A temperature in degrees Celsius, held as an `f32`: a measured internal
+/// temperature, or a limit to write with
+/// [`ActuatorRef::set_temperature_limit`](crate::ActuatorRef::set_temperature_limit).
+///
+/// A [`RegisterScale`] converts it from raw only: the bus converts a limit
+/// to its raw value, after its own checks.
 ///
 /// ```compile_fail,E0599
 /// fn write(scale: dxl_rs_v2::RegisterScale, t: dxl_rs_v2::Temperature) {
@@ -17,6 +21,11 @@ use super::scale::RegisterScale;
 pub struct Temperature(f32);
 
 impl Temperature {
+    /// The temperature of `celsius` degrees Celsius.
+    pub const fn from_celsius(celsius: f32) -> Self {
+        Self(celsius)
+    }
+
     /// The temperature in degrees Celsius.
     pub const fn celsius(self) -> f32 {
         self.0
@@ -39,5 +48,6 @@ mod tests {
     fn one_degree_per_step() {
         let scale = RegisterScale::new(1.0, Sign::Unsigned, 1, false);
         assert_eq!(scale.temperature(45).celsius(), 45.0);
+        assert_eq!(Temperature::from_celsius(70.0).celsius(), 70.0);
     }
 }

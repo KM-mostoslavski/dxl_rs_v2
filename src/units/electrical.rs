@@ -24,8 +24,12 @@ impl Current {
     }
 }
 
-/// A voltage in volts, held as an `f32`. Read-only: the input voltage is
-/// measured, never written.
+/// A voltage in volts, held as an `f32`: a measured input voltage, or a
+/// voltage limit to write with
+/// [`ActuatorRef::set_voltage_limits`](crate::ActuatorRef::set_voltage_limits).
+///
+/// A [`RegisterScale`] converts it from raw only: the bus converts a limit
+/// to its raw value, after its own checks.
 ///
 /// ```compile_fail,E0599
 /// fn write(scale: dxl_rs_v2::RegisterScale, v: dxl_rs_v2::Voltage) {
@@ -39,6 +43,11 @@ impl Current {
 pub struct Voltage(f32);
 
 impl Voltage {
+    /// The voltage of `volts` volts.
+    pub const fn from_volts(volts: f32) -> Self {
+        Self(volts)
+    }
+
     /// The voltage in volts.
     pub const fn volts(self) -> f32 {
         self.0
@@ -94,5 +103,11 @@ mod tests {
     fn voltage_is_scaled() {
         let scale = RegisterScale::new(0.1, Sign::Unsigned, 2, false);
         assert!((scale.voltage(120).volts() - 12.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn volts_round_trip() {
+        assert_eq!(Voltage::from_volts(9.5).volts(), 9.5);
+        assert_eq!(Voltage::default(), Voltage::from_volts(0.0));
     }
 }
