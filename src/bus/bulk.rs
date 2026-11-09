@@ -330,7 +330,7 @@ where
     S: Slots,
     B: ReadParts,
 {
-    let (kinds, states, bounds) = slots.split_mut();
+    let (kinds, states, bounds, _) = slots.split_mut();
     let mut staging = Staging {
         kinds,
         states,
@@ -408,7 +408,7 @@ where
     S: Slots,
     B: WriteParts,
 {
-    let (kinds, states, bounds) = slots.split_mut();
+    let (kinds, states, bounds, _) = slots.split_mut();
     let mut staging = Staging {
         kinds,
         states,

@@ -22,6 +22,10 @@
 //! `set_voltage_limits()`, and its fault cleared. At the end, also after an error, each gets
 //! the limits it held back (NFR-11: the caller restores what it changed). A table of limits
 //! and present voltage follows each change.
+//!
+//! The bus writes a limit only once torque is confirmed off: `disable_torque()` comes first
+//! each time, and its reply must show it ran. On an actuator held faulted that reply carries
+//! the fault, so the call returns it, yet confirms torque off: `tolerate` lets it through.
 
 use std::time::{Duration, Instant};
 
@@ -165,7 +169,9 @@ fn widen(
         let held_faulted = faulted.contains(id);
         let mut a = bus.actuator(id).ok_or(SetupError::NotOnBus { id })?;
         saved.push((id, held_limits(&mut a)?));
-        // Setup writes no torque: the bus holds `Off`, the actuator may still be on.
+        // Setup reads no Torque Enable: the actuator may still be on, and the bus refuses
+        // limit writes until an acknowledged `disable_torque()`. On a faulted actuator its
+        // reply carries the fault, which still confirms torque off.
         tolerate(a.disable_torque(), held_faulted)?;
         tolerate(
             a.set_voltage_limits(Voltage::from_volts(min), Voltage::from_volts(max)),
@@ -191,6 +197,7 @@ fn restore(
             continue;
         };
         let faulted = a.torque_state() == dxl_rs_v2::TorqueState::Faulted;
+        // The run enabled torque, so it must be confirmed off again before the limit write.
         let result = tolerate(a.disable_torque(), faulted)
             .and_then(|()| tolerate(a.set_voltage_limits(min, max), faulted));
         match result {

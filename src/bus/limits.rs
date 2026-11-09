@@ -1,4 +1,4 @@
-//! EEPROM limit writes (plan 2026-11-09, D2 to D5): the checks a limit
+//! EEPROM limit writes (plan 2026-11-09, D2 to D5, D8): the checks a limit
 //! write passes before a byte is sent, the packets it sends, and the cache
 //! that follows it.
 
@@ -15,7 +15,7 @@ use super::actuator_ref::ActuatorRef;
 use super::diagnose::diagnosed;
 use super::field::{self as fields, sealed::Decode, sealed::Site};
 use super::observe::observe;
-use super::slots::Bound;
+use super::slots::{Bound, Marks};
 
 /// One limit register write, checked: where it goes and its raw value.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,25 +47,30 @@ impl Checked {
     }
 }
 
-/// Refuses an EEPROM write while the torque state the bus holds is `On`:
-/// the bus writes EEPROM only with torque off, on every model. X-series,
-/// MX(2.0) and XL-320 firmware also writes EEPROM only with Torque Enable 0
-/// (XM430-W350: "Data in the EEPROM Area can only be written to if Torque
-/// Enable(64) is cleared to '0'",
-/// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>, 2026-11-09);
-/// the AX, RX and MX Protocol 1 pages document no such lock (Lock(47) locks
-/// their EEPROM), so there this check is the only guard. `Off` and
-/// `Faulted` pass, so an actuator held faulted by Setup can have its
-/// limits fixed.
+/// Refuses an EEPROM write unless the bus has confirmed the actuator's
+/// torque off (plan 2026-11-09 D4, D8): torque state `On` is refused with
+/// `ActuatorIsOn`, any other state without the "torque confirmed off" mark
+/// with `TorqueUnconfirmed`. Only a Torque Enable = 0 write whose reply
+/// shows it ran sets the mark, so `Off` after Setup, after a lost reply or
+/// after a reboot, and `Faulted` reached from `On`, do not pass: the bus
+/// never reads the hardware's Torque Enable. X-series, MX(2.0) and XL-320
+/// firmware also writes EEPROM only with Torque Enable 0 (XM430-W350: "Data
+/// in the EEPROM Area can only be written to if Torque Enable(64) is
+/// cleared to '0'", <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>,
+/// 2026-11-09); the AX, RX and MX Protocol 1 pages document no such lock
+/// (Lock(47) locks their EEPROM), so there this check is the only guard.
 fn check_off(
     id: crate::Id,
     state: TorqueState,
+    marks: Marks,
     register: &'static str,
 ) -> Result<(), ValidationError> {
     if state.is_on() {
         Err(ValidationError::ActuatorIsOn { id, register })
-    } else {
+    } else if marks.torque_off() {
         Ok(())
+    } else {
+        Err(ValidationError::TorqueUnconfirmed { id, register })
     }
 }
 
@@ -93,44 +98,45 @@ fn check_order(kind: &ActuatorKind, site: &Site, raw: i32) -> Result<(), Validat
 }
 
 /// A single write of `value` to limit field `F` of `kind`, whose torque
-/// state is `state`, checked in the order of plan D4: the register, the
-/// torque, the value's conversion, the e-Manual range, the position-limit
-/// order.
+/// state is `state` and marks `marks`, checked in the order of plan D4: the
+/// register, the torque (D8), the value's conversion, the e-Manual range,
+/// the position-limit order.
 ///
 /// # Errors
 ///
-/// `Unsupported`, `ActuatorIsOn`, `NoUnit`, `NotFinite`, `DoesNotFit`,
-/// `OutOfLimits`, `LimitsUnknown`, `InvertedLimits`.
+/// `Unsupported`, `ActuatorIsOn`, `TorqueUnconfirmed`, `NoUnit`,
+/// `NotFinite`, `DoesNotFit`, `OutOfLimits`, `LimitsUnknown`,
+/// `InvertedLimits`.
 pub(super) fn check_single<F: LimitField>(
     kind: &ActuatorKind,
-    state: TorqueState,
+    (state, marks): (TorqueState, Marks),
     value: F::Value,
 ) -> Result<Checked, ValidationError> {
     let site = fields::limit_site::<F>(kind)?;
-    check_off(kind.id(), state, site.name)?;
+    check_off(kind.id(), state, marks, site.name)?;
     let raw = fields::limit_raw(&site, value)?;
     check_order(kind, &site, raw)?;
     Ok(Checked { site, raw })
 }
 
 /// A write of the pair `min` to `Lo` and `max` to `Hi`, checked in the
-/// order of plan D4: both registers, the torque, both values' conversions
-/// and ranges, then `min <= max`.
+/// order of plan D4: both registers, the torque (D8), both values'
+/// conversions and ranges, then `min <= max`.
 ///
 /// # Errors
 ///
-/// `Unsupported`, `ActuatorIsOn` (naming `Lo`), `NoUnit`, `NotFinite`,
-/// `DoesNotFit`, `OutOfLimits`, `InvertedLimits`.
+/// `Unsupported`, `ActuatorIsOn` or `TorqueUnconfirmed` (naming `Lo`),
+/// `NoUnit`, `NotFinite`, `DoesNotFit`, `OutOfLimits`, `InvertedLimits`.
 pub(super) fn check_pair<Lo: LimitField, Hi: LimitField>(
     kind: &ActuatorKind,
-    state: TorqueState,
+    (state, marks): (TorqueState, Marks),
     min: Lo::Value,
     max: Hi::Value,
 ) -> Result<(Checked, Checked), ValidationError> {
     let lo = fields::limit_site::<Lo>(kind)?;
     let hi = fields::limit_site::<Hi>(kind)?;
     // DECISION: a pair refused for torque names its minimum register, the first the caller passes.
-    check_off(kind.id(), state, lo.name)?;
+    check_off(kind.id(), state, marks, lo.name)?;
     let min = fields::limit_raw(&lo, min)?;
     let max = fields::limit_raw(&hi, max)?;
     Limits::new(kind.id(), min, max)?;

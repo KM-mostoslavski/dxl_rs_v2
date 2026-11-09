@@ -46,14 +46,14 @@
 //! | [`PGain`], [`DGain`] | [`Gain`] | no | any | e-Manual range |
 //! | compliance fields | [`ComplianceMargin`], [`ComplianceSlope`] | no | any | e-Manual range |
 //! | [`LedRed`], [`LedGreen`], [`LedBlue`] | `u8` | no | any | — |
-//! | [`MinVoltageLimit`], [`MaxVoltageLimit`] | [`Voltage`] | must be off | any | e-Manual range; a pair, min ≤ max |
-//! | [`TemperatureLimit`] | [`Temperature`] | must be off | any | e-Manual range |
-//! | [`MinPositionLimit`], [`MaxPositionLimit`] | [`Position`] | must be off | any | e-Manual range of the limit row (verified tables only); min ≤ max |
-//! | [`VelocityLimit`] | [`Velocity`] | must be off | any | e-Manual range |
-//! | [`CurrentLimit`] | [`Current`] | must be off | any | e-Manual range |
-//! | [`PwmLimit`] | [`Pwm`] | must be off | any | e-Manual range |
-//! | [`MaxTorque`] | [`Load`] | must be off | any | e-Manual range |
-//! | [`AccelerationLimit`] | [`Acceleration`] | must be off | any | e-Manual range |
+//! | [`MinVoltageLimit`], [`MaxVoltageLimit`] | [`Voltage`] | confirmed off | any | e-Manual range; a pair, min ≤ max |
+//! | [`TemperatureLimit`] | [`Temperature`] | confirmed off | any | e-Manual range |
+//! | [`MinPositionLimit`], [`MaxPositionLimit`] | [`Position`] | confirmed off | any | e-Manual range of the limit row (verified tables only); min ≤ max |
+//! | [`VelocityLimit`] | [`Velocity`] | confirmed off | any | e-Manual range |
+//! | [`CurrentLimit`] | [`Current`] | confirmed off | any | e-Manual range |
+//! | [`PwmLimit`] | [`Pwm`] | confirmed off | any | e-Manual range |
+//! | [`MaxTorque`] | [`Load`] | confirmed off | any | e-Manual range |
+//! | [`AccelerationLimit`] | [`Acceleration`] | confirmed off | any | e-Manual range |
 //!
 //! Every value is also checked against the register size. "e-Manual
 //! range" is the range the table records for the register: a register
@@ -70,14 +70,19 @@
 //! [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) and its
 //! setters, never by a sync or bulk write, so the bus keeps the position
 //! limits, the limit mode and the goal bound it holds true to each write.
-//! The bus writes EEPROM only with torque off, on every model: a limit
-//! write while the torque state it holds is on is refused with
-//! [`ValidationError::ActuatorIsOn`]. X-series, MX(2.0) and XL-320 firmware
-//! also writes EEPROM only with Torque Enable 0 (XM430-W350: "Data in the
-//! EEPROM Area can only be written to if Torque Enable(64) is cleared to
-//! '0'", <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>,
-//! 2026-11-09); the AX, RX and MX Protocol 1 pages document no such lock,
-//! so there the bus check is the only guard. Every read tier reads them.
+//! The bus writes EEPROM only with torque confirmed off, on every model: a
+//! limit write while the torque state it holds is on is refused with
+//! [`ValidationError::ActuatorIsOn`], and in any other state until an
+//! acknowledged `disable_torque()` (whose reply shows the write ran, a
+//! hardware fault flag included) with [`ValidationError::TorqueUnconfirmed`]:
+//! after Setup, after an `enable_torque()` that sent bytes, a torque write
+//! without such a reply, a reboot or a raw write. X-series, MX(2.0) and
+//! XL-320 firmware also writes EEPROM only with Torque Enable 0
+//! (XM430-W350: "Data in the EEPROM Area can only be written to if Torque
+//! Enable(64) is cleared to '0'",
+//! <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>, 2026-11-09);
+//! the AX, RX and MX Protocol 1 pages document no such lock, so there the
+//! bus check is the only guard. Every read tier reads them.
 //!
 //! Torque Enable is not a field: a sync write gets no reply, so the bus
 //! could not keep its torque state true to the hardware. Use
@@ -233,7 +238,7 @@ pub trait WriteField: Field + Rule {
 
 /// An EEPROM limit field: written only by
 /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit), one
-/// acknowledged unicast write with torque off.
+/// acknowledged unicast write with torque confirmed off.
 ///
 /// The limit fields are not [`WriteField`]s, so
 /// [`Bus::sync_write`](crate::Bus::sync_write),

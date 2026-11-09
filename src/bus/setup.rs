@@ -3,8 +3,7 @@
 
 use crate::actuator::{Describe, LimitMode, ModelNumber, TorqueState};
 use crate::error::{
-    Error, Instruction, Request, SetupError, StatusError, StatusReport, Step, TransportError,
-    ValidationError,
+    Error, Instruction, Request, SetupError, StatusError, Step, TransportError, ValidationError,
 };
 use crate::models::{self, ActuatorKind};
 use crate::protocol::{Clock, Pong, Protocol};
@@ -13,6 +12,7 @@ use crate::{Id, IdSet, Transport};
 
 use super::diagnose::diagnose_unknown;
 use super::field;
+use super::observe::hardware_only;
 use super::slots::Slots;
 use super::wire::Wire;
 
@@ -264,17 +264,6 @@ fn read_model_number<P: Protocol, T: Transport, C: Clock>(
     Ok(u16::try_from(raw).unwrap_or(u16::MAX))
 }
 
-/// Whether `status` reports a hardware fault and nothing else: on
-/// Protocol 1 only Input Voltage, Overheating or Overload, on Protocol 2
-/// the alert bit with no error code. The instruction then ran, and the
-/// reply's data is the register's value.
-fn hardware_only(status: &StatusError) -> bool {
-    match status.report {
-        StatusReport::P1(flags) => flags.0 != 0 && flags.0 == flags.hardware().raw(),
-        StatusReport::P2 { alert, code } => alert && code.is_none(),
-    }
-}
-
 /// `result` of a Setup exchange, with a reply that reports only a hardware
 /// fault taken as an answer: `faulted` is set and the data it carried is
 /// kept. Any other result as it is.
@@ -519,7 +508,7 @@ mod tests {
     mod x_series {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
-        use crate::error::P2Code;
+        use crate::error::{P2Code, StatusReport};
 
         fn xm430_bus(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
             let mut bus = test_bus(time);
@@ -901,7 +890,7 @@ mod tests {
     mod ax {
         use super::*;
         use crate::actuator::{Actuator, TorqueState};
-        use crate::error::{Decivolts, FaultError, P1Flags, VoltageError};
+        use crate::error::{Decivolts, FaultError, P1Flags, StatusReport, VoltageError};
         use crate::units::HardwareErrors;
 
         #[test]

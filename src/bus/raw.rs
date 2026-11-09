@@ -9,7 +9,7 @@ use crate::protocol::{Clock, Protocol};
 
 use super::actuator_ref::ActuatorRef;
 use super::diagnose::diagnosed;
-use super::observe::observe;
+use super::observe::{observe, reached};
 
 /// Any register, by address (`raw-registers` feature).
 impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
@@ -57,6 +57,12 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///   next Setup. [`write_limit`](ActuatorRef::write_limit) and the
     ///   limit setters write a limit and keep them true.
     ///
+    /// Any address may hold Torque Enable, so once the write is sent,
+    /// whatever its reply, torque is no longer confirmed off (plan
+    /// 2026-11-09 D8): limit writes are refused with
+    /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
+    /// until an acknowledged [`disable_torque`](ActuatorRef::disable_torque).
+    ///
     /// # Errors
     ///
     /// - A request the protocol cannot send, with nothing sent (on
@@ -66,6 +72,9 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`Config::retries`]: crate::Config::retries
     pub fn write_raw(&mut self, addr: u16, data: &[u8]) -> Result<(), Error> {
         let result = self.wire.write_at(self.kind.id(), addr, data);
+        if reached(&result) {
+            self.marks.forget();
+        }
         let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);
         result

@@ -90,7 +90,7 @@ where
     C: Clock,
     S: Slots,
 {
-    let (kinds, states, _) = slots.split_mut();
+    let (kinds, states, _, _) = slots.split_mut();
     let kinds = &*kinds;
     let mut seen = IdSet::new();
     for (at, target) in targets.iter().enumerate() {
@@ -167,10 +167,12 @@ where
     first.into_diagnosed(wire, kinds)
 }
 
-/// Checks every target of a raw Bulk Write, then sends it.
+/// Checks every target of a raw Bulk Write, then sends it. Every target's
+/// marks are forgotten (plan 2026-11-09 D8): its bytes may touch Torque
+/// Enable.
 pub(in crate::bus) fn bulk_write_raw<T, C, S>(
     wire: &mut Wire<'_, P2, T, C>,
-    slots: &S,
+    slots: &mut S,
     targets: &[RawWrite<'_>],
 ) -> Result<(), Error>
 where
@@ -178,7 +180,7 @@ where
     C: Clock,
     S: Slots,
 {
-    let kinds = slots.kinds();
+    let (kinds, _, _, marks) = slots.split_mut();
     let mut seen = IdSet::new();
     for &RawWrite { id, .. } in targets {
         find(kinds, id).ok_or(SetupError::NotOnBus { id })?;
@@ -188,6 +190,12 @@ where
     }
     if targets.is_empty() {
         return Ok(());
+    }
+    // DECISION: a raw Bulk Write forgets its targets' marks once validated, before a byte: it gets no reply, and a transport failure partway may still have reached them.
+    for &RawWrite { id, .. } in targets {
+        if let Some(marks) = find(kinds, id).and_then(|index| marks.get_mut(index)) {
+            marks.forget();
+        }
     }
     wire.bulk_write(
         targets
@@ -308,6 +316,10 @@ impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
     /// gets no reply, so a fault shows on the next read. An empty call
     /// sends nothing.
     ///
+    /// As `write_raw` does, it leaves every target's torque unconfirmed,
+    /// once the call passed its checks: a limit write to a target needs an
+    /// acknowledged `disable_torque()` again.
+    ///
     /// Protocol 1 has no Bulk Write, so the method does not exist there:
     ///
     /// ```compile_fail,E0599
@@ -325,8 +337,8 @@ impl<T: Transport, C: Clock, const N: usize> Bus<P2, T, C, N> {
     /// [`ValidationError::DuplicateId`], [`ValidationError::PacketTooLarge`]
     /// (data longer than one packet carries). Otherwise a transport error.
     pub fn bulk_write_raw(&mut self, targets: &[RawWrite<'_>]) -> Result<(), Error> {
-        let (mut wire, slots) = self.split();
-        bulk_write_raw(&mut wire, &slots, targets)
+        let (mut wire, mut slots) = self.split();
+        bulk_write_raw(&mut wire, &mut slots, targets)
     }
 }
 

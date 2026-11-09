@@ -33,7 +33,9 @@ mod ax12a {
     use super::on;
     use crate::actuator::{Actuator, LimitMode, ModelNumber};
     use crate::bus::testing::*;
-    use crate::error::{Error, Instruction, TransportError, ValidationError};
+    use crate::error::{
+        Decivolts, Error, FaultError, Instruction, TransportError, ValidationError, VoltageError,
+    };
     use crate::field::{
         GoalVelocity, MaxPositionLimit, MaxVoltageLimit, MinPositionLimit, MinVoltageLimit, Raw,
         SpeedLimit as SpeedLimitField, TemperatureLimit,
@@ -41,18 +43,30 @@ mod ax12a {
     use crate::protocol::P1;
     use crate::transport::MockTime;
     use crate::units::{
-        Acceleration, Current, Load, Position, Pwm, SpeedLimit, Temperature, Velocity, Voltage,
+        Acceleration, Current, HardwareErrors, Load, Position, Pwm, SpeedLimit, Temperature,
+        Velocity, Voltage,
     };
     use crate::{IdSet, TorqueState};
 
-    /// An AX-12A at ID 1 with these angle limits, torque `on` or off.
-    fn ax12(time: &MockTime, cw: u16, ccw: u16, on: bool) -> TestBus<'_, P1> {
+    /// An AX-12A at ID 1 with these angle limits, as Setup leaves it:
+    /// torque `Off`, not confirmed off.
+    fn declared(time: &MockTime, cw: u16, ccw: u16) -> TestBus<'_, P1> {
         let mut bus = test_bus(time);
         ax12_p1(line(&mut bus), 1, 1, cw, ccw);
         bus.declare([(id(1), ModelNumber(AX12))]).unwrap();
+        bus
+    }
+
+    /// The same, torque `on`, or else confirmed off by an acknowledged
+    /// `disable_torque()`, as a limit write needs (plan D8).
+    fn ax12(time: &MockTime, cw: u16, ccw: u16, on: bool) -> TestBus<'_, P1> {
+        let mut bus = declared(time, cw, ccw);
+        ack(&mut bus, 1);
+        let mut ax = bus.actuator(id(1)).unwrap();
         if on {
-            ack(&mut bus, 1);
-            bus.actuator(id(1)).unwrap().enable_torque().unwrap();
+            ax.enable_torque().unwrap();
+        } else {
+            ax.disable_torque().unwrap();
         }
         bus
     }
@@ -63,6 +77,16 @@ mod ax12a {
             .unwrap()
             .position_scale()
             .to_position(raw)
+    }
+
+    /// Plan D8: the refusal of a limit write to `register` while torque is
+    /// not confirmed off.
+    fn unconfirmed(register: &'static str) -> Result<(), Error> {
+        Err(ValidationError::TorqueUnconfirmed {
+            id: id(1),
+            register,
+        }
+        .into())
     }
 
     /// Plan D3, D5: Min Voltage Limit(12) and Max Voltage Limit(13) are
@@ -220,6 +244,186 @@ mod ax12a {
         assert_quiet(&bus, mark);
     }
 
+    /// Plan D8, FR-2.7: Setup reads no Torque Enable, so after it every
+    /// limit write is refused, naming its register, with nothing sent,
+    /// until an acknowledged `disable_torque()` confirms torque off.
+    #[test]
+    fn setup_leaves_torque_unconfirmed() {
+        let time = MockTime::new();
+        let mut bus = declared(&time, 0, 1023);
+        let (min, max) = (at(&mut bus, 200), at(&mut bus, 800));
+        let mark = mark(&bus);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(ax.torque_state(), TorqueState::Off);
+        assert_eq!(
+            ax.set_voltage_limits(Voltage::from_volts(9.5), Voltage::from_volts(14.0)),
+            unconfirmed("Min Voltage Limit")
+        );
+        assert_eq!(
+            ax.set_position_limits(min, max),
+            unconfirmed("CW Angle Limit")
+        );
+        assert_eq!(
+            ax.set_temperature_limit(Temperature::from_celsius(70.0)),
+            unconfirmed("Temperature Limit")
+        );
+        assert_eq!(
+            ax.set_max_torque(Load::from_ratio(1.0)),
+            unconfirmed("Max Torque")
+        );
+        assert_eq!(
+            ax.write_limit(Raw(MaxPositionLimit), 900),
+            unconfirmed("CCW Angle Limit")
+        );
+        assert_quiet(&bus, mark);
+        script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.disable_torque().unwrap();
+        assert_eq!(
+            ax.set_voltage_limits(Voltage::from_volts(9.5), Voltage::from_volts(14.0)),
+            Ok(())
+        );
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[p1_write(1, 24, &[0]), p1_write(1, 12, &[95, 140])])
+        );
+        assert_done(&bus);
+    }
+
+    /// Plan D8: a new Setup clears the mark: it reads no Torque Enable.
+    #[test]
+    fn setup_again_clears_the_mark() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let next = line(&mut bus).flushes() + 1;
+        ax12_p1(line(&mut bus), next, 1, 0, 1023);
+        bus.declare([(id(1), ModelNumber(AX12))]).unwrap();
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_temperature_limit(Temperature::from_celsius(70.0)),
+            unconfirmed("Temperature Limit")
+        );
+        assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D8: the multi-actuator `disable_torque` confirms torque off as
+    /// the handle's does, one acknowledged write each.
+    #[test]
+    fn bus_disable_torque_confirms_torque_off() {
+        let time = MockTime::new();
+        let mut bus = declared(&time, 0, 1023);
+        let mark = mark(&bus);
+        script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
+        bus.disable_torque([id(1)]).unwrap();
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_temperature_limit(Temperature::from_celsius(70.0)),
+            Ok(())
+        );
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[p1_write(1, 24, &[0]), p1_write(1, 11, &[70])])
+        );
+    }
+
+    /// Plan D8: every `enable_torque` that sent bytes clears the mark, on
+    /// the handle and on the bus, even when it timed out and the bus holds
+    /// `Off`.
+    #[test]
+    fn enable_attempt_clears_the_mark() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        assert!(matches!(ax.enable_torque(), Err(Error::Transport(_))));
+        assert_eq!(ax.torque_state(), TorqueState::Off);
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .write_limit(Raw(MinVoltageLimit), 60),
+            unconfirmed("Min Voltage Limit")
+        );
+        assert_quiet(&bus, quiet);
+
+        let mut bus = ax12(&time, 0, 1023, false);
+        assert!(bus.enable_torque([id(1)]).is_err());
+        assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Off));
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .write_limit(Raw(MinVoltageLimit), 60),
+            unconfirmed("Min Voltage Limit")
+        );
+        assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D8: a Torque Enable = 0 write whose reply was lost leaves the
+    /// bus holding `Off` while the hardware's torque may still be on; the
+    /// AX-12A e-Manual documents no EEPROM lock with torque on, so a limit
+    /// write waits for an acknowledged torque-off.
+    #[test]
+    fn unconfirmed_torque_off_refuses_limit_writes() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, true);
+        assert!(bus.actuator(id(1)).unwrap().disable_torque().is_err());
+        assert_eq!(bus.torque_state(id(1)), Some(TorqueState::Off));
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .write_limit(Raw(MaxPositionLimit), 0),
+            unconfirmed("CCW Angle Limit")
+        );
+        assert_quiet(&bus, quiet);
+
+        let mut bus = ax12(&time, 0, 1023, false);
+        assert!(bus.actuator(id(1)).unwrap().disable_torque().is_err());
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .write_limit(Raw(MaxPositionLimit), 900),
+            unconfirmed("CCW Angle Limit")
+        );
+        assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D8: an AX-12A the bus turned on keeps its torque when it
+    /// reports an Input Voltage error (not in the default Alarm Shutdown,
+    /// 36), so `Faulted` reached from `On` does not pass the EEPROM guard.
+    #[test]
+    fn faulted_from_on_refuses_limit_writes() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, true);
+        let zero = at(&mut bus, 0);
+        script(
+            &mut bus,
+            &[
+                p1_status(1, 0x01, &[40]),
+                p1_status(1, 0x01, &[70]),
+                p1_status(1, 0x01, &[95]),
+                p1_status(1, 0x01, &[140]),
+            ],
+        );
+        assert!(
+            bus.actuator(id(1))
+                .unwrap()
+                .read(crate::field::PresentTemperature)
+                .is_err()
+        );
+        assert_eq!(bus.torque_state(id(1)), Some(FAULTED));
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1)).unwrap().set_position_limits(zero, zero),
+            unconfirmed("CW Angle Limit")
+        );
+        assert_quiet(&bus, quiet);
+    }
+
     /// Plan D4: the register check comes first: a model without the
     /// register refuses whatever its torque state.
     #[test]
@@ -326,25 +530,40 @@ mod ax12a {
         assert_quiet(&bus, mark);
     }
 
-    /// Plan D4: `Faulted` passes the torque check, like `Off`.
+    /// Plan D8: `Faulted` passes the torque check once an acknowledged
+    /// `disable_torque()` confirmed torque off, like `Off`; the fault
+    /// stays.
     #[test]
-    fn faulted_actuator_takes_limit_writes() {
+    fn faulted_actuator_takes_limit_writes_once_confirmed_off() {
         let time = MockTime::new();
         let mut bus = test_bus::<P1, 32>(&time);
         hold(&mut bus, AX12, 1, (0, 1023), LimitMode::Bounded, FAULTED);
-        ack(&mut bus, 1);
         let mut ax = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            ax.set_voltage_limits(Voltage::from_volts(6.0), Voltage::from_volts(16.0)),
+            unconfirmed("Min Voltage Limit")
+        );
+        assert!(sent(&bus).is_empty());
+        script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.disable_torque().unwrap();
         assert_eq!(
             ax.set_voltage_limits(Voltage::from_volts(6.0), Voltage::from_volts(16.0)),
             Ok(())
         );
         assert_eq!(ax.torque_state(), FAULTED);
-        assert_eq!(sent(&bus), p1_write(1, 12, &[60, 160]));
+        assert_eq!(
+            sent(&bus),
+            concat(&[p1_write(1, 24, &[0]), p1_write(1, 12, &[60, 160])])
+        );
     }
 
-    /// Plan D4, FR-2.7, FR-8.1: an AX-12A held `Faulted` at Setup (its
-    /// input voltage outside its limits) is fixed with the typed setter,
-    /// then cleared and enabled, as kmr needs (NFR-11).
+    /// Plan D4, D8, FR-2.7, FR-8.1: an AX-12A held `Faulted` at Setup (its
+    /// input voltage below Min Voltage Limit) answers `disable_torque()`
+    /// with its Input Voltage flag only: the call returns the measured
+    /// fault, yet the instruction ran, so torque is confirmed off and the
+    /// typed setter fixes the limits; then the fault is cleared and torque
+    /// enabled, as kmr needs (NFR-11).
     #[test]
     fn faulted_at_setup_is_fixed_with_set_voltage_limits() {
         let time = MockTime::new();
@@ -354,9 +573,13 @@ mod ax12a {
             .reply_to(2, &p1_status(1, 0x01, &AX12.to_le_bytes()))
             .reply_to(3, &p1_status(1, 0x01, &0u16.to_le_bytes()))
             .reply_to(4, &p1_status(1, 0x01, &1023u16.to_le_bytes()))
-            .reply_to(5, &p1_status(1, 0, &[]))
-            .reply_to(6, &p1_status(1, 0, &[]))
-            .reply_to(7, &p1_status(1, 0, &[]));
+            .reply_to(5, &p1_status(1, 0x01, &[]))
+            .reply_to(6, &p1_status(1, 0x01, &[95]))
+            .reply_to(7, &p1_status(1, 0x01, &[100]))
+            .reply_to(8, &p1_status(1, 0x01, &[140]))
+            .reply_to(9, &p1_status(1, 0, &[]))
+            .reply_to(10, &p1_status(1, 0, &[]))
+            .reply_to(11, &p1_status(1, 0, &[]));
         let report = bus.declare([(id(1), ModelNumber(AX12))]).unwrap();
         assert_eq!(report.faulted, [id(1)].into_iter().collect::<IdSet>());
         let mark = mark(&bus);
@@ -364,6 +587,18 @@ mod ax12a {
         assert_eq!(
             ax.enable_torque(),
             Err(ValidationError::ActuatorFaulted { id: id(1) }.into())
+        );
+        assert_eq!(
+            ax.disable_torque(),
+            Err(FaultError::Voltage(VoltageError::BelowMin {
+                id: id(1),
+                measured: Decivolts(95),
+                min: Decivolts(100),
+                max: Decivolts(140),
+                faults: HardwareErrors::from_raw(0x01),
+                request: on(Instruction::Write, 1, "Torque Enable", 24, 1),
+            })
+            .into())
         );
         assert_eq!(
             ax.set_voltage_limits(Voltage::from_volts(6.0), Voltage::from_volts(16.0)),
@@ -376,11 +611,68 @@ mod ax12a {
         assert_eq!(
             sent_since(&bus, mark),
             concat(&[
+                p1_write(1, 24, &[0]),
+                p1_read(1, 42, 1),
+                p1_read(1, 12, 1),
+                p1_read(1, 13, 1),
                 p1_write(1, 12, &[60, 160]),
                 p1_instruction(1, PING, &[]),
                 p1_write(1, 24, &[1]),
             ])
         );
+    }
+
+    /// Plan D8: `clear_fault` sends no reboot on Protocol 1 (a ping), so
+    /// it leaves torque confirmed off.
+    #[test]
+    fn clear_fault_keeps_the_mark() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P1, 32>(&time);
+        hold(&mut bus, AX12, 1, (0, 1023), LimitMode::Bounded, FAULTED);
+        let mark = mark(&bus);
+        script(
+            &mut bus,
+            &[
+                p1_status(1, 0, &[]),
+                p1_status(1, 0, &[]),
+                p1_status(1, 0, &[]),
+            ],
+        );
+        let mut ax = bus.actuator(id(1)).unwrap();
+        ax.disable_torque().unwrap();
+        assert_eq!(ax.clear_fault(), Ok(()));
+        assert_eq!(ax.torque_state(), TorqueState::Off);
+        assert_eq!(
+            ax.set_temperature_limit(Temperature::from_celsius(70.0)),
+            Ok(())
+        );
+        assert_eq!(
+            sent_since(&bus, mark),
+            concat(&[
+                p1_write(1, 24, &[0]),
+                p1_instruction(1, PING, &[]),
+                p1_write(1, 11, &[70]),
+            ])
+        );
+    }
+
+    /// Plan D8 (`raw-registers`): a raw write may touch Torque Enable, so
+    /// it clears the mark.
+    #[cfg(feature = "raw-registers")]
+    #[test]
+    fn write_raw_clears_the_mark() {
+        let time = MockTime::new();
+        let mut bus = ax12(&time, 0, 1023, false);
+        ack(&mut bus, 1);
+        assert_eq!(bus.actuator(id(1)).unwrap().write_raw(25, &[1]), Ok(()));
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .write_limit(Raw(MaxVoltageLimit), 160),
+            unconfirmed("Max Voltage Limit")
+        );
+        assert_quiet(&bus, quiet);
     }
 
     /// Plan D5: a position-limit write that times out leaves the limits and
@@ -507,69 +799,6 @@ mod ax12a {
         assert_done(&bus);
     }
 
-    /// Deferred (docs/deferred.md, 2026-11-09, EEPROM guard): a Torque
-    /// Enable = 0 write whose reply was lost leaves the bus holding `Off`
-    /// while the hardware's torque may still be on; the AX-12A e-Manual
-    /// documents no EEPROM lock with torque on, so a limit write must wait
-    /// for an acknowledged torque-off.
-    #[test]
-    #[ignore = "deferred"]
-    fn unconfirmed_torque_off_refuses_limit_writes() {
-        let time = MockTime::new();
-        let mut bus = ax12(&time, 0, 1023, true);
-        assert!(bus.actuator(id(1)).unwrap().disable_torque().is_err());
-        let quiet = mark(&bus);
-        assert_eq!(
-            bus.actuator(id(1))
-                .unwrap()
-                .write_limit(Raw(MaxPositionLimit), 0),
-            Err(ValidationError::ActuatorIsOn {
-                id: id(1),
-                register: "CCW Angle Limit"
-            }
-            .into())
-        );
-        assert_quiet(&bus, quiet);
-    }
-
-    /// Deferred (docs/deferred.md, 2026-11-09, EEPROM guard): an AX-12A the
-    /// bus turned on keeps its torque when it reports an Input Voltage
-    /// error (not in the default Alarm Shutdown, 36), so `Faulted` reached
-    /// from `On` must not pass the EEPROM guard.
-    #[test]
-    #[ignore = "deferred"]
-    fn faulted_from_on_refuses_limit_writes() {
-        let time = MockTime::new();
-        let mut bus = ax12(&time, 0, 1023, true);
-        let zero = at(&mut bus, 0);
-        script(
-            &mut bus,
-            &[
-                p1_status(1, 0x01, &[40]),
-                p1_status(1, 0x01, &[70]),
-                p1_status(1, 0x01, &[95]),
-                p1_status(1, 0x01, &[140]),
-            ],
-        );
-        assert!(
-            bus.actuator(id(1))
-                .unwrap()
-                .read(crate::field::PresentTemperature)
-                .is_err()
-        );
-        assert_eq!(bus.torque_state(id(1)), Some(FAULTED));
-        let quiet = mark(&bus);
-        assert_eq!(
-            bus.actuator(id(1)).unwrap().set_position_limits(zero, zero),
-            Err(ValidationError::ActuatorIsOn {
-                id: id(1),
-                register: "CW Angle Limit"
-            }
-            .into())
-        );
-        assert_quiet(&bus, quiet);
-    }
-
     /// Plan D3: the getters read their registers, one read each, never
     /// cached; the voltage pair is one read of both.
     #[test]
@@ -636,17 +865,40 @@ mod xm430 {
     use crate::units::{Current, Position, Pwm, Temperature, Velocity, Voltage};
 
     /// An XM430-W350 at ID 1, limits 1000..=3000, in Operating Mode `mode`,
-    /// torque off.
-    fn xm430(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
+    /// as Setup leaves it: torque `Off`, not confirmed off.
+    fn declared(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
         let mut bus = test_bus(time);
         xm430_p2(line(&mut bus), 1, 1, 1000, 3000, mode);
         bus.declare([(id(1), ModelNumber(XM430))]).unwrap();
         bus
     }
 
+    /// The same, torque confirmed off by an acknowledged `disable_torque()`,
+    /// as a limit write needs (plan D8).
+    fn xm430(time: &MockTime, mode: u8) -> TestBus<'_, P2> {
+        let mut bus = declared(time, mode);
+        disable(&mut bus);
+        bus
+    }
+
     fn enable(bus: &mut TestBus<'_, P2>) {
         ack(bus, 1);
         bus.actuator(id(1)).unwrap().enable_torque().unwrap();
+    }
+
+    fn disable(bus: &mut TestBus<'_, P2>) {
+        ack(bus, 1);
+        bus.actuator(id(1)).unwrap().disable_torque().unwrap();
+    }
+
+    /// Plan D8: the refusal of a limit write to `register` while torque is
+    /// not confirmed off.
+    fn unconfirmed(register: &'static str) -> Result<(), Error> {
+        Err(ValidationError::TorqueUnconfirmed {
+            id: id(1),
+            register,
+        }
+        .into())
     }
 
     fn at(bus: &mut TestBus<'_, P2>, raw: i32) -> Position {
@@ -805,6 +1057,8 @@ mod xm430 {
 
         let mut bus = test_bus::<P2, 32>(&time);
         hold(&mut bus, 1030, 1, (0, 4095), LimitMode::Bounded, OFF);
+        disable(&mut bus);
+        let quiet = mark(&bus);
         let mut xm = bus.actuator(id(1)).unwrap();
         assert_eq!(
             xm.voltage_limits(),
@@ -824,7 +1078,7 @@ mod xm430 {
             }
             .into())
         );
-        assert!(sent(&bus).is_empty());
+        assert_quiet(&bus, quiet);
     }
 
     /// Plan D6: a model whose table has no unit for the register (an
@@ -836,6 +1090,8 @@ mod xm430 {
         let time = MockTime::new();
         let mut bus = test_bus::<P2, 32>(&time);
         hold(&mut bus, 1030, 1, (0, 4095), LimitMode::Bounded, OFF);
+        disable(&mut bus);
+        let start = mark(&bus);
         let mut xm = bus.actuator(id(1)).unwrap();
         let scale = xm.position_scale();
         let no_unit = |register| {
@@ -876,13 +1132,13 @@ mod xm430 {
             }
             .into())
         );
-        assert!(sent(&bus).is_empty());
+        assert_quiet(&bus, start);
         script(&mut bus, &[p2_status(1, 0, &[]), p2_status(1, 0, &[])]);
         let mut xm = bus.actuator(id(1)).unwrap();
         assert_eq!(xm.write_limit(Raw(MaxVoltageLimit), 160), Ok(()));
         assert_eq!(xm.write_limit(Raw(MinPositionLimit), 0), Ok(()));
         assert_eq!(
-            sent(&bus),
+            sent_since(&bus, start),
             concat(&[
                 p2_write(1, 32, &160u16.to_le_bytes()),
                 p2_write(1, 52, &0i32.to_le_bytes()),
@@ -1144,6 +1400,177 @@ mod xm430 {
         assert_done(&bus);
     }
 
+    /// Plan D8: after Setup a limit write is refused, with nothing sent,
+    /// until an acknowledged `disable_torque()`; X-series firmware also
+    /// writes EEPROM only with Torque Enable 0.
+    #[test]
+    fn setup_leaves_torque_unconfirmed() {
+        let time = MockTime::new();
+        let mut bus = declared(&time, 3);
+        let start = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_pwm_limit(Pwm::from_ratio(0.5)),
+            unconfirmed("PWM Limit")
+        );
+        assert_quiet(&bus, start);
+        disable(&mut bus);
+        ack(&mut bus, 1);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_pwm_limit(Pwm::from_ratio(0.5)),
+            Ok(())
+        );
+        assert_eq!(
+            sent_since(&bus, start),
+            concat(&[
+                p2_write(1, 64, &[0]),
+                p2_write(1, 36, &442u16.to_le_bytes())
+            ])
+        );
+    }
+
+    /// Plan D8: a reboot may come back with torque on (Startup
+    /// Configuration bit 0), and an `enable_torque` that sent bytes may
+    /// have turned it on even when its reply was lost: both clear the mark.
+    #[test]
+    fn reboot_and_enable_attempt_clear_the_mark() {
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 3);
+        ack(&mut bus, 1);
+        bus.actuator(id(1)).unwrap().reboot().unwrap();
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_temperature_limit(Temperature::from_celsius(75.0)),
+            unconfirmed("Temperature Limit")
+        );
+        assert_quiet(&bus, quiet);
+
+        let mut bus = xm430(&time, 3);
+        assert!(bus.actuator(id(1)).unwrap().enable_torque().is_err());
+        assert_eq!(bus.torque_state(id(1)), Some(crate::TorqueState::Off));
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_temperature_limit(Temperature::from_celsius(75.0)),
+            unconfirmed("Temperature Limit")
+        );
+        assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D8, Protocol 2: a reply to Torque Enable = 0 with the alert bit
+    /// and no error code shows the write ran: `disable_torque()` returns the
+    /// measured fault, yet confirms torque off. A reply with an error code
+    /// (Access Error) does not, and clears a mark set before.
+    #[test]
+    fn p2_replies_that_confirm_and_that_do_not() {
+        let time = MockTime::new();
+        let mut bus = declared(&time, 3);
+        let start = mark(&bus);
+        script(
+            &mut bus,
+            &[
+                p2_status(1, 0x80, &[]),
+                p2_status(1, 0x80, &[0x20]),
+                p2_status(1, 0, &[]),
+            ],
+        );
+        let mut xm = bus.actuator(id(1)).unwrap();
+        assert_eq!(
+            xm.disable_torque(),
+            Err(crate::error::FaultError::Overload {
+                id: id(1),
+                faults: crate::units::HardwareErrors::from_raw(0x20),
+                request: on(Instruction::Write, 1, "Torque Enable", 64, 1),
+            }
+            .into())
+        );
+        assert_eq!(xm.torque_state(), crate::TorqueState::Faulted);
+        assert_eq!(
+            xm.set_temperature_limit(Temperature::from_celsius(75.0)),
+            Ok(())
+        );
+        assert_eq!(
+            sent_since(&bus, start),
+            concat(&[
+                p2_write(1, 64, &[0]),
+                p2_read(1, 70, 1),
+                p2_write(1, 31, &[75]),
+            ])
+        );
+
+        let mut bus = xm430(&time, 3);
+        line(&mut bus).reply(&p2_status(1, 0x07, &[]));
+        assert!(matches!(
+            bus.actuator(id(1)).unwrap().disable_torque(),
+            Err(Error::Status(_))
+        ));
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_temperature_limit(Temperature::from_celsius(75.0)),
+            unconfirmed("Temperature Limit")
+        );
+        assert_quiet(&bus, quiet);
+    }
+
+    /// Plan D8 (`raw-registers`): a raw write, unicast or a raw Bulk Write
+    /// part, may touch Torque Enable, so it clears the mark of the actuator
+    /// it reaches, and only of that one.
+    #[cfg(feature = "raw-registers")]
+    #[test]
+    fn raw_writes_clear_the_mark() {
+        use crate::bulk::RawWrite;
+
+        let time = MockTime::new();
+        let mut bus = xm430(&time, 3);
+        ack(&mut bus, 1);
+        assert_eq!(bus.actuator(id(1)).unwrap().write_raw(65, &[1]), Ok(()));
+        let quiet = mark(&bus);
+        assert_eq!(
+            bus.actuator(id(1))
+                .unwrap()
+                .set_pwm_limit(Pwm::from_ratio(0.5)),
+            unconfirmed("PWM Limit")
+        );
+        assert_quiet(&bus, quiet);
+
+        let mut bus = test_bus::<P2, 32>(&time);
+        let next = xm430_p2(line(&mut bus), 1, 1, 1000, 3000, 3);
+        let next = xm430_p2(line(&mut bus), next, 2, 1000, 3000, 3);
+        line(&mut bus)
+            .reply_to(next, &p2_status(1, 0, &[]))
+            .reply_to(next + 1, &p2_status(2, 0, &[]))
+            .reply_to(next + 3, &p2_status(2, 0, &[]));
+        bus.declare([(id(1), ModelNumber(XM430)), (id(2), ModelNumber(XM430))])
+            .unwrap();
+        bus.disable_torque([id(1), id(2)]).unwrap();
+        let start = mark(&bus);
+        assert_eq!(
+            bus.bulk_write_raw(&[RawWrite::new(id(1), 65, &[1])]),
+            Ok(())
+        );
+        let pwm = Pwm::from_ratio(0.5);
+        assert_eq!(
+            bus.actuator(id(1)).unwrap().set_pwm_limit(pwm),
+            unconfirmed("PWM Limit")
+        );
+        assert_eq!(bus.actuator(id(2)).unwrap().set_pwm_limit(pwm), Ok(()));
+        assert_eq!(
+            sent_since(&bus, start),
+            concat(&[
+                p2_bulk_write(&[(1, 65, &[1])]),
+                p2_write(2, 36, &442u16.to_le_bytes()),
+            ])
+        );
+    }
+
     /// Plan D3: `DynBus` lends the same handle, with the same setters.
     #[cfg(feature = "std")]
     #[test]
@@ -1152,16 +1579,29 @@ mod xm430 {
         let time = MockTime::new();
         let mut line = crate::transport::MockTransport::new(&time);
         let next = xm430_p2(&mut line, 1, 1, 1000, 3000, 3);
-        line.reply_to(next, &p2_status(1, 0, &[]));
+        line.reply_to(next + 1, &p2_status(1, 0, &[]))
+            .reply_to(next + 2, &p2_status(1, 0, &[]));
         let mut bus = DynBus::<P2, _, _>::new(line, time.ticker(10), Config::new());
         bus.declare([(id(1), ModelNumber(XM430))]).unwrap();
         let mut xm = bus.actuator(id(1)).unwrap();
+        let volts = (Voltage::from_volts(10.0), Voltage::from_volts(16.0));
         assert_eq!(
-            xm.set_voltage_limits(Voltage::from_volts(10.0), Voltage::from_volts(16.0)),
-            Ok(())
+            xm.set_voltage_limits(volts.0, volts.1),
+            unconfirmed("Min Voltage Limit")
         );
+        assert!(xm.enable_torque().is_err());
+        assert_eq!(
+            xm.set_voltage_limits(volts.0, volts.1),
+            unconfirmed("Min Voltage Limit")
+        );
+        xm.disable_torque().unwrap();
+        assert_eq!(xm.set_voltage_limits(volts.0, volts.1), Ok(()));
         let (line, _) = bus.into_parts();
-        assert!(line.sent().ends_with(&p2_write(1, 32, &[160, 0, 100, 0])));
+        assert!(line.sent().ends_with(&concat(&[
+            p2_write(1, 64, &[1]),
+            p2_write(1, 64, &[0]),
+            p2_write(1, 32, &[160, 0, 100, 0]),
+        ])));
         line.assert_done();
     }
 }
@@ -1194,9 +1634,11 @@ mod mx64_p1 {
                 p1_status(1, 0, &[]),
                 p1_status(1, 0, &[]),
                 p1_status(1, 0, &[]),
+                p1_status(1, 0, &[]),
             ],
         );
         let mut mx = bus.actuator(id(1)).unwrap();
+        mx.disable_torque().unwrap();
         mx.set_position_limits(top, top).unwrap();
         assert_eq!(mx.limit_mode(), LimitMode::Unbounded);
         assert_eq!(mx.position_limits_raw(), Some(4095..=4095));
@@ -1205,6 +1647,7 @@ mod mx64_p1 {
         assert_eq!(
             sent(&bus),
             concat(&[
+                p1_write(1, 24, &[0]),
                 p1_write(1, 6, &[0xFF, 0x0F, 0xFF, 0x0F]),
                 p1_write(1, 24, &[1]),
                 p1_write(1, 30, &20_000u16.to_le_bytes()),
@@ -1435,10 +1878,13 @@ mod ym070 {
     /// YM070-210-M001 model number.
     const YM070: u16 = 4000;
 
-    /// A YM070-210-M001 at ID 1 held with limits -1000..=1000, torque off.
+    /// A YM070-210-M001 at ID 1 held with limits -1000..=1000, torque
+    /// confirmed off by an acknowledged `disable_torque()` (plan D8).
     fn ym070(time: &MockTime) -> TestBus<'_, P2> {
         let mut bus = test_bus::<P2, 32>(time);
         hold(&mut bus, YM070, 1, (-1000, 1000), LimitMode::Bounded, OFF);
+        ack(&mut bus, 1);
+        bus.actuator(id(1)).unwrap().disable_torque().unwrap();
         bus
     }
 
@@ -1449,6 +1895,7 @@ mod ym070 {
     fn unverified_y_takes_raw_position_limits_only() {
         let time = MockTime::new();
         let mut bus = ym070(&time);
+        let start = mark(&bus);
         let scale = bus.actuator(id(1)).unwrap().position_scale();
         assert_eq!(
             bus.actuator(id(1))
@@ -1461,7 +1908,7 @@ mod ym070 {
             }
             .into())
         );
-        assert!(sent(&bus).is_empty());
+        assert_quiet(&bus, start);
         ack(&mut bus, 1);
         let mut ym = bus.actuator(id(1)).unwrap();
         ym.write_limit(Raw(MinPositionLimit), -500).unwrap();
@@ -1475,7 +1922,10 @@ mod ym070 {
             }
             .into())
         );
-        assert_eq!(sent(&bus), p2_write(1, 84, &(-500i32).to_le_bytes()));
+        assert_eq!(
+            sent_since(&bus, start),
+            p2_write(1, 84, &(-500i32).to_le_bytes())
+        );
     }
 
     /// Limit `F` of the YM070 at `raw`, checked as a verified table would
@@ -1507,6 +1957,7 @@ mod ym070 {
     fn apart_position_limits_keep_the_pair_ordered() {
         let time = MockTime::new();
         let mut bus = ym070(&time);
+        let start = mark(&bus);
         script(&mut bus, &std::vec![p2_status(1, 0, &[]); 5]);
         send_pair(&mut bus, -500, 500).unwrap();
         assert_eq!(
@@ -1519,7 +1970,7 @@ mod ym070 {
         ym.write_limit(Raw(MinPositionLimit), 2500).unwrap();
         assert_eq!(ym.position_limits_raw(), Some(2500..=3000));
         assert_eq!(
-            sent(&bus),
+            sent_since(&bus, start),
             concat(&[
                 p2_write(1, 84, &(-500i32).to_le_bytes()),
                 p2_write(1, 76, &500i32.to_le_bytes()),
@@ -1552,6 +2003,7 @@ mod ym070 {
     fn apart_pair_failing_halfway_forgets_the_limits() {
         let time = MockTime::new();
         let mut bus = ym070(&time);
+        let start = mark(&bus);
         ack(&mut bus, 1);
         assert!(send_pair(&mut bus, -500, 500).is_err());
         assert_eq!(bus.actuator(id(1)).unwrap().position_limits_raw(), None);
@@ -1563,7 +2015,7 @@ mod ym070 {
             Some(-400..=400)
         );
         assert_eq!(
-            sent(&bus),
+            sent_since(&bus, start),
             concat(&[
                 p2_write(1, 84, &(-500i32).to_le_bytes()),
                 p2_write(1, 76, &500i32.to_le_bytes()),

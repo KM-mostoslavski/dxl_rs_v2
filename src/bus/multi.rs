@@ -16,7 +16,7 @@ use super::field::{
     self, GoalCurrent, GoalPosition, GoalVelocity, PresentPosition, Raw, ReadField, WriteField,
 };
 use super::group::{self, FirstError, Stage};
-use super::observe::after_torque_write;
+use super::observe::{after_torque_write, ran, reached};
 use super::slots::Slots;
 use super::wire::{AnyProtocol, ReadMany, SyncRead, Wire};
 
@@ -35,7 +35,7 @@ where
     S: Slots,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states, _) = slots.split_mut();
+    let (kinds, states, _, marks) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     for stage in stages.iter() {
         let (kind, state) = group::held(kinds, states, stage)?;
@@ -44,6 +44,11 @@ where
     for stage in stages.iter() {
         let (kind, state) = group::held(kinds, states, stage)?;
         let result = wire.write_value(kind.id(), kind.data().torque_enable, 1);
+        if reached(&result)
+            && let Some(marks) = marks.get_mut(usize::from(stage.slot))
+        {
+            marks.forget_torque_off();
+        }
         let result = diagnosed(wire, kind, result);
         after_torque_write(state, TorqueState::On, &result);
         result?;
@@ -66,13 +71,16 @@ where
     S: Slots,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states, _) = slots.split_mut();
+    let (kinds, states, _, marks) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     let mut first = FirstError::default();
     for (index, stage) in stages.iter().enumerate() {
         let (kind, state) = group::held(kinds, states, stage)?;
         let wanted = state.disable();
         let result = wire.write_value(kind.id(), kind.data().torque_enable, 0);
+        if let Some(marks) = marks.get_mut(usize::from(stage.slot)) {
+            marks.torque_off_written(ran(&result));
+        }
         let result = diagnosed(wire, kind, result);
         after_torque_write(state, wanted, &result);
         first.note(index, &result);
@@ -97,7 +105,7 @@ where
     F: WriteField,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states, bounds) = slots.split_mut();
+    let (kinds, states, bounds, _) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_values(stages.len(), values.len())?;
     group::validate_writes::<F>(kinds, states, bounds, stages, values)?;
@@ -128,7 +136,7 @@ where
     R: ReadMany<P, T, C>,
     I: IntoIterator<Item = Id>,
 {
-    let (kinds, states, _) = slots.split_mut();
+    let (kinds, states, _, _) = slots.split_mut();
     let stages = group::resolve(kinds, ids, stages)?;
     group::check_out(stages.len(), out.len())?;
     group::stage_reads::<F>(kinds, stages)?;
@@ -159,6 +167,10 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Turns torque on for every target: one acknowledged Torque Enable
     /// write each, in target order.
     ///
+    /// Each target written to is no longer confirmed off, whatever its
+    /// reply: limit writes to it are refused until an acknowledged
+    /// [`disable_torque`](Bus::disable_torque).
+    ///
     /// # Errors
     ///
     /// Refused with nothing sent:
@@ -188,7 +200,9 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     /// Each target's state follows its own write, as
     /// [`ActuatorRef::disable_torque`](crate::ActuatorRef::disable_torque)
     /// does: `Off`, except that a `Faulted` target stays `Faulted` and a
-    /// reply reporting a hardware fault gives `Faulted`.
+    /// reply reporting a hardware fault gives `Faulted`. A reply that shows
+    /// the write ran (no error, or only a hardware fault) confirms that
+    /// target's torque off for limit writes, as there.
     ///
     /// # Errors
     ///

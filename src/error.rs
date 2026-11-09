@@ -192,6 +192,9 @@ impl Error {
             }
             Self::Validation(V::ActuatorIsOff { .. }) => "enable torque before setting a goal",
             Self::Validation(V::ActuatorIsOn { .. }) => "disable torque before writing EEPROM",
+            Self::Validation(V::TorqueUnconfirmed { .. }) => {
+                "call disable_torque() before writing EEPROM"
+            }
             Self::Validation(V::ActuatorFaulted { .. }) => "clear the fault before enabling torque",
             Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
             Self::Validation(V::NoUnit { .. }) => "use the register's raw form",
@@ -609,6 +612,7 @@ impl fmt::Display for FeatureHint {
 ///         | V::DataLength { .. }
 ///         | V::ActuatorIsOff { .. }
 ///         | V::ActuatorIsOn { .. }
+///         | V::TorqueUnconfirmed { .. }
 ///         | V::ActuatorFaulted { .. }
 ///         | V::NotFinite { .. }
 ///         | V::DoesNotFit { .. }
@@ -690,9 +694,26 @@ pub enum ValidationError {
     /// (XM430-W350 Torque Enable(64),
     /// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>); the AX, RX
     /// and MX Protocol 1 pages document no such lock, so there the bus
-    /// check is the only guard.
+    /// check is the only guard. In any other state the write also waits
+    /// for torque to be confirmed off
+    /// ([`TorqueUnconfirmed`](Self::TorqueUnconfirmed)).
     #[error("id {}: torque on, {register} not written", id.get())]
     ActuatorIsOn {
+        /// The actuator the write was for.
+        id: Id,
+        /// The EEPROM register's name, as the control table writes it.
+        register: &'static str,
+    },
+
+    /// An EEPROM register was to be written while the bus has not confirmed
+    /// the actuator's torque off, so nothing is sent (plan 2026-11-09 D8).
+    /// Only a Torque Enable = 0 write whose reply shows it ran confirms it
+    /// (`disable_torque()`, also when the reply carries only a hardware
+    /// fault); Setup, an `enable_torque()` that sent bytes, a torque write
+    /// without such a reply, a reboot and a raw write leave it unconfirmed.
+    /// The bus never reads Torque Enable and never writes it on its own.
+    #[error("id {}: torque not confirmed off, {register} not written", id.get())]
+    TorqueUnconfirmed {
         /// The actuator the write was for.
         id: Id,
         /// The EEPROM register's name, as the control table writes it.
@@ -2339,6 +2360,13 @@ mod tests {
                 "id 6: torque on, Max Voltage Limit not written",
             ),
             (
+                ValidationError::TorqueUnconfirmed {
+                    id: id(7),
+                    register: "CCW Angle Limit",
+                },
+                "id 7: torque not confirmed off, CCW Angle Limit not written",
+            ),
+            (
                 ValidationError::ActuatorFaulted { id: id(4) },
                 "id 4: faulted",
             ),
@@ -2839,6 +2867,14 @@ mod tests {
                 }
                 .into(),
                 "disable torque before writing EEPROM",
+            ),
+            (
+                ValidationError::TorqueUnconfirmed {
+                    id: id(1),
+                    register: "Min Voltage Limit",
+                }
+                .into(),
+                "call disable_torque() before writing EEPROM",
             ),
             (
                 ValidationError::ActuatorFaulted { id: id(1) }.into(),

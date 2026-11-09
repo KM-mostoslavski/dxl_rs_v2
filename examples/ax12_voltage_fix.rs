@@ -4,10 +4,12 @@
 //! Setup holds an AX-12A that reports an Input Voltage error `Faulted` instead of failing, and
 //! a read of it returns the measured fault, e.g.
 //! `Fault(Voltage(BelowMin { id: 5, measured: 9.7 V, min: 10.5 V, max: 13.0 V }))`, which
-//! tells whether to lower `DXL_MIN` here or to fix the supply. `set_voltage_limits` then writes
-//! the new minimum beside the maximum the actuator holds, after checking it against the
-//! e-Manual range (5.0-16.0 V) and that maximum, and `clear_fault` asks the actuator whether
-//! its fault is gone.
+//! tells whether to lower `DXL_MIN` here or to fix the supply. `disable_torque` confirms
+//! torque off, which the bus needs before any limit write (on a faulted actuator its reply
+//! carries the fault, which still confirms it), `set_voltage_limits` then writes the new
+//! minimum beside the maximum the actuator holds, after checking it against the e-Manual
+//! range (5.0-16.0 V) and that maximum, and `clear_fault` asks the actuator whether its fault
+//! is gone.
 //!
 //! `DXL_MIN` is in 0.1 V: 90 lowers the limit to 9.0 V (the bottom of the AX-12A operating
 //! range), 105 puts it back to 10.5 V. The value stays in EEPROM until written again.
@@ -114,7 +116,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if (lo.volts() - min.volts()).abs() < 0.05 {
             continue;
         }
-        // Setup writes no torque: the bus holds `Off`, the actuator may still be on.
+        // Setup reads no Torque Enable: the actuator may still be on, and the bus refuses
+        // limit writes until an acknowledged `disable_torque()`. On a faulted actuator its
+        // reply carries the fault, which still confirms torque off.
         tolerate(a.disable_torque(), held_faulted)?;
         tolerate(a.set_voltage_limits(min, hi), held_faulted)?;
         println!("         min limit {:.1} V written", min.volts());

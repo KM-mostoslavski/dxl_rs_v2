@@ -10,14 +10,14 @@
 //! - `DXL_OUTPUT` share of output per direction, in e-Manual steps of about 0.1 % (default
 //!   200, at most 400), `DXL_SPIN_MS` per direction (default 1500).
 //!
-//! Wheel mode is CW Angle Limit = CCW Angle Limit = 0 in EEPROM. With torque off it can be set
-//! through the crate, `a.set_position_limits(zero, zero)` with
-//! `zero = a.position_scale().to_position(0)` (or `a.write_limit(Raw(MinPositionLimit), 0)`
-//! then `a.write_limit(Raw(MaxPositionLimit), 0)`): the bus switches the actuator to wheel mode
-//! on the acknowledged write, with no power cycle and no new Setup. Write
-//! `a.set_speed_limit(SpeedLimit::Unlimited)` first: in wheel mode Moving Speed, the last speed
-//! limit, is the goal velocity the next `enable_torque` drives. This example leaves the limits
-//! alone: actuators in joint mode are listed and skipped.
+//! Wheel mode is CW Angle Limit = CCW Angle Limit = 0 in EEPROM. It can be set through the
+//! crate, `a.set_position_limits(zero, zero)` with `zero = a.position_scale().to_position(0)`
+//! (or `a.write_limit(Raw(MinPositionLimit), 0)` then `a.write_limit(Raw(MaxPositionLimit), 0)`):
+//! the bus switches the actuator to wheel mode on the acknowledged write, with no power cycle
+//! and no new Setup. It takes the write only after `a.disable_torque()` confirmed torque off.
+//! Write `a.set_speed_limit(SpeedLimit::Unlimited)` first: in wheel mode Moving Speed, the last
+//! speed limit, is the goal velocity the next `enable_torque` drives. This example leaves the
+//! limits alone: actuators in joint mode are listed and skipped.
 //!
 //! In wheel mode the e-Manual gives AX and RX Moving Speed as a share of output ("only the
 //! output control is possible, not speed"), not as a velocity: bit 10 is the direction (set =

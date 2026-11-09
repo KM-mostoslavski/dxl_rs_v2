@@ -1,4 +1,5 @@
-//! The one place where replies move a [`TorqueState`] (research R-7, R-10).
+//! The one place where replies move a [`TorqueState`] (research R-7, R-10),
+//! and what they tell of the instruction they answer.
 
 use crate::Transport;
 use crate::actuator::{Actuator, Describe, TorqueState};
@@ -16,6 +17,35 @@ pub(crate) fn is_hardware_fault(err: &Error) -> bool {
 /// Whether `result` carries a reply that reports a hardware fault.
 fn is_fault<V>(result: &Result<V, Error>) -> bool {
     result.as_ref().is_err_and(is_hardware_fault)
+}
+
+/// Whether `status` reports a hardware fault and nothing else: on
+/// Protocol 1 only Input Voltage, Overheating or Overload, on Protocol 2
+/// the alert bit with no error code. The instruction then ran, and the
+/// reply's data is the register's value.
+pub(crate) fn hardware_only(status: &StatusError) -> bool {
+    match status.report {
+        StatusReport::P1(flags) => flags.0 != 0 && flags.0 == flags.hardware().raw(),
+        StatusReport::P2 { alert, code } => alert && code.is_none(),
+    }
+}
+
+/// Whether `result`, an exchange's result before its fault is measured,
+/// shows that the actuator ran the instruction: no error, or a reply
+/// reporting only a hardware fault (plan 2026-11-09 D8).
+pub(crate) fn ran<V>(result: &Result<V, Error>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(Error::Status(status)) => hardware_only(status),
+        Err(_) => false,
+    }
+}
+
+/// Whether `result`, an exchange's result, may come from bytes that
+/// reached the actuator: anything but a request refused before sending.
+pub(crate) fn reached<V>(result: &Result<V, Error>) -> bool {
+    // DECISION: a ValidationError from the wire is a request it refused before a byte (packet too large, Protocol 1 address above 255); every other result counts as reaching the actuator.
+    !matches!(result, Err(Error::Validation(_)))
 }
 
 /// Marks the actuator `Faulted` when `result` is a reply reporting a
@@ -223,6 +253,48 @@ mod tests {
                 assert_eq!(state, end, "{start:?}, {error:?}");
             }
         }
+    }
+
+    /// Plan D8: a reply shows the instruction ran when it reports no error
+    /// or only a hardware fault; anything else, or no reply, does not.
+    #[test]
+    fn ran_is_no_error_or_a_hardware_fault_only() {
+        let yes: [Result<(), Error>; 5] = [
+            Ok(()),
+            p1(P1Flag::InputVoltage),
+            p1(P1Flag::Overheating),
+            status(StatusReport::P1(P1Flags(0x25))),
+            p2(true, None),
+        ];
+        for result in &yes {
+            assert!(ran(result), "{result:?}");
+            assert!(reached(result), "{result:?}");
+        }
+        let no: [Result<(), Error>; 6] = [
+            p1(P1Flag::AngleLimit),
+            status(StatusReport::P1(P1Flags(0x03))),
+            p2(true, Some(P2Code::DataRange)),
+            p2(false, Some(P2Code::Access)),
+            Err(timeout()),
+            Err(malformed()),
+        ];
+        for result in &no {
+            assert!(!ran(result), "{result:?}");
+            assert!(reached(result), "{result:?}");
+        }
+    }
+
+    /// Only a request the wire refused before a byte did not reach the
+    /// actuator.
+    #[test]
+    fn only_a_refused_request_did_not_reach() {
+        let refused: Result<(), Error> = Err(crate::error::ValidationError::AddressOutOfRange {
+            addr: 300,
+            request: Request::NONE,
+        }
+        .into());
+        assert!(!reached(&refused));
+        assert!(!ran(&refused));
     }
 
     #[cfg(any(feature = "x-series", feature = "ax"))]
