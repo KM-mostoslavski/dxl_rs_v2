@@ -21,7 +21,7 @@ use std::f64::consts::PI;
 use std::ops::RangeInclusive;
 
 use super::diagnostic::{Check, Diagnostic};
-use super::schema::{Access, Area, ControlTable, RawRange, Row, Source, UnitEntry};
+use super::schema::{Access, Area, ControlTable, OperatingModes, RawRange, Row, Source, UnitEntry};
 
 /// The `LimitMode` variants, in their `repr(u8)` order.
 pub(crate) const LIMIT_MODES: [&str; 7] = [
@@ -453,25 +453,43 @@ pub(crate) fn check_unit_source(file: &str, table: &ControlTable, errors: &mut V
         Some(Source::Unverified) => fail(Check::UnitSourceUnverified),
         Some(Source::Verified { .. }) => {}
         None => {
-            let per_mode = table.operating_modes.as_ref().is_some_and(|m| {
-                m.current.is_some()
-                    || m.velocity.is_some()
-                    || m.pwm.is_some()
-                    || m.current_position.is_some()
-            });
-            if per_mode {
-                fail(Check::PerModeWithoutUnitSource);
+            let present: Vec<&'static str> = table
+                .operating_modes
+                .as_ref()
+                .map(|m| per_mode_lists(m).0)
+                .unwrap_or_default();
+            if !present.is_empty() {
+                fail(Check::PerModeWithoutUnitSource { present });
             }
             if table.torque_control_mode.is_some() {
                 fail(Check::SwitchWithoutUnitSource);
             }
-            if let Some(row) = table.control_table.iter().find(|r| r.range.is_some()) {
-                fail(Check::RangeWithoutUnitSource {
-                    register: row.data_name.clone(),
-                });
+            for row in &table.control_table {
+                if let Some(range) = row.range {
+                    fail(Check::RangeWithoutUnitSource {
+                        register: row.data_name.clone(),
+                        min: range.min,
+                        max: range.max,
+                    });
+                }
             }
         }
     }
+}
+
+/// The names of the per-mode lists of `values` that are present, then of
+/// those missing.
+fn per_mode_lists(values: &OperatingModes) -> (Vec<&'static str>, Vec<&'static str>) {
+    let (present, missing): (Vec<_>, Vec<_>) = [
+        ("current", values.current.is_some()),
+        ("velocity", values.velocity.is_some()),
+        ("pwm", values.pwm.is_some()),
+        ("current_position", values.current_position.is_some()),
+    ]
+    .into_iter()
+    .partition(|&(_, present)| present);
+    let names = |lists: Vec<(&'static str, bool)>| lists.into_iter().map(|(n, _)| n).collect();
+    (names(present), names(missing))
 }
 
 /// Whether `range`, low end first, fits a `size`-byte register under
@@ -639,8 +657,9 @@ pub(crate) fn check_per_mode(file: &str, table: &ControlTable, errors: &mut Vec<
     let (Some(current), Some(velocity), Some(pwm), Some(current_position)) =
         (lists[0], lists[1], lists[2], lists[3])
     else {
-        if lists.iter().any(|l| l.is_some()) {
-            fail(Check::PerModeIncomplete);
+        let (present, missing) = per_mode_lists(values);
+        if !present.is_empty() {
+            fail(Check::PerModeIncomplete { present, missing });
         }
         return;
     };
@@ -681,6 +700,9 @@ pub(crate) fn torque_switch(
         Some(row) if row.size != 1 || row.access != Access::RW || row.area != Area::Ram => {
             fail(Check::SwitchRegisterAttrs {
                 register: register(),
+                size: row.size,
+                access: row.access,
+                area: row.area,
             });
         }
         Some(row) => match row.range {
@@ -720,6 +742,8 @@ pub(crate) fn torque_switch(
         Some(row) if row.access != Access::RW || row.area != Area::Ram => {
             fail(Check::SwitchGoalAttrs {
                 goal: mode.goal.clone(),
+                access: row.access,
+                area: row.area,
             });
         }
         Some(_) if mode.goal == mode.register => fail(Check::SwitchGoalIsRegister {
@@ -1177,7 +1201,7 @@ mod tests {
         );
         assert_fails(
             Table::ax().row_range("Goal Position", 0, 1023),
-            &["row \"Goal Position\" has a range without unit_source"],
+            &["row \"Goal Position\" has a range (0..=1023) without unit_source"],
         );
         assert_fails(
             Table::xm_fr9().unit_source("Unverified"),
@@ -1368,6 +1392,69 @@ mod tests {
                     r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Goal Torque")"#,
                 ),
             &["only an angle-limit table"],
+        );
+    }
+
+    #[test]
+    fn check18_names_lists_and_every_ranged_row() {
+        fails_with(
+            Table::xm().operating_modes(
+                "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], pwm: [16])",
+            ),
+            Check::PerModeWithoutUnitSource {
+                present: vec!["current", "pwm"],
+            },
+        );
+        let errors = single(Table::ax().row_range("Goal Position", 0, 1023).row_range(
+            "Torque Enable",
+            0,
+            1,
+        ))
+        .errors;
+        for (register, max) in [("Torque Enable", 1), ("Goal Position", 1023)] {
+            fixtures::assert_check(
+                &errors,
+                "t",
+                &Check::RangeWithoutUnitSource {
+                    register: register.into(),
+                    min: 0,
+                    max,
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn check20_incomplete_names_present_and_missing() {
+        fails_with(
+            Table::xm_fr9().operating_modes(
+                "(bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], pwm: [16])",
+            ),
+            Check::PerModeIncomplete {
+                present: vec!["pwm"],
+                missing: vec!["current", "velocity", "current_position"],
+            },
+        );
+    }
+
+    #[test]
+    fn check21_attrs_name_what_was_found() {
+        fails_with(
+            switch(r#"(register: "Moving Speed", on: 1, goal: "Goal Torque")"#),
+            Check::SwitchRegisterAttrs {
+                register: "Moving Speed".into(),
+                size: 2,
+                access: Access::RW,
+                area: Area::Ram,
+            },
+        );
+        fails_with(
+            switch(r#"(register: "Torque Ctrl Mode Enable", on: 1, goal: "Present Position")"#),
+            Check::SwitchGoalAttrs {
+                goal: "Present Position".into(),
+                access: Access::R,
+                area: Area::Ram,
+            },
         );
     }
 

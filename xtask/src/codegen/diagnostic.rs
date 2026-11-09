@@ -125,13 +125,28 @@ pub enum Check {
         model: u16,
         /// The list.
         protocol: ProtocolTag,
+        /// The first table.
+        table: String,
+        /// Its `from_fw`.
+        from_fw: u8,
     },
-    /// Check 2: a list's firmware versions do not strictly increase.
+    /// Check 2: two neighbours of a list whose firmware versions do not
+    /// strictly increase.
     FromFwOrder {
         /// The model number.
         model: u16,
         /// The list.
         protocol: ProtocolTag,
+        /// Every `from_fw` of the list, in order.
+        observed: Vec<u8>,
+        /// The earlier table of the pair.
+        first: String,
+        /// Its `from_fw`.
+        first_fw: u8,
+        /// The later table of the pair.
+        second: String,
+        /// Its `from_fw`.
+        second_fw: u8,
     },
     /// Check 3: a model number with neither list.
     NoLists {
@@ -157,10 +172,14 @@ pub enum Check {
         /// The `default` found.
         found: ProtocolTag,
     },
-    /// Check 4: a `default` beside one list.
+    /// Check 4: a `default` without both lists.
     DefaultWithOneList {
         /// The model number.
         model: u16,
+        /// The `default` found.
+        default: ProtocolTag,
+        /// The one list present, if any.
+        present: Option<ProtocolTag>,
     },
     /// Check 5: a family that is not a Cargo feature.
     UnknownFamily {
@@ -201,7 +220,10 @@ pub enum Check {
         register: String,
     },
     /// Check 10: both position limit forms.
-    BothLimitForms,
+    BothLimitForms {
+        /// The limit rows present.
+        rows: Vec<String>,
+    },
     /// Check 10: neither position limit form.
     MissingLimits,
     /// Check 10: one row of a limit form without the other.
@@ -236,13 +258,10 @@ pub enum Check {
         /// The row's size.
         size: u8,
     },
-    /// Check 12: Model Number's access and area differ from the other
-    /// tables'.
-    ModelNumberAttrs {
-        /// This table's access and area.
-        found: (Access, Area),
-        /// The other tables'.
-        others: (Access, Area),
+    /// Check 12: the tables give Model Number different access and area.
+    ModelNumberAttrsDiffer {
+        /// Each access and area found, with the tables giving it.
+        groups: Vec<((Access, Area), Vec<String>)>,
     },
     /// Check 13: Firmware Version moves between the tables of one model
     /// number and protocol.
@@ -338,13 +357,20 @@ pub enum Check {
     /// Check 18: `unit_source` is `Unverified`.
     UnitSourceUnverified,
     /// Check 18: per-mode lists without `unit_source`.
-    PerModeWithoutUnitSource,
+    PerModeWithoutUnitSource {
+        /// The per-mode lists present.
+        present: Vec<&'static str>,
+    },
     /// Check 18: `torque_control_mode` without `unit_source`.
     SwitchWithoutUnitSource,
     /// Check 18: a row range without `unit_source`.
     RangeWithoutUnitSource {
         /// The row.
         register: String,
+        /// The range's low end.
+        min: i64,
+        /// The range's high end.
+        max: i64,
     },
     /// Check 19: a ranged row whose size has no raw span.
     RowRangeSize {
@@ -470,7 +496,12 @@ pub enum Check {
         bounded_by: String,
     },
     /// Check 20: some of the four per-mode lists without the others.
-    PerModeIncomplete,
+    PerModeIncomplete {
+        /// The lists present.
+        present: Vec<&'static str>,
+        /// The lists missing.
+        missing: Vec<&'static str>,
+    },
     /// Check 20: `current`, `velocity` and `pwm` do not split
     /// `no_position`.
     PerModeSplit {
@@ -495,6 +526,12 @@ pub enum Check {
     SwitchRegisterAttrs {
         /// The switch row's name.
         register: String,
+        /// Its size.
+        size: u8,
+        /// Its access.
+        access: Access,
+        /// Its area.
+        area: Area,
     },
     /// Check 21: the switch row has no range.
     SwitchRegisterNoRange {
@@ -530,6 +567,10 @@ pub enum Check {
     SwitchGoalAttrs {
         /// The goal row's name.
         goal: String,
+        /// Its access.
+        access: Access,
+        /// Its area.
+        area: Area,
     },
     /// Check 21: the goal is the switch row.
     SwitchGoalIsRegister {
@@ -616,6 +657,12 @@ impl fmt::Display for Area {
     }
 }
 
+/// `"a", "b", "c"`.
+fn quoted(names: &[String]) -> String {
+    let names: Vec<String> = names.iter().map(|n| format!("{n:?}")).collect();
+    names.join(", ")
+}
+
 const OPERATING_MODE: &str = "Operating Mode";
 const CONTROL_MODE: &str = "Control Mode";
 
@@ -626,14 +673,27 @@ impl fmt::Display for Check {
     )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FirstFromFw { model, protocol } => write!(
+            Self::FirstFromFw {
+                model,
+                protocol,
+                table,
+                from_fw,
+            } => write!(
                 f,
-                "model {model}: {} from_fw must start at 0",
+                "model {model}: {} from_fw must start at 0, found {from_fw} (table {table})",
                 protocol.list()
             ),
-            Self::FromFwOrder { model, protocol } => write!(
+            Self::FromFwOrder {
+                model,
+                protocol,
+                observed,
+                first,
+                first_fw,
+                second,
+                second_fw,
+            } => write!(
                 f,
-                "model {model}: {} from_fw must strictly increase",
+                "model {model}: {} from_fw must strictly increase, found {observed:?}: {first} at {first_fw}, then {second} at {second_fw}",
                 protocol.list()
             ),
             Self::NoLists { model } => write!(f, "model {model}: no p1 or p2 list"),
@@ -649,9 +709,15 @@ impl fmt::Display for Check {
                 "model {model}: default must be P2, found {}",
                 found.variant()
             ),
-            Self::DefaultWithOneList { model } => write!(
+            Self::DefaultWithOneList {
+                model,
+                default,
+                present,
+            } => write!(
                 f,
-                "model {model}: default is only allowed with both p1 and p2"
+                "model {model}: default is only allowed with both p1 and p2, found default {} with {}",
+                default.variant(),
+                present.map_or_else(|| "no list".to_string(), |p| format!("only {}", p.list()))
             ),
             Self::UnknownFamily { model, family } => write!(
                 f,
@@ -682,8 +748,10 @@ impl fmt::Display for Check {
             Self::MissingRole { register } => {
                 write!(f, "missing role {register} (row {register:?})")
             }
-            Self::BothLimitForms => f.write_str(
-                "both limit forms: Min/Max Position Limit and CW/CCW Angle Limit rows",
+            Self::BothLimitForms { rows } => write!(
+                f,
+                "both limit forms: Min/Max Position Limit and CW/CCW Angle Limit rows, found {}",
+                quoted(rows)
             ),
             Self::MissingLimits => f.write_str(
                 "missing role position limits (rows \"Min Position Limit\" and \"Max Position Limit\", or \"CW Angle Limit\" and \"CCW Angle Limit\")",
@@ -714,11 +782,19 @@ impl fmt::Display for Check {
                 f,
                 "Model Number must be at address 0, size 2, found address {address}, size {size}"
             ),
-            Self::ModelNumberAttrs { found, others } => write!(
-                f,
-                "Model Number is {}/{} here but {}/{} in the other tables",
-                found.0, found.1, others.0, others.1
-            ),
+            Self::ModelNumberAttrsDiffer { groups } => {
+                let groups: Vec<String> = groups
+                    .iter()
+                    .map(|((access, area), tables)| {
+                        format!("{access}/{area} in {}", tables.join(", "))
+                    })
+                    .collect();
+                write!(
+                    f,
+                    "Model Number access/area differ across tables: {}",
+                    groups.join("; ")
+                )
+            }
             Self::FirmwareVersionMoves {
                 model,
                 protocol,
@@ -796,15 +872,18 @@ impl fmt::Display for Check {
             Self::UnitSourceUnverified => {
                 f.write_str("unit_source must be Verified(url, verified), found Unverified")
             }
-            Self::PerModeWithoutUnitSource => {
-                f.write_str("per-mode operating_modes lists without unit_source")
-            }
+            Self::PerModeWithoutUnitSource { present } => write!(
+                f,
+                "per-mode operating_modes lists without unit_source: {}",
+                present.join(", ")
+            ),
             Self::SwitchWithoutUnitSource => {
                 f.write_str("torque_control_mode without unit_source")
             }
-            Self::RangeWithoutUnitSource { register } => {
-                write!(f, "row {register:?} has a range without unit_source")
-            }
+            Self::RangeWithoutUnitSource { register, min, max } => write!(
+                f,
+                "row {register:?} has a range ({min}..={max}) without unit_source"
+            ),
             Self::RowRangeSize {
                 register,
                 size,
@@ -894,8 +973,11 @@ impl fmt::Display for Check {
                 f,
                 "unit_info {register:?}: bounded_by {bounded_by:?} names no row"
             ),
-            Self::PerModeIncomplete => f.write_str(
-                "operating_modes: current, velocity, pwm and current_position come all together or not at all",
+            Self::PerModeIncomplete { present, missing } => write!(
+                f,
+                "operating_modes: current, velocity, pwm and current_position come all together or not at all, found {} without {}",
+                present.join(", "),
+                missing.join(", ")
             ),
             Self::PerModeSplit { split, no_position } => write!(
                 f,
@@ -911,9 +993,15 @@ impl fmt::Display for Check {
             Self::SwitchRegisterNoRow { register } => {
                 write!(f, "torque_control_mode: register {register:?} names no row")
             }
-            Self::SwitchRegisterAttrs { register } => write!(
+            Self::SwitchRegisterAttrs {
+                register,
+                size,
+                access,
+                area,
+            } => write!(
                 f,
-                "torque_control_mode: register {register:?} must be 1 byte RW/RAM"
+                "torque_control_mode: register {register:?} must be 1 byte RW/RAM, found {size} byte{} {access}/{area}",
+                if *size == 1 { "" } else { "s" }
             ),
             Self::SwitchRegisterNoRange { register } => {
                 write!(f, "torque_control_mode: register {register:?} has no range")
@@ -934,9 +1022,10 @@ impl fmt::Display for Check {
             Self::SwitchGoalNoRow { goal } => {
                 write!(f, "torque_control_mode: goal {goal:?} names no row")
             }
-            Self::SwitchGoalAttrs { goal } => {
-                write!(f, "torque_control_mode: goal {goal:?} must be RW/RAM")
-            }
+            Self::SwitchGoalAttrs { goal, access, area } => write!(
+                f,
+                "torque_control_mode: goal {goal:?} must be RW/RAM, found {access}/{area}"
+            ),
             Self::SwitchGoalIsRegister { register } => write!(
                 f,
                 "torque_control_mode: goal and register are the same row {register:?}"

@@ -164,7 +164,7 @@ pub(crate) struct Resolved {
     /// By model number, P1 before P2.
     pub(crate) lookups: Vec<LookupList>,
     /// The access and area every table gives Model Number, `None` with no
-    /// model.
+    /// model or when the tables differ (check 12).
     pub(crate) model_number: Option<(Access, Area)>,
 }
 
@@ -217,7 +217,15 @@ fn check_lists(number: u16, entry: &ModelEntry, errors: &mut Vec<Diagnostic>) {
     match (entry.p1.is_some() && entry.p2.is_some(), entry.default) {
         (true, None) => fail(Check::DefaultMissing { model }),
         (true, Some(found @ ProtocolTag::P1)) => fail(Check::DefaultNotP2 { model, found }),
-        (false, Some(_)) => fail(Check::DefaultWithOneList { model }),
+        (false, Some(default)) => fail(Check::DefaultWithOneList {
+            model,
+            default,
+            present: match (&entry.p1, &entry.p2) {
+                (Some(_), _) => Some(ProtocolTag::P1),
+                (None, Some(_)) => Some(ProtocolTag::P2),
+                (None, None) => None,
+            },
+        }),
         _ => {}
     }
 }
@@ -397,28 +405,39 @@ pub(crate) fn resolve(
     out
 }
 
-/// Check 2: each list starts at firmware 0 and strictly increases.
+/// Check 2: each list starts at firmware 0 and strictly increases; one
+/// diagnostic per pair out of order.
 fn check_order(
     number: u16,
     protocol: ProtocolTag,
     list: &[TableRef],
     errors: &mut Vec<Diagnostic>,
 ) {
-    if list.first().is_some_and(|first| first.from_fw != 0) {
+    if let Some(first) = list.first()
+        && first.from_fw != 0
+    {
         errors.push(Diagnostic::new(
             "dynamixel",
             Check::FirstFromFw {
                 model: number,
                 protocol,
+                table: first.file.clone(),
+                from_fw: first.from_fw,
             },
         ));
     }
-    if list.windows(2).any(|w| w[0].from_fw >= w[1].from_fw) {
+    let observed: Vec<u8> = list.iter().map(|t| t.from_fw).collect();
+    for pair in list.windows(2).filter(|w| w[0].from_fw >= w[1].from_fw) {
         errors.push(Diagnostic::new(
             "dynamixel",
             Check::FromFwOrder {
                 model: number,
                 protocol,
+                observed: observed.clone(),
+                first: pair[0].file.clone(),
+                first_fw: pair[0].from_fw,
+                second: pair[1].file.clone(),
+                second_fw: pair[1].from_fw,
             },
         ));
     }
@@ -549,7 +568,12 @@ fn limits<'a>(
     let cw_ccw = pair("CW Angle Limit", "CCW Angle Limit");
     let present = |p: (Option<&Row>, Option<&Row>)| p.0.is_some() || p.1.is_some();
     if present(min_max) && present(cw_ccw) {
-        errors.push(Diagnostic::new(file, Check::BothLimitForms));
+        let rows = [min_max.0, min_max.1, cw_ccw.0, cw_ccw.1]
+            .into_iter()
+            .flatten()
+            .map(|row| row.data_name.clone())
+            .collect();
+        errors.push(Diagnostic::new(file, Check::BothLimitForms { rows }));
         return None;
     }
     match (min_max, cw_ccw) {
@@ -659,9 +683,10 @@ fn check_scale(file: &str, scale: &TypeInfo, errors: &mut Vec<Diagnostic>) {
 }
 
 /// Check 12: Model Number at (0, 2) in every table, with one access and
-/// area. Returns the agreed access and area.
+/// area. Returns that access and area, or `None` with no model or when the
+/// tables differ.
 fn check_model_number(models: &[GenModel], errors: &mut Vec<Diagnostic>) -> Option<(Access, Area)> {
-    let mut counts: BTreeMap<(Access, Area), usize> = BTreeMap::new();
+    let mut groups: BTreeMap<(Access, Area), Vec<String>> = BTreeMap::new();
     for model in models {
         let row = &model.roles.model_number;
         if (row.address, row.size) != (0, 2) {
@@ -673,22 +698,23 @@ fn check_model_number(models: &[GenModel], errors: &mut Vec<Diagnostic>) -> Opti
                 },
             ));
         }
-        *counts.entry((row.access, row.area)).or_default() += 1;
+        groups
+            .entry((row.access, row.area))
+            .or_default()
+            .push(model.file.clone());
     }
-    let (&(access, area), _) = counts.iter().max_by_key(|&(_, &n)| n)?;
-    for model in models {
-        let row = &model.roles.model_number;
-        if (row.access, row.area) != (access, area) {
-            errors.push(Diagnostic::new(
-                model.file.as_str(),
-                Check::ModelNumberAttrs {
-                    found: (row.access, row.area),
-                    others: (access, area),
-                },
-            ));
-        }
+    if groups.len() > 1 {
+        // DECISION: one diagnostic on the map listing every table's value,
+        // not a majority vote blaming the fewest: no table is known right.
+        errors.push(Diagnostic::new(
+            "dynamixel",
+            Check::ModelNumberAttrsDiffer {
+                groups: groups.into_iter().collect(),
+            },
+        ));
+        return None;
     }
-    Some((access, area))
+    groups.into_keys().next()
 }
 
 /// Check 13: one Firmware Version location across the tables of one
@@ -769,8 +795,18 @@ fn check_p1_addresses(model: &GenModel, errors: &mut Vec<Diagnostic>) {
 mod tests {
     use super::*;
     use crate::codegen::diagnostic::Cause;
-    use crate::codegen::fixtures::{Map, Table, outcome};
+    use crate::codegen::fixtures::{Map, Table, assert_check, outcome};
     use crate::codegen::schema::{OperatingModes, parse_table_str};
+
+    #[track_caller]
+    fn fails_with(table: Table, check: Check) {
+        assert_check(&single(table).errors, "t", &check);
+    }
+
+    #[track_caller]
+    fn map_fails_with(map: &Map, tables: &[(&str, Table)], file: &str, check: Check) {
+        assert_check(&outcome(map, tables).errors, file, &check);
+    }
 
     fn single(table: Table) -> Outcome {
         let map = Map::single(1020, "x-series", "T", "t", &table);
@@ -1247,29 +1283,6 @@ mod tests {
     }
 
     #[test]
-    fn check12_model_number_access() {
-        assert_map_fails(
-            &Map::new()
-                .model(12, "ax", "A")
-                .p1(&[(0, "a")])
-                .model(18, "ax", "B")
-                .p1(&[(0, "b")])
-                .model(300, "ax", "C")
-                .p1(&[(0, "c")]),
-            &[
-                ("a", Table::ax()),
-                ("b", Table::ax()),
-                (
-                    "c",
-                    replaced(Table::ax(), (0, 2, "Model Number", "RW", "EEPROM")),
-                ),
-            ],
-            "c",
-            &["Model Number is RW/EEPROM here but R/EEPROM in the other tables"],
-        );
-    }
-
-    #[test]
     fn check13_firmware_version_moves() {
         assert_map_fails(
             &Map::new()
@@ -1362,6 +1375,134 @@ mod tests {
                 "expected ax, mx, rx, x-series, y-series, pro",
             ],
         );
+    }
+
+    #[test]
+    fn check02_names_the_offending_values() {
+        map_fails_with(
+            &Map::new().model(1190, "x-series", "X").p2(&[(1, "a")]),
+            &[("a", p2(Table::xm()))],
+            "dynamixel",
+            Check::FirstFromFw {
+                model: 1190,
+                protocol: ProtocolTag::P2,
+                table: "a".into(),
+                from_fw: 1,
+            },
+        );
+        let errors = outcome(
+            &Map::new().model(1190, "x-series", "X").p2(&[
+                (0, "a"),
+                (60, "b"),
+                (53, "c"),
+                (53, "d"),
+            ]),
+            &[
+                ("a", p2(Table::xm())),
+                ("b", p2(Table::xm())),
+                ("c", p2(Table::xm())),
+                ("d", p2(Table::xm())),
+            ],
+        )
+        .errors;
+        for (first, first_fw, second, second_fw) in [("b", 60, "c", 53), ("c", 53, "d", 53)] {
+            assert_check(
+                &errors,
+                "dynamixel",
+                &Check::FromFwOrder {
+                    model: 1190,
+                    protocol: ProtocolTag::P2,
+                    observed: vec![0, 60, 53, 53],
+                    first: first.into(),
+                    first_fw,
+                    second: second.into(),
+                    second_fw,
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn check04_default_with_one_list_names_it() {
+        map_fails_with(
+            &Map::new()
+                .model(1020, "x-series", "X")
+                .p2(&[(0, "xm")])
+                .default_p2(),
+            &[("xm", p2(Table::xm()))],
+            "dynamixel",
+            Check::DefaultWithOneList {
+                model: 1020,
+                default: ProtocolTag::P2,
+                present: Some(ProtocolTag::P2),
+            },
+        );
+        map_fails_with(
+            &Map::new().model(1020, "x-series", "X").default_p1(),
+            &[],
+            "dynamixel",
+            Check::DefaultWithOneList {
+                model: 1020,
+                default: ProtocolTag::P1,
+                present: None,
+            },
+        );
+    }
+
+    #[test]
+    fn check10_both_limit_forms_names_the_rows() {
+        fails_with(
+            Table::xm().with_row(6, 2, "CW Angle Limit", "RW", "EEPROM"),
+            Check::BothLimitForms {
+                rows: vec![
+                    "Min Position Limit".into(),
+                    "Max Position Limit".into(),
+                    "CW Angle Limit".into(),
+                ],
+            },
+        );
+    }
+
+    #[test]
+    fn check12_lists_each_tables_model_number_attrs() {
+        let rw = || replaced(Table::ax(), (0, 2, "Model Number", "RW", "EEPROM"));
+        map_fails_with(
+            &Map::new()
+                .model(12, "ax", "A")
+                .p1(&[(0, "a")])
+                .model(18, "ax", "B")
+                .p1(&[(0, "b")])
+                .model(300, "ax", "C")
+                .p1(&[(0, "c")]),
+            &[("a", Table::ax()), ("b", Table::ax()), ("c", rw())],
+            "dynamixel",
+            Check::ModelNumberAttrsDiffer {
+                groups: vec![
+                    ((Access::R, Area::Eeprom), vec!["a".into(), "b".into()]),
+                    ((Access::RW, Area::Eeprom), vec!["c".into()]),
+                ],
+            },
+        );
+        let out = outcome(
+            &Map::new()
+                .model(12, "ax", "A")
+                .p1(&[(0, "a")])
+                .model(18, "ax", "B")
+                .p1(&[(0, "b")]),
+            &[("a", rw()), ("b", Table::ax())],
+        );
+        assert_eq!(out.errors.len(), 1, "{:?}", out.errors);
+        assert_check(
+            &out.errors,
+            "dynamixel",
+            &Check::ModelNumberAttrsDiffer {
+                groups: vec![
+                    ((Access::R, Area::Eeprom), vec!["b".into()]),
+                    ((Access::RW, Area::Eeprom), vec!["a".into()]),
+                ],
+            },
+        );
+        assert_eq!(out.resolved.model_number, None);
     }
 
     #[test]
