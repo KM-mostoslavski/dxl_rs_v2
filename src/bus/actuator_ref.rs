@@ -3,7 +3,7 @@
 use core::time::Duration;
 
 use crate::Transport;
-use crate::actuator::{Actuator, Cache, Describe, ModelData, TorqueState};
+use crate::actuator::{Actuator, Cache, Describe, ModelData, OperatingMode, TorqueState};
 use crate::error::{Error, StatusError, StatusReport};
 use crate::field::{
     AccelerationLimit, CurrentLimit, DGain, GoalCurrent, GoalPosition, GoalVelocity,
@@ -105,8 +105,11 @@ fn poke<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) {
 /// since that may turn torque on), checked against the e-Manual range
 /// where the table records one and, for a pair, its order. The bus follows
 /// each write: goals are then checked against the new position limits,
-/// limit mode and goal bound. ID, baud rate and the registers of one series
-/// stay raw (`raw-registers`).
+/// limit mode and goal bound. The operating mode is set the same way, with
+/// [`set_operating_mode`](ActuatorRef::set_operating_mode), and goals then
+/// follow the new mode; [`operating_mode`](ActuatorRef::operating_mode)
+/// reads it. ID, baud rate and the registers of one series stay raw
+/// (`raw-registers`).
 #[cfg_attr(
     all(feature = "mock", feature = "rx"),
     doc = r#"
@@ -350,12 +353,14 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// The angle is converted to the nearest tick, then checked like
     /// [`set_goal_position_raw`](Self::set_goal_position_raw).
     ///
-    /// Limits and operating mode are those read at Setup. Position mode
+    /// Limits and operating mode are those read at Setup, or written since
+    /// through the bus ([`set_position_limits`](Self::set_position_limits),
+    /// [`set_operating_mode`](Self::set_operating_mode)). Position mode
     /// applies the EEPROM limits. Extended and current-based position modes
     /// and MX multi-turn apply none, as the firmware does; only the register
     /// size is checked. Velocity, current, PWM and wheel modes refuse every
-    /// goal (`NotPositionMode`). A mode changed after Setup is not seen until
-    /// the next Setup.
+    /// goal (`NotPositionMode`). A mode changed otherwise (a raw write,
+    /// another program) is not seen until the next Setup.
     ///
     /// # Errors
     ///
@@ -380,12 +385,14 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// Sends goal position `raw`, in ticks: one acknowledged write of Goal
     /// Position, no read-back.
     ///
-    /// Limits and operating mode are those read at Setup. Position mode
+    /// Limits and operating mode are those read at Setup, or written since
+    /// through the bus ([`set_position_limits`](Self::set_position_limits),
+    /// [`set_operating_mode`](Self::set_operating_mode)). Position mode
     /// applies the EEPROM limits. Extended and current-based position modes
     /// and MX multi-turn apply none, as the firmware does; only the register
     /// size is checked. Velocity, current, PWM and wheel modes refuse every
-    /// goal (`NotPositionMode`). A mode changed after Setup is not seen until
-    /// the next Setup.
+    /// goal (`NotPositionMode`). A mode changed otherwise (a raw write,
+    /// another program) is not seen until the next Setup.
     ///
     /// # Errors
     ///
@@ -1141,6 +1148,118 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         self.read(ReturnDelayTime)
     }
 
+    /// Sets the operating mode: one acknowledged write of the mode register
+    /// (Operating Mode, XL-320 Control Mode), with torque confirmed off,
+    /// then, in a mode that bounds its goal, one read of that bound.
+    ///
+    /// The value written is the one the model's control table lists for
+    /// `mode` ([`OperatingMode`]); a mode it lists no single value for is
+    /// refused. Checked as [`write_setting`](Self::write_setting) checks a
+    /// setting, before a byte is sent: the model has a mode register, then
+    /// torque is confirmed off, then the mode has its value. AX, RX and MX
+    /// on Protocol 1 have no mode register: their mode follows the angle
+    /// limits, so [`set_position_limits`](Self::set_position_limits)
+    /// switches them between joint, wheel (both limits 0) and, on MX,
+    /// multi-turn mode.
+    ///
+    /// The bus follows the write as Setup would have read the new mode.
+    /// Acknowledged, goals are checked in the new mode from then on
+    /// ([`limit_mode`](Actuator::limit_mode)); a mode that bounds its goal
+    /// (velocity: Velocity Limit; current and current-based position:
+    /// Current Limit) then reads that bound once, where the table has the
+    /// register, and checks goals against it
+    /// ([`goal_bound_raw`](Self::goal_bound_raw)): that read is part of
+    /// this call. If the read fails, the mode is set and recorded but the
+    /// bound is unknown: goals it bounds are refused with
+    /// [`LimitsUnknown`] until the next Setup or an acknowledged write of
+    /// the bound ([`set_velocity_limit`](Self::set_velocity_limit),
+    /// [`set_current_limit`](Self::set_current_limit)), and the call
+    /// returns the read's error. A write that fails once bytes went out
+    /// (no reply, a corrupted one, a hardware fault) leaves the mode
+    /// unknown: every goal is refused with [`LimitsUnknown`] until an
+    /// acknowledged `set_operating_mode` or the next Setup. The position
+    /// limits the bus holds do not change.
+    ///
+    /// The firmware resets other registers on a mode change (XM430-W350
+    /// Operating Mode(11),
+    /// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>): "value of
+    /// Gains, such as Velocity PI(76, 78); Position PID(80, 82, 84);
+    /// Feedforward(88, 90), will be reset fitting to a selected Operating
+    /// Mode(11)"; Profile Velocity(112) and Profile Acceleration(108) are
+    /// reset to 0; "The Goal PWM(100) and Goal Current(102) are reset to
+    /// the value of PWM Limit(36) and Current Limit(38) respectively"; in
+    /// Current-based Position Control Mode, Position PID(80, 82, 84) and
+    /// PWM Limit(36) are reset too. Write gains and profiles again after
+    /// the call, where they matter.
+    ///
+    /// Every other goal register keeps its last value, and the actuator
+    /// acts on its goals as soon as torque is on: in current mode
+    /// [`enable_torque`](Self::enable_torque) drives Goal Current, now
+    /// Current Limit; in velocity mode, the last Goal Velocity. The typed
+    /// goal setters need torque on ([`ActuatorIsOff`]), so to start from a
+    /// goal of your own, write it before `enable_torque` with `write_raw`
+    /// (`raw-registers`), or set the bound it starts from first
+    /// ([`set_current_limit`](Self::set_current_limit) before switching to
+    /// current mode).
+    ///
+    /// ```
+    /// use dxl_rs_v2::{ActuatorRef, Clock, Error, OperatingMode, P2, Transport, Velocity};
+    ///
+    /// fn spin<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) -> Result<(), Error> {
+    ///     xm.disable_torque()?;
+    ///     xm.set_operating_mode(OperatingMode::Velocity)?;
+    ///     xm.enable_torque()?;
+    ///     xm.set_goal_velocity(Velocity::from_rad_per_s(1.0))
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Refused with nothing sent:
+    /// - [`Unsupported`]: no mode register (AX, RX, MX on Protocol 1),
+    ///   naming Operating Mode.
+    /// - [`ActuatorIsOn`]: torque is [`On`](TorqueState::On).
+    /// - [`TorqueUnconfirmed`]: torque is not `On`, but not confirmed off
+    ///   either: call [`disable_torque`](Self::disable_torque) first.
+    /// - [`UnsupportedMode`]: the table lists no single value for `mode`:
+    ///   the model lacks it, or the table does not single it out yet.
+    ///
+    /// Otherwise any error of the write, or of the bound read after an
+    /// acknowledged write; a reply reporting a hardware fault marks the
+    /// actuator `Faulted`.
+    ///
+    /// [`Unsupported`]: crate::ValidationError::Unsupported
+    /// [`ActuatorIsOn`]: crate::ValidationError::ActuatorIsOn
+    /// [`ActuatorIsOff`]: crate::ValidationError::ActuatorIsOff
+    /// [`TorqueUnconfirmed`]: crate::ValidationError::TorqueUnconfirmed
+    /// [`UnsupportedMode`]: crate::ValidationError::UnsupportedMode
+    /// [`LimitsUnknown`]: crate::ValidationError::LimitsUnknown
+    pub fn set_operating_mode(&mut self, mode: OperatingMode) -> Result<(), Error> {
+        let write = super::mode::check_mode(self.kind, (*self.state, *self.marks), mode)?;
+        self.send_mode(write)
+    }
+
+    /// Reads the operating mode: one read of the mode register (Operating
+    /// Mode, XL-320 Control Mode), mapped back to the [`OperatingMode`]
+    /// whose value the control table lists. Never cached: the limit mode
+    /// the bus checks goals in ([`limit_mode`](Actuator::limit_mode)) does
+    /// not change.
+    ///
+    /// # Errors
+    ///
+    /// - [`Unsupported`] with nothing sent: no mode register (AX, RX, MX on
+    ///   Protocol 1), naming Operating Mode.
+    /// - Any error of the read; a reply reporting a hardware fault marks
+    ///   the actuator `Faulted`.
+    /// - [`UnlistedMode`]: the value read is the value of no named mode in
+    ///   the table, carried in the error.
+    ///
+    /// [`Unsupported`]: crate::ValidationError::Unsupported
+    /// [`UnlistedMode`]: crate::ValidationError::UnlistedMode
+    pub fn operating_mode(&mut self) -> Result<OperatingMode, Error> {
+        self.read_mode()
+    }
+
     /// Reads and decodes `reg`, the actuator's fault report, as
     /// [`read_reg`](Self::read_reg) does, except that a reply whose only
     /// error is the Protocol 2 alert bit returns the non-zero value it
@@ -1166,7 +1285,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// Reads and decodes `reg`; a hardware fault in the reply marks the
     /// actuator `Faulted`.
-    fn read_reg(&mut self, reg: crate::register::Register) -> Result<i32, Error> {
+    pub(super) fn read_reg(&mut self, reg: crate::register::Register) -> Result<i32, Error> {
         let result = self.wire.read_value(self.kind.id(), reg);
         let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);

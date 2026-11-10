@@ -20,13 +20,14 @@
 //! - Torque starts off. A goal is refused while torque is off or the
 //!   actuator is faulted, and every refusal is decided before any byte is
 //!   sent.
-//! - Goals follow the limits and operating mode read at Setup: position
-//!   mode applies the EEPROM limits, extended position modes only the
-//!   register size, and other modes refuse goal positions. Goal velocities
-//!   need velocity or wheel mode and stay within the Velocity Limit, goal
-//!   currents need a current mode and stay within the Current Limit, both
-//!   read at Setup. LED, speed limit and gains move nothing and are
-//!   written with torque off too.
+//! - Goals follow the limits and operating mode read at Setup, or written
+//!   since through the bus: position mode applies the EEPROM limits,
+//!   extended position modes only the register size, and other modes
+//!   refuse goal positions. Goal velocities need velocity or wheel mode and
+//!   stay within the Velocity Limit, goal currents need a current mode and
+//!   stay within the Current Limit, both read at Setup or with the mode.
+//!   LED, speed limit and gains move nothing and are written with torque
+//!   off too.
 //! - An EEPROM limit is written only once the bus has confirmed torque
 //!   off: an acknowledged `disable_torque()` since Setup, with no
 //!   `enable_torque()`, reboot or raw write after it. It is one
@@ -108,6 +109,9 @@ mod id_set;
 #[cfg(test)]
 mod limit_tests;
 mod limits;
+mod mode;
+#[cfg(test)]
+mod mode_tests;
 mod model_ref;
 mod multi;
 mod observe;

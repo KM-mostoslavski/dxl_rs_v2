@@ -59,7 +59,7 @@ impl Checked {
 /// cleared to '0'", <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>,
 /// 2026-11-09); the AX, RX and MX Protocol 1 pages document no such lock
 /// (Lock(47) locks their EEPROM), so there this check is the only guard.
-fn check_off(
+pub(super) fn check_off(
     id: crate::Id,
     state: TorqueState,
     marks: Marks,
@@ -255,7 +255,7 @@ fn joined<'o>(
 /// The EEPROM register that bounds the goal `kind`'s recorded mode uses
 /// (Velocity Limit in velocity mode, Current Limit in a current mode), if
 /// its table records one.
-fn bound_register(kind: &ActuatorKind) -> Option<Register> {
+pub(super) fn bound_register(kind: &ActuatorKind) -> Option<Register> {
     fields::bounded_goal(kind.cache().mode())
         .and_then(|role| kind.data().role(role))
         .and_then(|goal| goal.bounded_by())
@@ -347,7 +347,7 @@ fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bo
 impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// Writes `bytes` to `reg`: one acknowledged write, its reply through
     /// the fault check.
-    fn exchange(&mut self, reg: Register, bytes: &[u8]) -> Result<(), Error> {
+    pub(super) fn exchange(&mut self, reg: Register, bytes: &[u8]) -> Result<(), Error> {
         let result = self.wire.write(self.kind.id(), reg, bytes);
         let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);

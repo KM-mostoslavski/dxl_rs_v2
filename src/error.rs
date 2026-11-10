@@ -10,7 +10,7 @@
 use core::fmt;
 
 use crate::Id;
-use crate::actuator::LimitMode;
+use crate::actuator::{LimitMode, OperatingMode};
 use crate::bus::IdSet;
 use crate::protocol::ProtocolVersion;
 use crate::units::HardwareErrors;
@@ -201,6 +201,13 @@ impl Error {
             Self::Validation(V::ActuatorFaulted { .. }) => "clear the fault before enabling torque",
             Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
             Self::Validation(V::NoUnit { .. }) => "use the register's raw form",
+            Self::Validation(V::UnsupportedMode { .. }) => {
+                "the model lacks this mode, or its control table does not list it yet"
+            }
+            Self::Validation(V::UnlistedMode { .. }) => {
+                "its control table names no mode for this value; \
+                 set_operating_mode() sets one it names"
+            }
             _ => return None,
         })
     }
@@ -599,7 +606,8 @@ impl fmt::Display for FeatureHint {
     }
 }
 
-/// A value rejected before anything was sent on the bus.
+/// A value rejected before anything was sent on the bus, or a value read
+/// back that has no typed form.
 ///
 /// Variants may be added later, so a `match` outside the crate needs a `_`
 /// arm:
@@ -629,6 +637,8 @@ impl fmt::Display for FeatureHint {
 ///         | V::Unsupported { .. }
 ///         | V::NoUnit { .. }
 ///         | V::UnsupportedInstruction { .. }
+///         | V::UnsupportedMode { .. }
+///         | V::UnlistedMode { .. }
 ///         | V::InvalidSlopeStep { .. } => false,
 ///     }
 /// }
@@ -904,6 +914,36 @@ pub enum ValidationError {
         id: Id,
         /// The instruction's e-Manual name, e.g. `"Bulk Read"`.
         instruction: &'static str,
+    },
+
+    /// An operating mode was to be set that the actuator's control table
+    /// lists no single value for: the model lacks the mode (MX-28(2.0) has
+    /// no current control), or its table does not single the mode out yet
+    /// (a table without per-mode lists), so nothing is sent (plan
+    /// 2026-11-10 S3). No value is guessed. Models without a mode register
+    /// (AX, RX, MX on Protocol 1) return
+    /// [`Unsupported`](Self::Unsupported) instead.
+    #[error("id {}: {mode:?} mode not supported", id.get())]
+    UnsupportedMode {
+        /// The actuator the call was for.
+        id: Id,
+        /// The mode that was asked for.
+        mode: OperatingMode,
+    },
+
+    /// The actuator's mode register, read back, holds a value its control
+    /// table lists for no [`OperatingMode`] (plan 2026-11-10 S3): a mode
+    /// the table does not single out, or a value it does not list at all.
+    /// The read was sent; no mode is guessed.
+    #[error("id {}: {register} {value} matches no OperatingMode", id.get())]
+    UnlistedMode {
+        /// The actuator that was read.
+        id: Id,
+        /// The mode register's name, as the control table writes it
+        /// (`"Operating Mode"`, XL-320 `"Control Mode"`).
+        register: &'static str,
+        /// The value it holds.
+        value: u8,
     },
 }
 
@@ -2464,6 +2504,21 @@ mod tests {
                 },
                 "id 3: no Bulk Read instruction",
             ),
+            (
+                ValidationError::UnsupportedMode {
+                    id: id(9),
+                    mode: OperatingMode::ExtendedPosition,
+                },
+                "id 9: ExtendedPosition mode not supported",
+            ),
+            (
+                ValidationError::UnlistedMode {
+                    id: id(6),
+                    register: "Control Mode",
+                    value: 7,
+                },
+                "id 6: Control Mode 7 matches no OperatingMode",
+            ),
         ];
         for (err, msg) in cases {
             assert_eq!(text(err), msg);
@@ -2925,6 +2980,24 @@ mod tests {
                 }
                 .into(),
                 "use the register's raw form",
+            ),
+            (
+                ValidationError::UnsupportedMode {
+                    id: id(1),
+                    mode: OperatingMode::Current,
+                }
+                .into(),
+                "the model lacks this mode, or its control table does not list it yet",
+            ),
+            (
+                ValidationError::UnlistedMode {
+                    id: id(1),
+                    register: "Operating Mode",
+                    value: 2,
+                }
+                .into(),
+                "its control table names no mode for this value; \
+                 set_operating_mode() sets one it names",
             ),
         ];
         for (err, hint) in cases {
