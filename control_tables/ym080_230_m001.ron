@@ -337,7 +337,7 @@
       access: RW,
       area: EEPROM,
     },
-    // DECISION: Max/Min Position Limit(76, 84) carry the page range on the row and no unit_info entry: the page gives 1 [pulse], and xtask check 22 converts a limit through type_info and takes only an angle unit there.
+    // DECISION: Max/Min Position Limit(76, 84) carry the page range on the row and no unit_info entry: the page gives 1 [pulse], one type_info tick, which xtask check 22 converts a limit through, so the row range is all the role needs.
     {
       address: 76,
       size: 4,

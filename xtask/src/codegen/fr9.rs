@@ -25,7 +25,8 @@
 //! raw range is the e-Manual range of its row, from the row's own range or
 //! else its `unit_info` entry. Check 22 refuses a verified table whose limit
 //! row gives no range, a range that does not contain the table's position
-//! range (`type_info`), a unit that is not an angle, or a step more than
+//! range (`type_info`), a unit that is neither an angle nor `pulse` (one
+//! `type_info` tick, as PRO, P and Y pages give it), or a step more than
 //! 5 % off the `type_info` step. A limit range may be wider than one turn
 //! (Y series: "within the servo's 32-bit range of motion").
 //!
@@ -1025,8 +1026,8 @@ pub(crate) fn load_full_magnitude(
 /// of its `unit_info` entry. Check 22: the table gives one; every range it
 /// gives for the row contains the table's position range (`type_info`),
 /// which its `Position` converts through, and agrees with the others; every
-/// `unit_info` entry of the row has a unit of angle and about the
-/// `type_info` step.
+/// `unit_info` entry of the row has a unit of angle or `pulse` and about
+/// the `type_info` step.
 fn position_range(
     file: &str,
     table: &ControlTable,
@@ -1051,7 +1052,12 @@ fn position_range(
         .iter()
         .filter(|e| e.data_name == row.data_name)
     {
-        let Some(factor) = def.quantity.factor(&entry.unit) else {
+        // DECISION: "1 [pulse]" is one type_info tick, as for Homing Offset: PRO, P and Y pages give Min/Max Position Limit in pulses (PH42-020-S300-R, YM070-210-M001), the tick Goal Position counts in.
+        let factor = match entry.unit.as_str() {
+            "pulse" => Some(step),
+            unit => def.quantity.factor(unit),
+        };
+        let Some(factor) = factor else {
             fail(format!(
                 "unit_info {:?}: unit {:?} is not the {} role's quantity ({:?})",
                 entry.data_name, entry.unit, def.field, def.quantity
@@ -1914,6 +1920,31 @@ mod tests {
         assert_eq!(
             by_field(&from_unit.typed)["min_position_limit"].row_range,
             Some((0, 1023))
+        );
+    }
+
+    /// PH42-020-S300-R Max/Min Position Limit(48, 52): "1 [pulse]",
+    /// -303,750 ~ 303,750
+    /// (<https://emanual.robotis.com/docs/en/dxl/p/ph42-020-s300-r/>,
+    /// 2026-11-10): a limit given in pulses has one `type_info` tick per
+    /// step, so its range is the role's range.
+    #[test]
+    fn check22_position_limit_in_pulse() {
+        let pulse = model(
+            Table::xm_fr9().without_range("Min Position Limit").unit(
+                r#"data_name: "Min Position Limit", value: 1.0, unit: "pulse", sign_type: "unsigned", range: (min: 0, max: 4095)"#,
+            ),
+        );
+        let limit = by_field(&pulse.typed)["min_position_limit"];
+        assert_eq!(limit.row_range, Some((0, 4095)));
+        assert!(limit.scales.is_empty() && limit.untyped.is_empty());
+        assert_fails(
+            Table::xm_fr9().unit(
+                r#"data_name: "Min Position Limit", value: 2.0, unit: "pulse", sign_type: "unsigned""#,
+            ),
+            &[
+                "unit_info \"Min Position Limit\": step 2 pulse is not about the type_info step 0.0879 deg",
+            ],
         );
     }
 
