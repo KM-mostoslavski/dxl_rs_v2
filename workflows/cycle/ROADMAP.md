@@ -58,7 +58,7 @@ The others are at step 5 until their plan is ticked or deferred.
 | core | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
 | protocol | delegated | loop | 6 | — | `2026-11-05 green`: all 20 local CI commands |
 | transport | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
-| bus | delegated | loop | 5 | `feature/bus` | `2026-11-09 green` (typed limits T097 to T103): the 13 commands of `AGENTS.md` § Commands, coverage 98.25 %, codegen clean; CI feature-test legs red, as on `dev` |
+| bus | delegated | loop | 5 | `feature/bus` | `2026-11-10 green` (typed settings T104 to T110): the 13 commands of `AGENTS.md` § Commands, coverage 98.29 %, codegen and table analysis clean, 76 tables 0 errors; CI feature-test legs red, as on `dev` (D-02) |
 | tables | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |
 | xtask | delegated | loop | 5 | fix/xtask-errors | `2026-11-05 green`: all 20 local CI commands |
 | ci | delegated | loop | 5 | — | `2026-11-05 green`: all 20 local CI commands |

@@ -462,7 +462,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// Only velocity mode (Protocol 2) and wheel mode (Protocol 1, CW = CCW
     /// Angle Limit = 0) use it (FR-9.4), and only with torque on. The
-    /// magnitude must not pass the Velocity Limit read at Setup. AX and RX
+    /// magnitude must not pass the Velocity Limit the bus holds (read at
+    /// Setup, kept by setting writes). AX and RX
     /// give wheel-mode Moving Speed in % of output, not as a velocity, so
     /// they take only `write(Raw(GoalVelocity), raw)` (bit 10 the
     /// direction).

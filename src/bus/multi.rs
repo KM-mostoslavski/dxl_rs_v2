@@ -339,7 +339,7 @@ assert_eq!(present, [512, 612]);
     /// Each target is checked as
     /// [`ActuatorRef::set_goal_velocity`](crate::ActuatorRef::set_goal_velocity)
     /// checks it: torque on, velocity or wheel mode, within the Velocity
-    /// Limit read at Setup. A refusal sends nothing to anyone. Not atomic
+    /// Limit the bus holds (read at Setup, kept by setting writes). A refusal sends nothing to anyone. Not atomic
     /// across layouts on the wire; a fault shows on the next read.
     ///
     /// # Errors
@@ -360,7 +360,8 @@ assert_eq!(present, [512, 612]);
     /// Each target is checked as
     /// [`ActuatorRef::set_goal_current`](crate::ActuatorRef::set_goal_current)
     /// checks it: torque on, current or current-based position mode, within
-    /// the Current Limit read at Setup. A refusal sends nothing to anyone.
+    /// the Current Limit the bus holds (read at Setup, kept by setting
+    /// writes). A refusal sends nothing to anyone.
     ///
     /// # Errors
     ///

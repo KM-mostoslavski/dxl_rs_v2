@@ -46,5 +46,5 @@ Plan: [`2026-11-09-typed-limits.md`](2026-11-09-typed-limits.md).
 - [x] T106 tables: Homing Offset, Moving Threshold, Return Delay Time `unit_info` in the six verified tables
 - [x] T107 xtask, core, bus: typed Homing Offset, Moving Threshold, Return Delay Time (S2)
 - [x] T108 core, bus: `OperatingMode` and `set_operating_mode` (S3)
-- [ ] T109 bus: docs, codegen over all tables, oracle, step end
+- [x] T109 bus: docs, codegen over all tables, oracle, step end
 - [x] T110 SRS: FR-10 reconciled with D1 to D10 and S1 to S5

@@ -105,8 +105,9 @@
 //! could not keep its torque state true to the hardware. Use
 //! [`Bus::enable_torque`](crate::Bus::enable_torque) and
 //! [`Bus::disable_torque`](crate::Bus::disable_torque). Nor are ID, baud
-//! rate and the registers of one series (Position Limit Threshold, Y;
-//! ...): those stay raw (`raw-registers`).
+//! rate, protocol type, Drive Mode, Shutdown and the registers of one
+//! series (Position Limit Threshold, Y; ...): those stay raw
+//! (`raw-registers`).
 
 use core::time::Duration;
 
@@ -395,7 +396,8 @@ fn saturate(v: i64) -> i32 {
 }
 
 /// The bound check of a goal velocity or current: the signed value's
-/// magnitude must not pass `bound`, the EEPROM limit read at Setup.
+/// magnitude must not pass `bound`, the EEPROM limit the bus holds (read at
+/// Setup, kept by setting writes).
 fn within_bound(site: &Site, bound: Option<u32>, raw: i32) -> Result<i32, ValidationError> {
     let Some(bound) = bound else {
         return in_range(site, raw);
@@ -539,7 +541,8 @@ role_field!(
 role_field!(
     /// Goal Velocity, or Moving Speed in wheel mode (Protocol 1), in rad/s
     /// ([`Velocity`]). Written only in velocity or wheel mode, with torque
-    /// on, and within the Velocity Limit read at Setup.
+    /// on, and within the Velocity Limit the bus holds (read at Setup, kept
+    /// by setting writes).
     ///
     /// AX and RX wheel-mode Moving Speed is a share of output (about 0.1 %
     /// per step, bit 10 the direction), not a velocity: only its raw form
@@ -561,7 +564,8 @@ role_field!(
 role_field!(
     /// Goal Current, or Goal Torque (MX on Protocol 1), in amperes
     /// ([`Current`]). Written only in current or current-based position
-    /// mode, with torque on, and within the Current Limit read at Setup.
+    /// mode, with torque on, and within the Current Limit the bus holds
+    /// (read at Setup, kept by setting writes).
     GoalCurrent,
     GoalCurrent
 );
