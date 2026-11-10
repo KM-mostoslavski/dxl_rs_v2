@@ -90,13 +90,13 @@
       sign_type: "twos_complement",
       range: (min: -251417, max: 251417),
     },
-    // DECISION: Min Position Limit takes -251,417 ~ 241,417, the control table Range column; the register section on the same page says -251,417 ~ 251,417, so the narrower range is kept.
+    // DECISION: Min Position Limit takes -251,417 ~ 251,417, the register section ("within the range of 1 rotation(-251,417 ~ 251,417)") and the Goal Position range in Position Control Mode on the same page; the control table Range column says -251,417 ~ 241,417, which would leave positions the page allows unreachable as a limit (xtask check 22).
     {
       data_name: "Min Position Limit",
       value: 1.0,
       unit: "pulse",
       sign_type: "twos_complement",
-      range: (min: -251417, max: 241417),
+      range: (min: -251417, max: 251417),
     },
     {
       data_name: "Goal Current",
