@@ -331,7 +331,7 @@ Out of scope for FR-9:
     returns `TorqueUnconfirmed`. The X (XL-320 included), MX(2.0), PRO and Y pages allow EEPROM
     writes only with Torque Enable 0 (checked 2026-11-10 on XM430-W350, XL-320, MX-64(2.0),
     H54-200-S500-R(A), PH54-200-S500-R, YM070-210-M001-RH); the rule applies to every model, so one
-    rule holds on every bus. The bus never writes Torque Enable on its own.
+    rule holds on every bus. The bus never writes Torque Enable on its own. **Open (`docs/deferred.md` D-34, maintainer 2026-11-10):** the confirmation should rest on the actuator's real torque state, e.g. a read showing Torque Enable 0, not only on a `disable_torque()` sent since Setup; until it is decided the write rule above stands, and `ActuatorIsOn` stays.
   - The value: it converts through the register's `unit_info` (FR-9.2; without one the typed form
     returns `NoUnit` and the raw form still works, with the torque and size checks), and lies in the
     e-Manual range the table records (`OutOfLimits`); a value not in the model's list (operating
@@ -486,7 +486,7 @@ Out of scope for FR-10, raw only (FR-8):
 - [x] `cargo xtask` and `check_tables.py` errors follow the error rules, without FR-6.10's fixed size: one variant (Python: cause code) per cause with fields, foreign errors kept typed, advice only in a separate hint, no panic and no silent skip on any input (FR-6.14). 2026-11-09.
 - [x] Error precision cases E1 to E13 decided and built (audit Decisions table): `Request` context with the Setup step on every error (FR-6.7); `Timeout` split into no, partial, late and skipped reply, port timeout and end of stream, with the late-reply listen (FR-1.4); `Malformed` split by cause; `Missing` only for a silent ping; a `Fault` category measured on the fault path (FR-6.13); advice in `Error::hint()` (FR-6.12). 2026-11-04.
 - [x] Typed EEPROM settings: every setting that more than half of the mapped models have (and Acceleration Limit, on several series) gets a typed read and write, `Unsupported` on the models without it, raw only for the rest; the FR-10.1 list. 2026-11-10.
-- [x] Setting writes need torque confirmed off on every model; acknowledged unicast only, never sync, no bus-level form; the cache follows a confirmed write and turns unknown after a failed one; `NoUnit` where a table has no unit data, and every table the settings need verified for it (FR-10.2 to FR-10.4). 2026-11-10 (built from `docs/plans/2026-11-09-typed-limits.md` D1 to D10 and `2026-11-10-settings.md` S1 to S4).
+- [x] Setting writes need torque confirmed off on every model (how it is confirmed is open, D-34); acknowledged unicast only, never sync, no bus-level form; the cache follows a confirmed write and turns unknown after a failed one; `NoUnit` where a table has no unit data, and every table the settings need verified for it (FR-10.2 to FR-10.4). 2026-11-10 (built from `docs/plans/2026-11-09-typed-limits.md` D1 to D10 and `2026-11-10-settings.md` S1 to S4).
 - [x] PWM Limit and Max Torque are two settings; `SettingField` and `write_setting` name the trait and the generic writer (FR-10.1, FR-10.9). 2026-11-10.
 - [x] Operating mode: `OperatingMode`, values from the table's lists, a goal-bound read inside the setter, `Unsupported` on angle-limit models where the position limits switch the mode, no switch into wheel mode with a live speed (FR-10.7, FR-9.6). 2026-11-10.
 - [x] Setter docs carry the e-Manual's side effects; EEPROM wear documented, not guarded; settings behind no feature; Secondary ID stays raw (FR-10.5, FR-10.10). 2026-11-10.
