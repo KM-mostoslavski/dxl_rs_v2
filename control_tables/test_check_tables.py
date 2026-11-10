@@ -1319,7 +1319,7 @@ class RealTablesTests(unittest.TestCase):
     LIMITS_WITHOUT_RANGE = {("mx_64_p1", "Min Voltage Limit"), ("mx_64_p1", "Max Voltage Limit")}
 
     def test_repository_tables_pass(self) -> None:
-        code, out, err = run_check(["--today", "2026-11-09"])
+        code, out, err = run_check(["--today", "2026-11-10"])
         self.assertEqual(code, 0, err)
 
     def test_fr9_tables_scale_every_typed_limit(self) -> None:
