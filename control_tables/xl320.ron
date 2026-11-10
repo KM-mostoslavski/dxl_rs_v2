@@ -1,5 +1,6 @@
 (
   source: Unverified,
+  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/x/xl320/", verified: "2026-11-10"),
   protocols: [P2],
   operating_modes: (bounded: [2], unbounded: [], no_position: [1]),
   type_info: {
@@ -11,16 +12,96 @@
   },
   unit_info: [
     {
-      data_name: "Present Velocity",
-      value: 0.0116228475,
-      unit: "rad/s",
-      sign_type: "signed",
+      data_name: "Return Delay Time",
+      value: 2.0,
+      unit: "µs",
+      sign_type: "unsigned",
+      range: (min: 0, max: 254),
     },
     {
-      data_name: "Goal Velocity",
-      value: 0.0116228475,
-      unit: "rad/s",
-      sign_type: "signed",
+      data_name: "CW Angle Limit",
+      value: 0.29,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    {
+      data_name: "CCW Angle Limit",
+      value: 0.29,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    // DECISION: the page gives Temperature Limit 0 ~ 150 in its control table and 0 ~ 100 in the register description; the range is the part both allow, 0 ~ 100.
+    {
+      data_name: "Temperature Limit",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
+      range: (min: 0, max: 100),
+    },
+    // DECISION: the page gives Min/Max Voltage Limit 50 ~ 250 in its control table and description table, and 50 to 160 in the description text; the range is the part all three allow, 50 ~ 160.
+    {
+      data_name: "Min Voltage Limit",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+      range: (min: 50, max: 160),
+    },
+    {
+      data_name: "Max Voltage Limit",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+      range: (min: 50, max: 160),
+    },
+    {
+      data_name: "Max Torque",
+      value: 0.1,
+      unit: "%",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    {
+      data_name: "Goal Position",
+      value: 0.29,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    // DECISION: Moving Speed and Present Speed get no entry: the page gives 0.111 rpm in Joint Mode and 0.1 % in Wheel Mode (bit 10 the direction bit in Wheel Mode, and in both modes for Present Speed), and modes is only allowed in an angle-limit table (the XL-320 switches by Control Mode), so one entry would mis-scale one of the two modes (D-17).
+    {
+      data_name: "Torque Limit",
+      value: 0.1,
+      unit: "%",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    {
+      data_name: "Present Position",
+      value: 0.29,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    {
+      data_name: "Present Load",
+      value: 0.1,
+      unit: "%",
+      sign_type: "direction_bit_10",
+      range: (min: 0, max: 2047),
+    },
+    {
+      data_name: "Present Voltage",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+    },
+    {
+      data_name: "Present Temperature",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
     },
   ],
   control_table: [
@@ -142,6 +223,7 @@
       data_name: "D Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 254),
     },
     {
       address: 28,
@@ -149,6 +231,7 @@
       data_name: "I Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 254),
     },
     {
       address: 29,
@@ -156,6 +239,7 @@
       data_name: "P Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 254),
     },
     {
       address: 30,
@@ -234,12 +318,14 @@
       access: R,
       area: RAM,
     },
+    // DECISION: the page gives Punch 0 ~ 1023 in its control table and 0x20 ~ 0x3FF in the description; the range is the part both allow, 32 ~ 1023.
     {
       address: 51,
       size: 2,
       data_name: "Punch",
       access: RW,
       area: RAM,
+      range: (min: 32, max: 1023),
     },
   ],
 )
