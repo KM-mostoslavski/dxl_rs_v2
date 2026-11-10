@@ -745,6 +745,40 @@ mod tests {
         ));
         assert_eq!(acceleration.scales[0].range, Some((0, 32767)));
         assert!(role("mx_28", "acceleration_limit").scales.is_empty());
+
+        let tick = std::f64::consts::TAU / 4096.0;
+        // DECISION: the tick is compared to 2π / 4096 within 1e-6, the precision of the f32 type_info radians it comes from.
+        for file in ["xm430_w350", "mx_64"] {
+            let homing = role(file, "homing_offset");
+            assert_eq!((homing.row.address, homing.row.size), (20, 4), "{file}");
+            assert!(
+                (homing.scales[0].si_per_raw / tick - 1.0).abs() < 1e-6,
+                "{file}: {}",
+                homing.scales[0].si_per_raw
+            );
+            assert_eq!(
+                (homing.scales[0].sign, homing.scales[0].range),
+                (fr9::SignKind::TwosComplement, Some((-1_044_479, 1_044_479))),
+                "{file}"
+            );
+            let moving = role(file, "moving_threshold");
+            assert_eq!((moving.row.address, moving.row.size), (24, 4), "{file}");
+            assert!(close(moving.scales[0].si_per_raw, 0.229 * rpm), "{file}");
+            assert_eq!(moving.scales[0].range, Some((0, 1023)), "{file}");
+        }
+        for (file, address) in [
+            ("ax_12a", 5),
+            ("rx_28", 5),
+            ("mx_64_p1", 5),
+            ("mx_64", 9),
+            ("xm430_w350", 9),
+        ] {
+            let delay = role(file, "return_delay_time");
+            assert_eq!((delay.row.address, delay.row.size), (address, 1), "{file}");
+            assert!(close(delay.scales[0].si_per_raw, 2e-6), "{file}");
+            assert_eq!(delay.scales[0].range, Some((0, 254)), "{file}");
+        }
+        assert!(role("xl430_w250", "return_delay_time").scales.is_empty());
     }
 
     #[test]

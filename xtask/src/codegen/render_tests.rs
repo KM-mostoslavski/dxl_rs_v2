@@ -147,7 +147,12 @@ fn convert(quantity: Quantity, raw: i64) -> String {
         Quantity::Temperature => format!("scale.temperature({raw}).celsius()"),
         Quantity::Load => format!("scale.load({raw}).ratio()"),
         Quantity::Pwm => format!("scale.pwm({raw}).ratio()"),
-        Quantity::Tick | Quantity::Angle | Quantity::Position | Quantity::Raw => {
+        Quantity::Tick
+        | Quantity::Duration
+        | Quantity::Angle
+        | Quantity::Position
+        | Quantity::Offset
+        | Quantity::Raw => {
             format!("scale.si_of({raw})")
         }
     }
@@ -161,8 +166,9 @@ fn range_value(range: Option<(i64, i64)>) -> String {
     )
 }
 
-/// Checks of one scale of `role`, in its first mode.
-fn scale_checks(role: &GenRole, scale: &GenScale) -> String {
+/// Checks of one scale of `role`, in its first mode, on a model whose
+/// position tick is `tick` radians.
+fn scale_checks(role: &GenRole, scale: &GenScale, tick: f64) -> String {
     let mode = fr9::mode_names(scale.modes)[0];
     let factor = role.def.quantity.factor(&scale.unit).unwrap_or(1.0);
     let step = match (
@@ -170,6 +176,7 @@ fn scale_checks(role: &GenRole, scale: &GenScale) -> String {
         fr9::load_full_magnitude(scale.sign, scale.range),
     ) {
         (Quantity::Load, Some((top, _))) => 1.0 / top as f64,
+        (Quantity::Offset, _) => tick,
         _ => scale.value * factor,
     };
     let mut out = format!(
@@ -335,7 +342,7 @@ fn render_roles(out: &mut String, model: &GenModel) {
         }
         for scale in &role.scales {
             body.push_str("{\n");
-            body.push_str(&scale_checks(role, scale));
+            body.push_str(&scale_checks(role, scale, fr9::position_tick(&model.scale)));
             let _ = writeln!(
                 body,
                 "assert_eq!(data.typed(Role::{}, LimitMode::{}), Some(({ty}::{}, Some(scale))));",
@@ -913,6 +920,37 @@ mod tests {
         ] {
             assert!(c.contains(part), "{part}");
         }
+    }
+
+    #[test]
+    fn setting_role_tests() {
+        let r = resolved(
+            &Map::new()
+                .model(1020, "x-series", "XM430-W350")
+                .p2(&[(0, "xm")]),
+            &[(
+                "xm",
+                Table::xm_fr9()
+                    .with_row(9, 1, "Return Delay Time", "RW", "EEPROM")
+                    .with_row(20, 4, "Homing Offset", "RW", "EEPROM")
+                    .with_row(24, 4, "Moving Threshold", "RW", "EEPROM")
+                    .unit(r#"data_name: "Return Delay Time", value: 2.0, unit: "µs", sign_type: "unsigned", range: (min: 0, max: 254)"#)
+                    .unit(r#"data_name: "Homing Offset", value: 1.0, unit: "pulse", sign_type: "twos_complement", range: (min: -1044479, max: 1044479)"#)
+                    .unit(r#"data_name: "Moving Threshold", value: 0.229, unit: "rpm", sign_type: "unsigned", range: (min: 0, max: 1023)"#),
+            )],
+        );
+        let c = compact(&render_tests(&r).unwrap());
+        for part in [
+            "letrole=<XmasHasHomingOffset>::ROLE;",
+            "assert!(close(scale.si_of(100),0.15343554));assert!(close(scale.si_of(4294967196),-0.15343554));assert_eq!(role.raw_range(LimitMode::Bounded),Some(-1044479..=1044479));",
+            "letrole=<XmasHasReturnDelayTime>::ROLE;",
+            "assert!(close(scale.si_of(100),0.0002));assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=254));",
+            "letrole=<XmasHasMovingThreshold>::ROLE;",
+            "assert!(close(scale.velocity(100).rad_per_s(),2.3980825));assert_eq!(role.raw_range(LimitMode::Bounded),Some(0..=1023));",
+        ] {
+            assert!(c.contains(part), "{part}");
+        }
+        assert!(!c.contains("role.tick_modulus"));
     }
 
     #[test]

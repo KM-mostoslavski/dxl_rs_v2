@@ -3,11 +3,12 @@
 
 use crate::actuator::{
     Actuator, Cache, Describe, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-    HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
-    HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature,
-    HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit,
-    HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeScale, ModeSet, ModeSource,
-    ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
+    HasHardwareErrorStatus, HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
+    HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain,
+    HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit,
+    HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
+    LimitRegisters, ModeScale, ModeSet, ModeSource, ModeValues, Model, ModelData, Protocols,
+    RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -78,6 +79,9 @@ impl Xm430W350 {
             velocity_limit: Some(<Self as HasVelocityLimit>::ROLE),
             current_limit: Some(<Self as HasCurrentLimit>::ROLE),
             pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
+            homing_offset: Some(<Self as HasHomingOffset>::ROLE),
+            moving_threshold: Some(<Self as HasMovingThreshold>::ROLE),
+            return_delay_time: Some(<Self as HasReturnDelayTime>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -528,6 +532,60 @@ impl HasPwmLimit for Xm430W350 {
             modes: ModeSet::ALL,
             scale: Some(RegisterScale::new(0.00113, Sign::Unsigned, 2, false)),
             range: Some((0, 885)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Homing Offset: 0.088 deg per raw step in every mode.
+/// One raw step is one position tick of the model's position scale (`type_info`), with no zero point.
+impl HasHomingOffset for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Homing Offset",
+        register: Self::HOMING_OFFSET,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0015339808,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
+            range: Some((-1044479, 1044479)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Moving Threshold: 0.229 rpm per raw step in every mode.
+impl HasMovingThreshold for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Threshold",
+        register: Self::MOVING_THRESHOLD,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.023980824, Sign::Unsigned, 4, false)),
+            range: Some((0, 1023)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Return Delay Time: 2 µs per raw step in every mode.
+impl HasReturnDelayTime for Xm430W350 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Return Delay Time",
+        register: Self::RETURN_DELAY_TIME,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
         }],
         bounded_by: None,
         from_fw: 0,

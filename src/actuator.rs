@@ -14,11 +14,12 @@ mod roles;
 pub use roles::{
     HasAccelerationLimit, HasCcwComplianceMargin, HasCcwComplianceSlope, HasCurrentLimit,
     HasCwComplianceMargin, HasCwComplianceSlope, HasDGain, HasGoalCurrent, HasGoalVelocity,
-    HasHardwareErrorStatus, HasLed, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-    HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-    HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-    HasTorqueCtrlModeEnable, HasVelocityLimit, RoleRegister,
+    HasHardwareErrorStatus, HasHomingOffset, HasLed, HasLedBlue, HasLedGreen, HasLedRed,
+    HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+    HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentLoad,
+    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+    HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasTorqueCtrlModeEnable,
+    HasVelocityLimit, RoleRegister,
 };
 #[allow(
     unused_imports,

@@ -5,7 +5,7 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
     HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
     HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
+    HasPresentVoltage, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit,
     HasTorqueCtrlModeEnable, LimitMode, LimitRegisters, ModeScale, ModeSet, ModeSource, Model,
     ModelData, Protocols, RoleRegister, Roles,
 };
@@ -72,6 +72,7 @@ impl Mx64P1 {
             min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
             max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
             max_torque: Some(<Self as HasMaxTorque>::ROLE),
+            return_delay_time: Some(<Self as HasReturnDelayTime>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: true,
@@ -454,6 +455,22 @@ impl HasMaxTorque for Mx64P1 {
             modes: ModeSet::ALL,
             scale: Some(RegisterScale::new(0.0009775171, Sign::Unsigned, 2, false)),
             range: Some((0, 1023)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Return Delay Time: 2 µs per raw step in every mode.
+impl HasReturnDelayTime for Mx64P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Return Delay Time",
+        register: Self::RETURN_DELAY_TIME,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
         }],
         bounded_by: None,
         from_fw: 0,

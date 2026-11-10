@@ -5050,7 +5050,8 @@ fn ax_12a_roles() {
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
         HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit,
         HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
+        HasPresentVelocity, HasPresentVoltage, HasReturnDelayTime, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ax12a;
     use crate::units::{Sign, SpeedLimit};
@@ -5160,6 +5161,12 @@ fn ax_12a_roles() {
             Ax12a::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Ax12a as HasReturnDelayTime>::ROLE,
+            Ax12a::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -5178,6 +5185,8 @@ fn ax_12a_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -5527,6 +5536,27 @@ fn ax_12a_roles() {
             );
         }
     }
+    {
+        let role = <Ax12a as HasReturnDelayTime>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.0002));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=254));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::ReturnDelayTime, LimitMode::Bounded),
+                Some((Ax12a::RETURN_DELAY_TIME, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "ax")]
@@ -5550,7 +5580,8 @@ fn ax_18a_roles() {
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
         HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit,
         HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
+        HasPresentVelocity, HasPresentVoltage, HasReturnDelayTime, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ax18a;
 
@@ -5659,6 +5690,12 @@ fn ax_18a_roles() {
             Ax18a::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Ax18a as HasReturnDelayTime>::ROLE,
+            Ax18a::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -5677,6 +5714,8 @@ fn ax_18a_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -5785,6 +5824,12 @@ fn ax_18a_roles() {
             Ax18a::MAX_TORQUE,
             None,
         ),
+        (
+            Role::ReturnDelayTime,
+            <Ax18a as HasReturnDelayTime>::ROLE,
+            Ax18a::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -5816,7 +5861,8 @@ fn rx_28_roles() {
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
         HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit,
         HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
+        HasPresentVelocity, HasPresentVoltage, HasReturnDelayTime, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Rx28;
     use crate::units::{Sign, SpeedLimit};
@@ -5926,6 +5972,12 @@ fn rx_28_roles() {
             Rx28::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Rx28 as HasReturnDelayTime>::ROLE,
+            Rx28::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -5944,6 +5996,8 @@ fn rx_28_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -6288,6 +6342,27 @@ fn rx_28_roles() {
             );
         }
     }
+    {
+        let role = <Rx28 as HasReturnDelayTime>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.0002));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=254));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::ReturnDelayTime, LimitMode::Bounded),
+                Some((Rx28::RETURN_DELAY_TIME, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "rx")]
@@ -6311,7 +6386,7 @@ fn mx_28_p1_roles() {
         HasDGain, HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit,
         HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad,
         HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
-        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Mx28P1;
 
@@ -6414,6 +6489,12 @@ fn mx_28_p1_roles() {
             Mx28P1::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Mx28P1 as HasReturnDelayTime>::ROLE,
+            Mx28P1::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -6433,6 +6514,8 @@ fn mx_28_p1_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -6535,6 +6618,12 @@ fn mx_28_p1_roles() {
             Mx28P1::MAX_TORQUE,
             None,
         ),
+        (
+            Role::ReturnDelayTime,
+            <Mx28P1 as HasReturnDelayTime>::ROLE,
+            Mx28P1::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -6563,11 +6652,11 @@ fn mx_28_p1_mode_source() {
 #[test]
 fn mx_28_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasHomingOffset,
+        HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Mx28;
 
@@ -6687,6 +6776,24 @@ fn mx_28_roles() {
             <Mx28 as HasAccelerationLimit>::ROLE,
             Mx28::ACCELERATION_LIMIT,
             "Acceleration Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Mx28 as HasHomingOffset>::ROLE,
+            Mx28::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Mx28 as HasMovingThreshold>::ROLE,
+            Mx28::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Mx28 as HasReturnDelayTime>::ROLE,
+            Mx28::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -6819,6 +6926,24 @@ fn mx_28_roles() {
             Mx28::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Mx28 as HasHomingOffset>::ROLE,
+            Mx28::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Mx28 as HasMovingThreshold>::ROLE,
+            Mx28::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Mx28 as HasReturnDelayTime>::ROLE,
+            Mx28::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -6857,7 +6982,8 @@ fn ax_12w_roles() {
         HasCcwComplianceMargin, HasCcwComplianceSlope, HasCwComplianceMargin, HasCwComplianceSlope,
         HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit,
         HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPresentLoad, HasPresentTemperature,
-        HasPresentVelocity, HasPresentVoltage, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
+        HasPresentVelocity, HasPresentVoltage, HasReturnDelayTime, HasSpeedLimit,
+        HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Ax12w;
 
@@ -6966,6 +7092,12 @@ fn ax_12w_roles() {
             Ax12w::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Ax12w as HasReturnDelayTime>::ROLE,
+            Ax12w::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -6984,6 +7116,8 @@ fn ax_12w_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -7092,6 +7226,12 @@ fn ax_12w_roles() {
             Ax12w::MAX_TORQUE,
             None,
         ),
+        (
+            Role::ReturnDelayTime,
+            <Ax12w as HasReturnDelayTime>::ROLE,
+            Ax12w::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -7123,8 +7263,8 @@ fn mx_64_p1_roles() {
         HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxTorque,
         HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
         HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasTorqueCtrlModeEnable, LimitMode,
-        Role,
+        HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit,
+        HasTorqueCtrlModeEnable, LimitMode, Role,
     };
     use crate::models::Mx64P1;
     use crate::units::{Sign, SpeedLimit};
@@ -7240,6 +7380,12 @@ fn mx_64_p1_roles() {
             Mx64P1::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Mx64P1 as HasReturnDelayTime>::ROLE,
+            Mx64P1::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -7257,6 +7403,8 @@ fn mx_64_p1_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -7597,6 +7745,27 @@ fn mx_64_p1_roles() {
             );
         }
     }
+    {
+        let role = <Mx64P1 as HasReturnDelayTime>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.0002));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=254));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::ReturnDelayTime, LimitMode::Bounded),
+                Some((Mx64P1::RETURN_DELAY_TIME, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "mx")]
@@ -7622,10 +7791,11 @@ fn mx_64_p1_mode_source() {
 fn mx_64_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
-        HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
-        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
+        HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain,
+        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Mx64;
     use crate::units::{Sign, SpeedLimit};
@@ -7758,6 +7928,24 @@ fn mx_64_roles() {
             <Mx64 as HasAccelerationLimit>::ROLE,
             Mx64::ACCELERATION_LIMIT,
             "Acceleration Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Mx64 as HasHomingOffset>::ROLE,
+            Mx64::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Mx64 as HasMovingThreshold>::ROLE,
+            Mx64::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Mx64 as HasReturnDelayTime>::ROLE,
+            Mx64::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -8139,6 +8327,70 @@ fn mx_64_roles() {
             );
         }
     }
+    {
+        let role = <Mx64 as HasHomingOffset>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 4, false)
+            );
+            assert!(close(scale.si_of(100), 0.15339808));
+            assert!(close(scale.si_of(4294967196), -0.15339808));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(-1044479..=1044479));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::HomingOffset, LimitMode::Bounded),
+                Some((Mx64::HOMING_OFFSET, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasMovingThreshold>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 4, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=1023));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MovingThreshold, LimitMode::Bounded),
+                Some((Mx64::MOVING_THRESHOLD, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Mx64 as HasReturnDelayTime>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.0002));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=254));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::ReturnDelayTime, LimitMode::Bounded),
+                Some((Mx64::RETURN_DELAY_TIME, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "mx")]
@@ -8171,7 +8423,7 @@ fn mx_106_p1_roles() {
         HasDGain, HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit,
         HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentLoad,
         HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
-        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Mx106P1;
 
@@ -8274,6 +8526,12 @@ fn mx_106_p1_roles() {
             Mx106P1::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Mx106P1 as HasReturnDelayTime>::ROLE,
+            Mx106P1::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -8293,6 +8551,8 @@ fn mx_106_p1_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -8395,6 +8655,12 @@ fn mx_106_p1_roles() {
             Mx106P1::MAX_TORQUE,
             None,
         ),
+        (
+            Role::ReturnDelayTime,
+            <Mx106P1 as HasReturnDelayTime>::ROLE,
+            Mx106P1::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -8424,10 +8690,11 @@ fn mx_106_p1_mode_source() {
 fn mx_106_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
-        HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain, HasPresentCurrent,
-        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
+        HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain,
+        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+        HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Mx106;
 
@@ -8559,6 +8826,24 @@ fn mx_106_roles() {
             <Mx106 as HasAccelerationLimit>::ROLE,
             Mx106::ACCELERATION_LIMIT,
             "Acceleration Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Mx106 as HasHomingOffset>::ROLE,
+            Mx106::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Mx106 as HasMovingThreshold>::ROLE,
+            Mx106::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Mx106 as HasReturnDelayTime>::ROLE,
+            Mx106::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -8706,6 +8991,24 @@ fn mx_106_roles() {
             Mx106::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Mx106 as HasHomingOffset>::ROLE,
+            Mx106::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Mx106 as HasMovingThreshold>::ROLE,
+            Mx106::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Mx106 as HasReturnDelayTime>::ROLE,
+            Mx106::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -8746,7 +9049,7 @@ fn xl320_roles() {
         HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit,
         HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
         HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitMode, Role,
     };
     use crate::models::Xl320;
 
@@ -8849,6 +9152,12 @@ fn xl320_roles() {
             Xl320::MAX_TORQUE,
             "Max Torque",
         ),
+        (
+            Role::ReturnDelayTime,
+            <Xl320 as HasReturnDelayTime>::ROLE,
+            Xl320::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -8868,6 +9177,8 @@ fn xl320_roles() {
         Role::CurrentLimit,
         Role::PwmLimit,
         Role::AccelerationLimit,
+        Role::HomingOffset,
+        Role::MovingThreshold,
     ] {
         assert_eq!(data.role(role), None);
         assert_eq!(data.typed(role, LimitMode::Bounded), None);
@@ -8960,6 +9271,12 @@ fn xl320_roles() {
             Xl320::MAX_TORQUE,
             None,
         ),
+        (
+            Role::ReturnDelayTime,
+            <Xl320 as HasReturnDelayTime>::ROLE,
+            Xl320::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -8993,11 +9310,11 @@ fn xl320_mode_source() {
 #[test]
 fn xh430_w350_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh430W350;
 
@@ -9128,6 +9445,24 @@ fn xh430_w350_roles() {
             <Xh430W350 as HasPwmLimit>::ROLE,
             Xh430W350::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh430W350 as HasHomingOffset>::ROLE,
+            Xh430W350::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430W350 as HasMovingThreshold>::ROLE,
+            Xh430W350::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430W350 as HasReturnDelayTime>::ROLE,
+            Xh430W350::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9270,6 +9605,24 @@ fn xh430_w350_roles() {
             Xh430W350::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh430W350 as HasHomingOffset>::ROLE,
+            Xh430W350::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430W350 as HasMovingThreshold>::ROLE,
+            Xh430W350::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430W350 as HasReturnDelayTime>::ROLE,
+            Xh430W350::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -9307,11 +9660,11 @@ fn xh430_w350_mode_source() {
 #[test]
 fn xd430_t350_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xd430T350;
 
@@ -9442,6 +9795,24 @@ fn xd430_t350_roles() {
             <Xd430T350 as HasPwmLimit>::ROLE,
             Xd430T350::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xd430T350 as HasHomingOffset>::ROLE,
+            Xd430T350::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd430T350 as HasMovingThreshold>::ROLE,
+            Xd430T350::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd430T350 as HasReturnDelayTime>::ROLE,
+            Xd430T350::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9584,6 +9955,24 @@ fn xd430_t350_roles() {
             Xd430T350::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xd430T350 as HasHomingOffset>::ROLE,
+            Xd430T350::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd430T350 as HasMovingThreshold>::ROLE,
+            Xd430T350::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd430T350 as HasReturnDelayTime>::ROLE,
+            Xd430T350::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -9621,11 +10010,11 @@ fn xd430_t350_mode_source() {
 #[test]
 fn xh430_w210_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh430W210;
 
@@ -9756,6 +10145,24 @@ fn xh430_w210_roles() {
             <Xh430W210 as HasPwmLimit>::ROLE,
             Xh430W210::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh430W210 as HasHomingOffset>::ROLE,
+            Xh430W210::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430W210 as HasMovingThreshold>::ROLE,
+            Xh430W210::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430W210 as HasReturnDelayTime>::ROLE,
+            Xh430W210::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -9898,6 +10305,24 @@ fn xh430_w210_roles() {
             Xh430W210::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh430W210 as HasHomingOffset>::ROLE,
+            Xh430W210::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430W210 as HasMovingThreshold>::ROLE,
+            Xh430W210::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430W210 as HasReturnDelayTime>::ROLE,
+            Xh430W210::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -9935,11 +10360,11 @@ fn xh430_w210_mode_source() {
 #[test]
 fn xd430_t210_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xd430T210;
 
@@ -10070,6 +10495,24 @@ fn xd430_t210_roles() {
             <Xd430T210 as HasPwmLimit>::ROLE,
             Xd430T210::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xd430T210 as HasHomingOffset>::ROLE,
+            Xd430T210::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd430T210 as HasMovingThreshold>::ROLE,
+            Xd430T210::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd430T210 as HasReturnDelayTime>::ROLE,
+            Xd430T210::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -10212,6 +10655,24 @@ fn xd430_t210_roles() {
             Xd430T210::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xd430T210 as HasHomingOffset>::ROLE,
+            Xd430T210::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd430T210 as HasMovingThreshold>::ROLE,
+            Xd430T210::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd430T210 as HasReturnDelayTime>::ROLE,
+            Xd430T210::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -10249,11 +10710,11 @@ fn xd430_t210_mode_source() {
 #[test]
 fn xm430_w350_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xm430W350;
     use crate::units::{Sign, SpeedLimit};
@@ -10385,6 +10846,24 @@ fn xm430_w350_roles() {
             <Xm430W350 as HasPwmLimit>::ROLE,
             Xm430W350::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xm430W350 as HasHomingOffset>::ROLE,
+            Xm430W350::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xm430W350 as HasMovingThreshold>::ROLE,
+            Xm430W350::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xm430W350 as HasReturnDelayTime>::ROLE,
+            Xm430W350::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -10751,6 +11230,70 @@ fn xm430_w350_roles() {
             );
         }
     }
+    {
+        let role = <Xm430W350 as HasHomingOffset>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::TwosComplement, 4, false)
+            );
+            assert!(close(scale.si_of(100), 0.15339808));
+            assert!(close(scale.si_of(4294967196), -0.15339808));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(-1044479..=1044479));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::HomingOffset, LimitMode::Bounded),
+                Some((Xm430W350::HOMING_OFFSET, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasMovingThreshold>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 4, false)
+            );
+            assert!(close(scale.velocity(100).rad_per_s(), 2.3980825));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=1023));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::MovingThreshold, LimitMode::Bounded),
+                Some((Xm430W350::MOVING_THRESHOLD, Some(scale)))
+            );
+        }
+    }
+    {
+        let role = <Xm430W350 as HasReturnDelayTime>::ROLE;
+        assert_eq!(role.from_firmware(), 0);
+        assert_eq!(role.bounded_by(), None);
+        {
+            let scale = role.scale(LimitMode::Bounded).unwrap();
+            assert_eq!(
+                (scale.sign(), scale.size(), scale.zero_is_unlimited()),
+                (Sign::Unsigned, 1, false)
+            );
+            assert!(close(scale.si_of(100), 0.0002));
+            assert_eq!(role.raw_range(LimitMode::Bounded), Some(0..=254));
+            for mode in ALL_MODES {
+                assert_eq!(role.scale(mode), Some(scale));
+            }
+            assert_eq!(
+                data.typed(Role::ReturnDelayTime, LimitMode::Bounded),
+                Some((Xm430W350::RETURN_DELAY_TIME, Some(scale)))
+            );
+        }
+    }
 }
 
 #[cfg(feature = "x-series")]
@@ -10780,11 +11323,11 @@ fn xm430_w350_mode_source() {
 #[test]
 fn xm430_w210_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xm430W210;
 
@@ -10915,6 +11458,24 @@ fn xm430_w210_roles() {
             <Xm430W210 as HasPwmLimit>::ROLE,
             Xm430W210::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xm430W210 as HasHomingOffset>::ROLE,
+            Xm430W210::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xm430W210 as HasMovingThreshold>::ROLE,
+            Xm430W210::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xm430W210 as HasReturnDelayTime>::ROLE,
+            Xm430W210::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11057,6 +11618,24 @@ fn xm430_w210_roles() {
             Xm430W210::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xm430W210 as HasHomingOffset>::ROLE,
+            Xm430W210::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xm430W210 as HasMovingThreshold>::ROLE,
+            Xm430W210::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xm430W210 as HasReturnDelayTime>::ROLE,
+            Xm430W210::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11094,11 +11673,11 @@ fn xm430_w210_mode_source() {
 #[test]
 fn xh430_v350_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh430V350;
 
@@ -11229,6 +11808,24 @@ fn xh430_v350_roles() {
             <Xh430V350 as HasPwmLimit>::ROLE,
             Xh430V350::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh430V350 as HasHomingOffset>::ROLE,
+            Xh430V350::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430V350 as HasMovingThreshold>::ROLE,
+            Xh430V350::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430V350 as HasReturnDelayTime>::ROLE,
+            Xh430V350::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11371,6 +11968,24 @@ fn xh430_v350_roles() {
             Xh430V350::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh430V350 as HasHomingOffset>::ROLE,
+            Xh430V350::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430V350 as HasMovingThreshold>::ROLE,
+            Xh430V350::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430V350 as HasReturnDelayTime>::ROLE,
+            Xh430V350::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11408,11 +12023,11 @@ fn xh430_v350_mode_source() {
 #[test]
 fn xh430_v210_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh430V210;
 
@@ -11543,6 +12158,24 @@ fn xh430_v210_roles() {
             <Xh430V210 as HasPwmLimit>::ROLE,
             Xh430V210::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh430V210 as HasHomingOffset>::ROLE,
+            Xh430V210::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430V210 as HasMovingThreshold>::ROLE,
+            Xh430V210::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430V210 as HasReturnDelayTime>::ROLE,
+            Xh430V210::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11685,6 +12318,24 @@ fn xh430_v210_roles() {
             Xh430V210::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh430V210 as HasHomingOffset>::ROLE,
+            Xh430V210::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh430V210 as HasMovingThreshold>::ROLE,
+            Xh430V210::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh430V210 as HasReturnDelayTime>::ROLE,
+            Xh430V210::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -11722,10 +12373,11 @@ fn xh430_v210_mode_source() {
 #[test]
 fn xl430_w250_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit,
-        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasHomingOffset, HasLed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xl430W250;
 
@@ -11844,6 +12496,24 @@ fn xl430_w250_roles() {
             <Xl430W250 as HasPwmLimit>::ROLE,
             Xl430W250::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xl430W250 as HasHomingOffset>::ROLE,
+            Xl430W250::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl430W250 as HasMovingThreshold>::ROLE,
+            Xl430W250::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl430W250 as HasReturnDelayTime>::ROLE,
+            Xl430W250::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -11976,6 +12646,24 @@ fn xl430_w250_roles() {
             Xl430W250::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xl430W250 as HasHomingOffset>::ROLE,
+            Xl430W250::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl430W250 as HasMovingThreshold>::ROLE,
+            Xl430W250::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl430W250 as HasReturnDelayTime>::ROLE,
+            Xl430W250::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12011,10 +12699,11 @@ fn xl430_w250_mode_source() {
 #[test]
 fn xc430_w150_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit,
-        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasHomingOffset, HasLed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc430W150;
 
@@ -12133,6 +12822,24 @@ fn xc430_w150_roles() {
             <Xc430W150 as HasPwmLimit>::ROLE,
             Xc430W150::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc430W150 as HasHomingOffset>::ROLE,
+            Xc430W150::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc430W150 as HasMovingThreshold>::ROLE,
+            Xc430W150::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc430W150 as HasReturnDelayTime>::ROLE,
+            Xc430W150::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -12265,6 +12972,24 @@ fn xc430_w150_roles() {
             Xc430W150::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc430W150 as HasHomingOffset>::ROLE,
+            Xc430W150::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc430W150 as HasMovingThreshold>::ROLE,
+            Xc430W150::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc430W150 as HasReturnDelayTime>::ROLE,
+            Xc430W150::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12300,10 +13025,11 @@ fn xc430_w150_mode_source() {
 #[test]
 fn xc430_w240_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit,
-        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasHomingOffset, HasLed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc430W240;
 
@@ -12422,6 +13148,24 @@ fn xc430_w240_roles() {
             <Xc430W240 as HasPwmLimit>::ROLE,
             Xc430W240::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc430W240 as HasHomingOffset>::ROLE,
+            Xc430W240::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc430W240 as HasMovingThreshold>::ROLE,
+            Xc430W240::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc430W240 as HasReturnDelayTime>::ROLE,
+            Xc430W240::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -12554,6 +13298,24 @@ fn xc430_w240_roles() {
             Xc430W240::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc430W240 as HasHomingOffset>::ROLE,
+            Xc430W240::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc430W240 as HasMovingThreshold>::ROLE,
+            Xc430W240::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc430W240 as HasReturnDelayTime>::ROLE,
+            Xc430W240::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12589,10 +13351,11 @@ fn xc430_w240_mode_source() {
 #[test]
 fn two_xl430_w250_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit,
-        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasHomingOffset, HasLed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::TwoXl430W250;
 
@@ -12711,6 +13474,24 @@ fn two_xl430_w250_roles() {
             <TwoXl430W250 as HasPwmLimit>::ROLE,
             TwoXl430W250::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <TwoXl430W250 as HasHomingOffset>::ROLE,
+            TwoXl430W250::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <TwoXl430W250 as HasMovingThreshold>::ROLE,
+            TwoXl430W250::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <TwoXl430W250 as HasReturnDelayTime>::ROLE,
+            TwoXl430W250::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -12848,6 +13629,24 @@ fn two_xl430_w250_roles() {
             TwoXl430W250::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <TwoXl430W250 as HasHomingOffset>::ROLE,
+            TwoXl430W250::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <TwoXl430W250 as HasMovingThreshold>::ROLE,
+            TwoXl430W250::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <TwoXl430W250 as HasReturnDelayTime>::ROLE,
+            TwoXl430W250::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -12883,11 +13682,11 @@ fn two_xl430_w250_mode_source() {
 #[test]
 fn xh540_w270_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh540W270;
 
@@ -13018,6 +13817,24 @@ fn xh540_w270_roles() {
             <Xh540W270 as HasPwmLimit>::ROLE,
             Xh540W270::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh540W270 as HasHomingOffset>::ROLE,
+            Xh540W270::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540W270 as HasMovingThreshold>::ROLE,
+            Xh540W270::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540W270 as HasReturnDelayTime>::ROLE,
+            Xh540W270::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -13160,6 +13977,24 @@ fn xh540_w270_roles() {
             Xh540W270::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh540W270 as HasHomingOffset>::ROLE,
+            Xh540W270::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540W270 as HasMovingThreshold>::ROLE,
+            Xh540W270::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540W270 as HasReturnDelayTime>::ROLE,
+            Xh540W270::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -13197,11 +14032,11 @@ fn xh540_w270_mode_source() {
 #[test]
 fn xd540_t270_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xd540T270;
 
@@ -13332,6 +14167,24 @@ fn xd540_t270_roles() {
             <Xd540T270 as HasPwmLimit>::ROLE,
             Xd540T270::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xd540T270 as HasHomingOffset>::ROLE,
+            Xd540T270::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd540T270 as HasMovingThreshold>::ROLE,
+            Xd540T270::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd540T270 as HasReturnDelayTime>::ROLE,
+            Xd540T270::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -13474,6 +14327,24 @@ fn xd540_t270_roles() {
             Xd540T270::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xd540T270 as HasHomingOffset>::ROLE,
+            Xd540T270::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd540T270 as HasMovingThreshold>::ROLE,
+            Xd540T270::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd540T270 as HasReturnDelayTime>::ROLE,
+            Xd540T270::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -13511,11 +14382,11 @@ fn xd540_t270_mode_source() {
 #[test]
 fn xh540_w150_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh540W150;
 
@@ -13646,6 +14517,24 @@ fn xh540_w150_roles() {
             <Xh540W150 as HasPwmLimit>::ROLE,
             Xh540W150::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh540W150 as HasHomingOffset>::ROLE,
+            Xh540W150::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540W150 as HasMovingThreshold>::ROLE,
+            Xh540W150::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540W150 as HasReturnDelayTime>::ROLE,
+            Xh540W150::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -13788,6 +14677,24 @@ fn xh540_w150_roles() {
             Xh540W150::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh540W150 as HasHomingOffset>::ROLE,
+            Xh540W150::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540W150 as HasMovingThreshold>::ROLE,
+            Xh540W150::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540W150 as HasReturnDelayTime>::ROLE,
+            Xh540W150::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -13825,11 +14732,11 @@ fn xh540_w150_mode_source() {
 #[test]
 fn xd540_t150_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xd540T150;
 
@@ -13960,6 +14867,24 @@ fn xd540_t150_roles() {
             <Xd540T150 as HasPwmLimit>::ROLE,
             Xd540T150::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xd540T150 as HasHomingOffset>::ROLE,
+            Xd540T150::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd540T150 as HasMovingThreshold>::ROLE,
+            Xd540T150::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd540T150 as HasReturnDelayTime>::ROLE,
+            Xd540T150::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14102,6 +15027,24 @@ fn xd540_t150_roles() {
             Xd540T150::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xd540T150 as HasHomingOffset>::ROLE,
+            Xd540T150::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xd540T150 as HasMovingThreshold>::ROLE,
+            Xd540T150::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xd540T150 as HasReturnDelayTime>::ROLE,
+            Xd540T150::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14139,11 +15082,11 @@ fn xd540_t150_mode_source() {
 #[test]
 fn xm540_w270_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xm540W270;
 
@@ -14274,6 +15217,24 @@ fn xm540_w270_roles() {
             <Xm540W270 as HasPwmLimit>::ROLE,
             Xm540W270::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xm540W270 as HasHomingOffset>::ROLE,
+            Xm540W270::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xm540W270 as HasMovingThreshold>::ROLE,
+            Xm540W270::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xm540W270 as HasReturnDelayTime>::ROLE,
+            Xm540W270::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14416,6 +15377,24 @@ fn xm540_w270_roles() {
             Xm540W270::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xm540W270 as HasHomingOffset>::ROLE,
+            Xm540W270::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xm540W270 as HasMovingThreshold>::ROLE,
+            Xm540W270::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xm540W270 as HasReturnDelayTime>::ROLE,
+            Xm540W270::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14453,11 +15432,11 @@ fn xm540_w270_mode_source() {
 #[test]
 fn xm540_w150_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xm540W150;
 
@@ -14588,6 +15567,24 @@ fn xm540_w150_roles() {
             <Xm540W150 as HasPwmLimit>::ROLE,
             Xm540W150::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xm540W150 as HasHomingOffset>::ROLE,
+            Xm540W150::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xm540W150 as HasMovingThreshold>::ROLE,
+            Xm540W150::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xm540W150 as HasReturnDelayTime>::ROLE,
+            Xm540W150::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -14730,6 +15727,24 @@ fn xm540_w150_roles() {
             Xm540W150::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xm540W150 as HasHomingOffset>::ROLE,
+            Xm540W150::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xm540W150 as HasMovingThreshold>::ROLE,
+            Xm540W150::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xm540W150 as HasReturnDelayTime>::ROLE,
+            Xm540W150::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -14767,11 +15782,11 @@ fn xm540_w150_mode_source() {
 #[test]
 fn xh540_v270_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh540V270;
 
@@ -14902,6 +15917,24 @@ fn xh540_v270_roles() {
             <Xh540V270 as HasPwmLimit>::ROLE,
             Xh540V270::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh540V270 as HasHomingOffset>::ROLE,
+            Xh540V270::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540V270 as HasMovingThreshold>::ROLE,
+            Xh540V270::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540V270 as HasReturnDelayTime>::ROLE,
+            Xh540V270::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -15044,6 +16077,24 @@ fn xh540_v270_roles() {
             Xh540V270::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh540V270 as HasHomingOffset>::ROLE,
+            Xh540V270::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540V270 as HasMovingThreshold>::ROLE,
+            Xh540V270::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540V270 as HasReturnDelayTime>::ROLE,
+            Xh540V270::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15081,11 +16132,11 @@ fn xh540_v270_mode_source() {
 #[test]
 fn xh540_v150_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xh540V150;
 
@@ -15216,6 +16267,24 @@ fn xh540_v150_roles() {
             <Xh540V150 as HasPwmLimit>::ROLE,
             Xh540V150::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xh540V150 as HasHomingOffset>::ROLE,
+            Xh540V150::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540V150 as HasMovingThreshold>::ROLE,
+            Xh540V150::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540V150 as HasReturnDelayTime>::ROLE,
+            Xh540V150::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -15358,6 +16427,24 @@ fn xh540_v150_roles() {
             Xh540V150::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xh540V150 as HasHomingOffset>::ROLE,
+            Xh540V150::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xh540V150 as HasMovingThreshold>::ROLE,
+            Xh540V150::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xh540V150 as HasReturnDelayTime>::ROLE,
+            Xh540V150::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15395,10 +16482,11 @@ fn xh540_v150_mode_source() {
 #[test]
 fn two_xc430_w250_roles() {
     use crate::actuator::{
-        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasLed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit,
-        HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
+        HasDGain, HasGoalVelocity, HasHardwareErrorStatus, HasHomingOffset, HasLed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentLoad, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::TwoXc430W250;
 
@@ -15517,6 +16605,24 @@ fn two_xc430_w250_roles() {
             <TwoXc430W250 as HasPwmLimit>::ROLE,
             TwoXc430W250::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <TwoXc430W250 as HasHomingOffset>::ROLE,
+            TwoXc430W250::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <TwoXc430W250 as HasMovingThreshold>::ROLE,
+            TwoXc430W250::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <TwoXc430W250 as HasReturnDelayTime>::ROLE,
+            TwoXc430W250::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -15654,6 +16760,24 @@ fn two_xc430_w250_roles() {
             TwoXc430W250::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <TwoXc430W250 as HasHomingOffset>::ROLE,
+            TwoXc430W250::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <TwoXc430W250 as HasMovingThreshold>::ROLE,
+            TwoXc430W250::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <TwoXc430W250 as HasReturnDelayTime>::ROLE,
+            TwoXc430W250::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15690,10 +16814,10 @@ fn two_xc430_w250_mode_source() {
 fn xw540_t260_roles() {
     use crate::actuator::{
         HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasHomingOffset, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xw540T260;
 
@@ -15819,6 +16943,24 @@ fn xw540_t260_roles() {
             Xw540T260::PWM_LIMIT,
             "PWM Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Xw540T260 as HasHomingOffset>::ROLE,
+            Xw540T260::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw540T260 as HasMovingThreshold>::ROLE,
+            Xw540T260::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw540T260 as HasReturnDelayTime>::ROLE,
+            Xw540T260::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -15960,6 +17102,24 @@ fn xw540_t260_roles() {
             Xw540T260::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xw540T260 as HasHomingOffset>::ROLE,
+            Xw540T260::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw540T260 as HasMovingThreshold>::ROLE,
+            Xw540T260::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw540T260 as HasReturnDelayTime>::ROLE,
+            Xw540T260::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -15998,10 +17158,10 @@ fn xw540_t260_mode_source() {
 fn xw540_t140_roles() {
     use crate::actuator::{
         HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasHomingOffset, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xw540T140;
 
@@ -16126,6 +17286,24 @@ fn xw540_t140_roles() {
             <Xw540T140 as HasPwmLimit>::ROLE,
             Xw540T140::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xw540T140 as HasHomingOffset>::ROLE,
+            Xw540T140::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw540T140 as HasMovingThreshold>::ROLE,
+            Xw540T140::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw540T140 as HasReturnDelayTime>::ROLE,
+            Xw540T140::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -16268,6 +17446,24 @@ fn xw540_t140_roles() {
             Xw540T140::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xw540T140 as HasHomingOffset>::ROLE,
+            Xw540T140::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw540T140 as HasMovingThreshold>::ROLE,
+            Xw540T140::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw540T140 as HasReturnDelayTime>::ROLE,
+            Xw540T140::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16305,11 +17501,11 @@ fn xw540_t140_mode_source() {
 #[test]
 fn xl330_m077_fw52_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xl330M077Fw52;
 
@@ -16441,6 +17637,24 @@ fn xl330_m077_fw52_roles() {
             Xl330M077Fw52::PWM_LIMIT,
             "PWM Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Xl330M077Fw52 as HasHomingOffset>::ROLE,
+            Xl330M077Fw52::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M077Fw52 as HasMovingThreshold>::ROLE,
+            Xl330M077Fw52::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M077Fw52 as HasReturnDelayTime>::ROLE,
+            Xl330M077Fw52::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -16587,6 +17801,24 @@ fn xl330_m077_fw52_roles() {
             Xl330M077Fw52::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xl330M077Fw52 as HasHomingOffset>::ROLE,
+            Xl330M077Fw52::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M077Fw52 as HasMovingThreshold>::ROLE,
+            Xl330M077Fw52::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M077Fw52 as HasReturnDelayTime>::ROLE,
+            Xl330M077Fw52::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16624,11 +17856,11 @@ fn xl330_m077_fw52_mode_source() {
 #[test]
 fn xl330_m077_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xl330M077;
 
@@ -16759,6 +17991,24 @@ fn xl330_m077_roles() {
             <Xl330M077 as HasPwmLimit>::ROLE,
             Xl330M077::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xl330M077 as HasHomingOffset>::ROLE,
+            Xl330M077::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M077 as HasMovingThreshold>::ROLE,
+            Xl330M077::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M077 as HasReturnDelayTime>::ROLE,
+            Xl330M077::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -16901,6 +18151,24 @@ fn xl330_m077_roles() {
             Xl330M077::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xl330M077 as HasHomingOffset>::ROLE,
+            Xl330M077::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M077 as HasMovingThreshold>::ROLE,
+            Xl330M077::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M077 as HasReturnDelayTime>::ROLE,
+            Xl330M077::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -16938,11 +18206,11 @@ fn xl330_m077_mode_source() {
 #[test]
 fn xl330_m288_fw52_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xl330M288Fw52;
 
@@ -17073,6 +18341,24 @@ fn xl330_m288_fw52_roles() {
             <Xl330M288Fw52 as HasPwmLimit>::ROLE,
             Xl330M288Fw52::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xl330M288Fw52 as HasHomingOffset>::ROLE,
+            Xl330M288Fw52::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M288Fw52 as HasMovingThreshold>::ROLE,
+            Xl330M288Fw52::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M288Fw52 as HasReturnDelayTime>::ROLE,
+            Xl330M288Fw52::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -17220,6 +18506,24 @@ fn xl330_m288_fw52_roles() {
             Xl330M288Fw52::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xl330M288Fw52 as HasHomingOffset>::ROLE,
+            Xl330M288Fw52::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M288Fw52 as HasMovingThreshold>::ROLE,
+            Xl330M288Fw52::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M288Fw52 as HasReturnDelayTime>::ROLE,
+            Xl330M288Fw52::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17257,11 +18561,11 @@ fn xl330_m288_fw52_mode_source() {
 #[test]
 fn xl330_m288_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xl330M288;
 
@@ -17392,6 +18696,24 @@ fn xl330_m288_roles() {
             <Xl330M288 as HasPwmLimit>::ROLE,
             Xl330M288::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xl330M288 as HasHomingOffset>::ROLE,
+            Xl330M288::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M288 as HasMovingThreshold>::ROLE,
+            Xl330M288::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M288 as HasReturnDelayTime>::ROLE,
+            Xl330M288::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -17534,6 +18856,24 @@ fn xl330_m288_roles() {
             Xl330M288::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xl330M288 as HasHomingOffset>::ROLE,
+            Xl330M288::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xl330M288 as HasMovingThreshold>::ROLE,
+            Xl330M288::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xl330M288 as HasReturnDelayTime>::ROLE,
+            Xl330M288::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17571,11 +18911,11 @@ fn xl330_m288_mode_source() {
 #[test]
 fn xc330_t181_fw52_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330T181Fw52;
 
@@ -17706,6 +19046,24 @@ fn xc330_t181_fw52_roles() {
             <Xc330T181Fw52 as HasPwmLimit>::ROLE,
             Xc330T181Fw52::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330T181Fw52 as HasHomingOffset>::ROLE,
+            Xc330T181Fw52::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T181Fw52 as HasMovingThreshold>::ROLE,
+            Xc330T181Fw52::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T181Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330T181Fw52::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -17853,6 +19211,24 @@ fn xc330_t181_fw52_roles() {
             Xc330T181Fw52::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330T181Fw52 as HasHomingOffset>::ROLE,
+            Xc330T181Fw52::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T181Fw52 as HasMovingThreshold>::ROLE,
+            Xc330T181Fw52::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T181Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330T181Fw52::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -17890,11 +19266,11 @@ fn xc330_t181_fw52_mode_source() {
 #[test]
 fn xc330_t181_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330T181;
 
@@ -18025,6 +19401,24 @@ fn xc330_t181_roles() {
             <Xc330T181 as HasPwmLimit>::ROLE,
             Xc330T181::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330T181 as HasHomingOffset>::ROLE,
+            Xc330T181::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T181 as HasMovingThreshold>::ROLE,
+            Xc330T181::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T181 as HasReturnDelayTime>::ROLE,
+            Xc330T181::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -18167,6 +19561,24 @@ fn xc330_t181_roles() {
             Xc330T181::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330T181 as HasHomingOffset>::ROLE,
+            Xc330T181::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T181 as HasMovingThreshold>::ROLE,
+            Xc330T181::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T181 as HasReturnDelayTime>::ROLE,
+            Xc330T181::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18204,11 +19616,11 @@ fn xc330_t181_mode_source() {
 #[test]
 fn xc330_t288_fw52_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330T288Fw52;
 
@@ -18339,6 +19751,24 @@ fn xc330_t288_fw52_roles() {
             <Xc330T288Fw52 as HasPwmLimit>::ROLE,
             Xc330T288Fw52::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330T288Fw52 as HasHomingOffset>::ROLE,
+            Xc330T288Fw52::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T288Fw52 as HasMovingThreshold>::ROLE,
+            Xc330T288Fw52::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T288Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330T288Fw52::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -18486,6 +19916,24 @@ fn xc330_t288_fw52_roles() {
             Xc330T288Fw52::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330T288Fw52 as HasHomingOffset>::ROLE,
+            Xc330T288Fw52::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T288Fw52 as HasMovingThreshold>::ROLE,
+            Xc330T288Fw52::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T288Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330T288Fw52::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18523,11 +19971,11 @@ fn xc330_t288_fw52_mode_source() {
 #[test]
 fn xc330_t288_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330T288;
 
@@ -18658,6 +20106,24 @@ fn xc330_t288_roles() {
             <Xc330T288 as HasPwmLimit>::ROLE,
             Xc330T288::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330T288 as HasHomingOffset>::ROLE,
+            Xc330T288::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T288 as HasMovingThreshold>::ROLE,
+            Xc330T288::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T288 as HasReturnDelayTime>::ROLE,
+            Xc330T288::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -18800,6 +20266,24 @@ fn xc330_t288_roles() {
             Xc330T288::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330T288 as HasHomingOffset>::ROLE,
+            Xc330T288::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330T288 as HasMovingThreshold>::ROLE,
+            Xc330T288::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330T288 as HasReturnDelayTime>::ROLE,
+            Xc330T288::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -18837,11 +20321,11 @@ fn xc330_t288_mode_source() {
 #[test]
 fn xc330_m181_fw52_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330M181Fw52;
 
@@ -18972,6 +20456,24 @@ fn xc330_m181_fw52_roles() {
             <Xc330M181Fw52 as HasPwmLimit>::ROLE,
             Xc330M181Fw52::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330M181Fw52 as HasHomingOffset>::ROLE,
+            Xc330M181Fw52::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M181Fw52 as HasMovingThreshold>::ROLE,
+            Xc330M181Fw52::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M181Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330M181Fw52::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -19119,6 +20621,24 @@ fn xc330_m181_fw52_roles() {
             Xc330M181Fw52::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330M181Fw52 as HasHomingOffset>::ROLE,
+            Xc330M181Fw52::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M181Fw52 as HasMovingThreshold>::ROLE,
+            Xc330M181Fw52::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M181Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330M181Fw52::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19156,11 +20676,11 @@ fn xc330_m181_fw52_mode_source() {
 #[test]
 fn xc330_m181_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330M181;
 
@@ -19291,6 +20811,24 @@ fn xc330_m181_roles() {
             <Xc330M181 as HasPwmLimit>::ROLE,
             Xc330M181::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330M181 as HasHomingOffset>::ROLE,
+            Xc330M181::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M181 as HasMovingThreshold>::ROLE,
+            Xc330M181::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M181 as HasReturnDelayTime>::ROLE,
+            Xc330M181::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -19433,6 +20971,24 @@ fn xc330_m181_roles() {
             Xc330M181::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330M181 as HasHomingOffset>::ROLE,
+            Xc330M181::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M181 as HasMovingThreshold>::ROLE,
+            Xc330M181::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M181 as HasReturnDelayTime>::ROLE,
+            Xc330M181::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19470,11 +21026,11 @@ fn xc330_m181_mode_source() {
 #[test]
 fn xc330_m288_fw52_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330M288Fw52;
 
@@ -19605,6 +21161,24 @@ fn xc330_m288_fw52_roles() {
             <Xc330M288Fw52 as HasPwmLimit>::ROLE,
             Xc330M288Fw52::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330M288Fw52 as HasHomingOffset>::ROLE,
+            Xc330M288Fw52::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M288Fw52 as HasMovingThreshold>::ROLE,
+            Xc330M288Fw52::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M288Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330M288Fw52::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -19752,6 +21326,24 @@ fn xc330_m288_fw52_roles() {
             Xc330M288Fw52::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330M288Fw52 as HasHomingOffset>::ROLE,
+            Xc330M288Fw52::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M288Fw52 as HasMovingThreshold>::ROLE,
+            Xc330M288Fw52::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M288Fw52 as HasReturnDelayTime>::ROLE,
+            Xc330M288Fw52::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -19789,11 +21381,11 @@ fn xc330_m288_fw52_mode_source() {
 #[test]
 fn xc330_m288_roles() {
     use crate::actuator::{
-        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xc330M288;
 
@@ -19924,6 +21516,24 @@ fn xc330_m288_roles() {
             <Xc330M288 as HasPwmLimit>::ROLE,
             Xc330M288::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xc330M288 as HasHomingOffset>::ROLE,
+            Xc330M288::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M288 as HasMovingThreshold>::ROLE,
+            Xc330M288::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M288 as HasReturnDelayTime>::ROLE,
+            Xc330M288::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -20066,6 +21676,24 @@ fn xc330_m288_roles() {
             Xc330M288::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xc330M288 as HasHomingOffset>::ROLE,
+            Xc330M288::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xc330M288 as HasMovingThreshold>::ROLE,
+            Xc330M288::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xc330M288 as HasReturnDelayTime>::ROLE,
+            Xc330M288::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -20104,10 +21732,10 @@ fn xc330_m288_mode_source() {
 fn xw430_t333_roles() {
     use crate::actuator::{
         HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasHomingOffset, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xw430T333;
 
@@ -20233,6 +21861,24 @@ fn xw430_t333_roles() {
             Xw430T333::PWM_LIMIT,
             "PWM Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Xw430T333 as HasHomingOffset>::ROLE,
+            Xw430T333::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw430T333 as HasMovingThreshold>::ROLE,
+            Xw430T333::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw430T333 as HasReturnDelayTime>::ROLE,
+            Xw430T333::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -20374,6 +22020,24 @@ fn xw430_t333_roles() {
             Xw430T333::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xw430T333 as HasHomingOffset>::ROLE,
+            Xw430T333::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw430T333 as HasMovingThreshold>::ROLE,
+            Xw430T333::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw430T333 as HasReturnDelayTime>::ROLE,
+            Xw430T333::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -20412,10 +22076,10 @@ fn xw430_t333_mode_source() {
 fn xw540_h260_roles() {
     use crate::actuator::{
         HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasHardwareErrorStatus,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
-        HasMoving, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
-        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-        HasVelocityLimit, LimitMode, Role,
+        HasHomingOffset, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent,
+        HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+        HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Xw540H260;
 
@@ -20540,6 +22204,24 @@ fn xw540_h260_roles() {
             <Xw540H260 as HasPwmLimit>::ROLE,
             Xw540H260::PWM_LIMIT,
             "PWM Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Xw540H260 as HasHomingOffset>::ROLE,
+            Xw540H260::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw540H260 as HasMovingThreshold>::ROLE,
+            Xw540H260::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw540H260 as HasReturnDelayTime>::ROLE,
+            Xw540H260::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -20682,6 +22364,24 @@ fn xw540_h260_roles() {
             Xw540H260::PWM_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Xw540H260 as HasHomingOffset>::ROLE,
+            Xw540H260::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Xw540H260 as HasMovingThreshold>::ROLE,
+            Xw540H260::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Xw540H260 as HasReturnDelayTime>::ROLE,
+            Xw540H260::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -20720,11 +22420,11 @@ fn xw540_h260_mode_source() {
 fn ph42_020_s300_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ph42020S300;
 
@@ -20874,6 +22574,24 @@ fn ph42_020_s300_roles() {
             Ph42020S300::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ph42020S300 as HasHomingOffset>::ROLE,
+            Ph42020S300::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ph42020S300 as HasMovingThreshold>::ROLE,
+            Ph42020S300::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ph42020S300 as HasReturnDelayTime>::ROLE,
+            Ph42020S300::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -21035,6 +22753,24 @@ fn ph42_020_s300_roles() {
             Ph42020S300::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ph42020S300 as HasHomingOffset>::ROLE,
+            Ph42020S300::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ph42020S300 as HasMovingThreshold>::ROLE,
+            Ph42020S300::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ph42020S300 as HasReturnDelayTime>::ROLE,
+            Ph42020S300::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -21072,11 +22808,11 @@ fn ph42_020_s300_mode_source() {
 fn ph54_100_s500_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ph54100S500;
 
@@ -21226,6 +22962,24 @@ fn ph54_100_s500_roles() {
             Ph54100S500::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ph54100S500 as HasHomingOffset>::ROLE,
+            Ph54100S500::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ph54100S500 as HasMovingThreshold>::ROLE,
+            Ph54100S500::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ph54100S500 as HasReturnDelayTime>::ROLE,
+            Ph54100S500::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -21387,6 +23141,24 @@ fn ph54_100_s500_roles() {
             Ph54100S500::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ph54100S500 as HasHomingOffset>::ROLE,
+            Ph54100S500::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ph54100S500 as HasMovingThreshold>::ROLE,
+            Ph54100S500::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ph54100S500 as HasReturnDelayTime>::ROLE,
+            Ph54100S500::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -21424,11 +23196,11 @@ fn ph54_100_s500_mode_source() {
 fn ph54_200_s500_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ph54200S500;
 
@@ -21578,6 +23350,24 @@ fn ph54_200_s500_roles() {
             Ph54200S500::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ph54200S500 as HasHomingOffset>::ROLE,
+            Ph54200S500::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ph54200S500 as HasMovingThreshold>::ROLE,
+            Ph54200S500::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ph54200S500 as HasReturnDelayTime>::ROLE,
+            Ph54200S500::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -21739,6 +23529,24 @@ fn ph54_200_s500_roles() {
             Ph54200S500::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ph54200S500 as HasHomingOffset>::ROLE,
+            Ph54200S500::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ph54200S500 as HasMovingThreshold>::ROLE,
+            Ph54200S500::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ph54200S500 as HasReturnDelayTime>::ROLE,
+            Ph54200S500::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -21776,11 +23584,11 @@ fn ph54_200_s500_mode_source() {
 fn pm42_010_s260_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Pm42010S260;
 
@@ -21930,6 +23738,24 @@ fn pm42_010_s260_roles() {
             Pm42010S260::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Pm42010S260 as HasHomingOffset>::ROLE,
+            Pm42010S260::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Pm42010S260 as HasMovingThreshold>::ROLE,
+            Pm42010S260::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Pm42010S260 as HasReturnDelayTime>::ROLE,
+            Pm42010S260::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -22091,6 +23917,24 @@ fn pm42_010_s260_roles() {
             Pm42010S260::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Pm42010S260 as HasHomingOffset>::ROLE,
+            Pm42010S260::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Pm42010S260 as HasMovingThreshold>::ROLE,
+            Pm42010S260::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Pm42010S260 as HasReturnDelayTime>::ROLE,
+            Pm42010S260::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -22128,11 +23972,11 @@ fn pm42_010_s260_mode_source() {
 fn pm54_040_s250_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Pm54040S250;
 
@@ -22282,6 +24126,24 @@ fn pm54_040_s250_roles() {
             Pm54040S250::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Pm54040S250 as HasHomingOffset>::ROLE,
+            Pm54040S250::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Pm54040S250 as HasMovingThreshold>::ROLE,
+            Pm54040S250::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Pm54040S250 as HasReturnDelayTime>::ROLE,
+            Pm54040S250::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -22443,6 +24305,24 @@ fn pm54_040_s250_roles() {
             Pm54040S250::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Pm54040S250 as HasHomingOffset>::ROLE,
+            Pm54040S250::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Pm54040S250 as HasMovingThreshold>::ROLE,
+            Pm54040S250::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Pm54040S250 as HasReturnDelayTime>::ROLE,
+            Pm54040S250::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -22480,11 +24360,11 @@ fn pm54_040_s250_mode_source() {
 fn pm54_060_s250_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Pm54060S250;
 
@@ -22634,6 +24514,24 @@ fn pm54_060_s250_roles() {
             Pm54060S250::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Pm54060S250 as HasHomingOffset>::ROLE,
+            Pm54060S250::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Pm54060S250 as HasMovingThreshold>::ROLE,
+            Pm54060S250::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Pm54060S250 as HasReturnDelayTime>::ROLE,
+            Pm54060S250::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -22795,6 +24693,24 @@ fn pm54_060_s250_roles() {
             Pm54060S250::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Pm54060S250 as HasHomingOffset>::ROLE,
+            Pm54060S250::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Pm54060S250 as HasMovingThreshold>::ROLE,
+            Pm54060S250::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Pm54060S250 as HasReturnDelayTime>::ROLE,
+            Pm54060S250::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -22831,10 +24747,11 @@ fn pm54_060_s250_mode_source() {
 #[test]
 fn ym070_210_m001_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym070210M001;
 
@@ -22948,6 +24865,24 @@ fn ym070_210_m001_roles() {
             Ym070210M001::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210M001 as HasHomingOffset>::ROLE,
+            Ym070210M001::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210M001 as HasMovingThreshold>::ROLE,
+            Ym070210M001::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210M001 as HasReturnDelayTime>::ROLE,
+            Ym070210M001::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -23079,6 +25014,24 @@ fn ym070_210_m001_roles() {
             Ym070210M001::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210M001 as HasHomingOffset>::ROLE,
+            Ym070210M001::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210M001 as HasMovingThreshold>::ROLE,
+            Ym070210M001::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210M001 as HasReturnDelayTime>::ROLE,
+            Ym070210M001::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -23113,10 +25066,11 @@ fn ym070_210_m001_mode_source() {
 #[test]
 fn ym070_210_b001_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym070210B001;
 
@@ -23230,6 +25184,24 @@ fn ym070_210_b001_roles() {
             Ym070210B001::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210B001 as HasHomingOffset>::ROLE,
+            Ym070210B001::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210B001 as HasMovingThreshold>::ROLE,
+            Ym070210B001::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210B001 as HasReturnDelayTime>::ROLE,
+            Ym070210B001::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -23361,6 +25333,24 @@ fn ym070_210_b001_roles() {
             Ym070210B001::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210B001 as HasHomingOffset>::ROLE,
+            Ym070210B001::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210B001 as HasMovingThreshold>::ROLE,
+            Ym070210B001::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210B001 as HasReturnDelayTime>::ROLE,
+            Ym070210B001::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -23395,10 +25385,11 @@ fn ym070_210_b001_mode_source() {
 #[test]
 fn ym070_210_r051_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym070210R051;
 
@@ -23512,6 +25503,24 @@ fn ym070_210_r051_roles() {
             Ym070210R051::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210R051 as HasHomingOffset>::ROLE,
+            Ym070210R051::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210R051 as HasMovingThreshold>::ROLE,
+            Ym070210R051::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210R051 as HasReturnDelayTime>::ROLE,
+            Ym070210R051::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -23643,6 +25652,24 @@ fn ym070_210_r051_roles() {
             Ym070210R051::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210R051 as HasHomingOffset>::ROLE,
+            Ym070210R051::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210R051 as HasMovingThreshold>::ROLE,
+            Ym070210R051::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210R051 as HasReturnDelayTime>::ROLE,
+            Ym070210R051::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -23677,10 +25704,11 @@ fn ym070_210_r051_mode_source() {
 #[test]
 fn ym070_210_r099_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym070210R099;
 
@@ -23794,6 +25822,24 @@ fn ym070_210_r099_roles() {
             Ym070210R099::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210R099 as HasHomingOffset>::ROLE,
+            Ym070210R099::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210R099 as HasMovingThreshold>::ROLE,
+            Ym070210R099::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210R099 as HasReturnDelayTime>::ROLE,
+            Ym070210R099::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -23925,6 +25971,24 @@ fn ym070_210_r099_roles() {
             Ym070210R099::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210R099 as HasHomingOffset>::ROLE,
+            Ym070210R099::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210R099 as HasMovingThreshold>::ROLE,
+            Ym070210R099::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210R099 as HasReturnDelayTime>::ROLE,
+            Ym070210R099::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -23959,10 +26023,11 @@ fn ym070_210_r099_mode_source() {
 #[test]
 fn ym070_210_a051_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym070210A051;
 
@@ -24076,6 +26141,24 @@ fn ym070_210_a051_roles() {
             Ym070210A051::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210A051 as HasHomingOffset>::ROLE,
+            Ym070210A051::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210A051 as HasMovingThreshold>::ROLE,
+            Ym070210A051::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210A051 as HasReturnDelayTime>::ROLE,
+            Ym070210A051::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -24207,6 +26290,24 @@ fn ym070_210_a051_roles() {
             Ym070210A051::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210A051 as HasHomingOffset>::ROLE,
+            Ym070210A051::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210A051 as HasMovingThreshold>::ROLE,
+            Ym070210A051::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210A051 as HasReturnDelayTime>::ROLE,
+            Ym070210A051::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -24241,10 +26342,11 @@ fn ym070_210_a051_mode_source() {
 #[test]
 fn ym070_210_a099_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym070210A099;
 
@@ -24358,6 +26460,24 @@ fn ym070_210_a099_roles() {
             Ym070210A099::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210A099 as HasHomingOffset>::ROLE,
+            Ym070210A099::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210A099 as HasMovingThreshold>::ROLE,
+            Ym070210A099::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210A099 as HasReturnDelayTime>::ROLE,
+            Ym070210A099::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -24489,6 +26609,24 @@ fn ym070_210_a099_roles() {
             Ym070210A099::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym070210A099 as HasHomingOffset>::ROLE,
+            Ym070210A099::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym070210A099 as HasMovingThreshold>::ROLE,
+            Ym070210A099::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym070210A099 as HasReturnDelayTime>::ROLE,
+            Ym070210A099::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -24523,10 +26661,11 @@ fn ym070_210_a099_mode_source() {
 #[test]
 fn ym080_230_m001_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym080230M001;
 
@@ -24640,6 +26779,24 @@ fn ym080_230_m001_roles() {
             Ym080230M001::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230M001 as HasHomingOffset>::ROLE,
+            Ym080230M001::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230M001 as HasMovingThreshold>::ROLE,
+            Ym080230M001::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230M001 as HasReturnDelayTime>::ROLE,
+            Ym080230M001::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -24771,6 +26928,24 @@ fn ym080_230_m001_roles() {
             Ym080230M001::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230M001 as HasHomingOffset>::ROLE,
+            Ym080230M001::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230M001 as HasMovingThreshold>::ROLE,
+            Ym080230M001::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230M001 as HasReturnDelayTime>::ROLE,
+            Ym080230M001::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -24805,10 +26980,11 @@ fn ym080_230_m001_mode_source() {
 #[test]
 fn ym080_230_b001_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym080230B001;
 
@@ -24922,6 +27098,24 @@ fn ym080_230_b001_roles() {
             Ym080230B001::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230B001 as HasHomingOffset>::ROLE,
+            Ym080230B001::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230B001 as HasMovingThreshold>::ROLE,
+            Ym080230B001::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230B001 as HasReturnDelayTime>::ROLE,
+            Ym080230B001::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -25053,6 +27247,24 @@ fn ym080_230_b001_roles() {
             Ym080230B001::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230B001 as HasHomingOffset>::ROLE,
+            Ym080230B001::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230B001 as HasMovingThreshold>::ROLE,
+            Ym080230B001::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230B001 as HasReturnDelayTime>::ROLE,
+            Ym080230B001::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -25087,10 +27299,11 @@ fn ym080_230_b001_mode_source() {
 #[test]
 fn ym080_230_r051_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym080230R051;
 
@@ -25204,6 +27417,24 @@ fn ym080_230_r051_roles() {
             Ym080230R051::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230R051 as HasHomingOffset>::ROLE,
+            Ym080230R051::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230R051 as HasMovingThreshold>::ROLE,
+            Ym080230R051::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230R051 as HasReturnDelayTime>::ROLE,
+            Ym080230R051::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -25335,6 +27566,24 @@ fn ym080_230_r051_roles() {
             Ym080230R051::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230R051 as HasHomingOffset>::ROLE,
+            Ym080230R051::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230R051 as HasMovingThreshold>::ROLE,
+            Ym080230R051::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230R051 as HasReturnDelayTime>::ROLE,
+            Ym080230R051::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -25369,10 +27618,11 @@ fn ym080_230_r051_mode_source() {
 #[test]
 fn ym080_230_r099_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym080230R099;
 
@@ -25486,6 +27736,24 @@ fn ym080_230_r099_roles() {
             Ym080230R099::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230R099 as HasHomingOffset>::ROLE,
+            Ym080230R099::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230R099 as HasMovingThreshold>::ROLE,
+            Ym080230R099::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230R099 as HasReturnDelayTime>::ROLE,
+            Ym080230R099::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -25617,6 +27885,24 @@ fn ym080_230_r099_roles() {
             Ym080230R099::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230R099 as HasHomingOffset>::ROLE,
+            Ym080230R099::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230R099 as HasMovingThreshold>::ROLE,
+            Ym080230R099::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230R099 as HasReturnDelayTime>::ROLE,
+            Ym080230R099::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -25651,10 +27937,11 @@ fn ym080_230_r099_mode_source() {
 #[test]
 fn ym080_230_a051_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym080230A051;
 
@@ -25768,6 +28055,24 @@ fn ym080_230_a051_roles() {
             Ym080230A051::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230A051 as HasHomingOffset>::ROLE,
+            Ym080230A051::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230A051 as HasMovingThreshold>::ROLE,
+            Ym080230A051::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230A051 as HasReturnDelayTime>::ROLE,
+            Ym080230A051::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -25899,6 +28204,24 @@ fn ym080_230_a051_roles() {
             Ym080230A051::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230A051 as HasHomingOffset>::ROLE,
+            Ym080230A051::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230A051 as HasMovingThreshold>::ROLE,
+            Ym080230A051::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230A051 as HasReturnDelayTime>::ROLE,
+            Ym080230A051::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -25933,10 +28256,11 @@ fn ym080_230_a051_mode_source() {
 #[test]
 fn ym080_230_a099_roles() {
     use crate::actuator::{
-        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
-        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasPGain,
-        HasPresentCurrent, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
-        HasSpeedLimit, HasVelocityLimit, LimitMode, Role,
+        HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
+        HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
+        HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentVelocity,
+        HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
+        HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::Ym080230A099;
 
@@ -26049,6 +28373,24 @@ fn ym080_230_a099_roles() {
             <Ym080230A099 as HasAccelerationLimit>::ROLE,
             Ym080230A099::ACCELERATION_LIMIT,
             "Acceleration Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <Ym080230A099 as HasHomingOffset>::ROLE,
+            Ym080230A099::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230A099 as HasMovingThreshold>::ROLE,
+            Ym080230A099::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230A099 as HasReturnDelayTime>::ROLE,
+            Ym080230A099::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -26181,6 +28523,24 @@ fn ym080_230_a099_roles() {
             Ym080230A099::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <Ym080230A099 as HasHomingOffset>::ROLE,
+            Ym080230A099::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <Ym080230A099 as HasMovingThreshold>::ROLE,
+            Ym080230A099::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <Ym080230A099 as HasReturnDelayTime>::ROLE,
+            Ym080230A099::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -26216,11 +28576,11 @@ fn ym080_230_a099_mode_source() {
 fn rh_p12_rn_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::RhP12Rn;
 
@@ -26370,6 +28730,24 @@ fn rh_p12_rn_roles() {
             RhP12Rn::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <RhP12Rn as HasHomingOffset>::ROLE,
+            RhP12Rn::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <RhP12Rn as HasMovingThreshold>::ROLE,
+            RhP12Rn::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <RhP12Rn as HasReturnDelayTime>::ROLE,
+            RhP12Rn::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -26531,6 +28909,24 @@ fn rh_p12_rn_roles() {
             RhP12Rn::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <RhP12Rn as HasHomingOffset>::ROLE,
+            RhP12Rn::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <RhP12Rn as HasMovingThreshold>::ROLE,
+            RhP12Rn::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <RhP12Rn as HasReturnDelayTime>::ROLE,
+            RhP12Rn::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -26565,11 +28961,11 @@ fn rh_p12_rn_mode_source() {
 fn m42_10_s260_ra_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::M4210S260Ra;
 
@@ -26719,6 +29115,24 @@ fn m42_10_s260_ra_roles() {
             M4210S260Ra::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <M4210S260Ra as HasHomingOffset>::ROLE,
+            M4210S260Ra::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <M4210S260Ra as HasMovingThreshold>::ROLE,
+            M4210S260Ra::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <M4210S260Ra as HasReturnDelayTime>::ROLE,
+            M4210S260Ra::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -26880,6 +29294,24 @@ fn m42_10_s260_ra_roles() {
             M4210S260Ra::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <M4210S260Ra as HasHomingOffset>::ROLE,
+            M4210S260Ra::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <M4210S260Ra as HasMovingThreshold>::ROLE,
+            M4210S260Ra::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <M4210S260Ra as HasReturnDelayTime>::ROLE,
+            M4210S260Ra::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -26917,11 +29349,11 @@ fn m42_10_s260_ra_mode_source() {
 fn m54_40_s250_ra_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::M5440S250Ra;
 
@@ -27071,6 +29503,24 @@ fn m54_40_s250_ra_roles() {
             M5440S250Ra::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <M5440S250Ra as HasHomingOffset>::ROLE,
+            M5440S250Ra::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <M5440S250Ra as HasMovingThreshold>::ROLE,
+            M5440S250Ra::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <M5440S250Ra as HasReturnDelayTime>::ROLE,
+            M5440S250Ra::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -27232,6 +29682,24 @@ fn m54_40_s250_ra_roles() {
             M5440S250Ra::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <M5440S250Ra as HasHomingOffset>::ROLE,
+            M5440S250Ra::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <M5440S250Ra as HasMovingThreshold>::ROLE,
+            M5440S250Ra::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <M5440S250Ra as HasReturnDelayTime>::ROLE,
+            M5440S250Ra::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -27269,11 +29737,11 @@ fn m54_40_s250_ra_mode_source() {
 fn m54_60_s250_ra_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::M5460S250Ra;
 
@@ -27423,6 +29891,24 @@ fn m54_60_s250_ra_roles() {
             M5460S250Ra::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <M5460S250Ra as HasHomingOffset>::ROLE,
+            M5460S250Ra::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <M5460S250Ra as HasMovingThreshold>::ROLE,
+            M5460S250Ra::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <M5460S250Ra as HasReturnDelayTime>::ROLE,
+            M5460S250Ra::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -27584,6 +30070,24 @@ fn m54_60_s250_ra_roles() {
             M5460S250Ra::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <M5460S250Ra as HasHomingOffset>::ROLE,
+            M5460S250Ra::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <M5460S250Ra as HasMovingThreshold>::ROLE,
+            M5460S250Ra::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <M5460S250Ra as HasReturnDelayTime>::ROLE,
+            M5460S250Ra::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -27621,11 +30125,11 @@ fn m54_60_s250_ra_mode_source() {
 fn h42_20_s300_ra_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::H4220S300Ra;
 
@@ -27775,6 +30279,24 @@ fn h42_20_s300_ra_roles() {
             H4220S300Ra::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <H4220S300Ra as HasHomingOffset>::ROLE,
+            H4220S300Ra::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <H4220S300Ra as HasMovingThreshold>::ROLE,
+            H4220S300Ra::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <H4220S300Ra as HasReturnDelayTime>::ROLE,
+            H4220S300Ra::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -27936,6 +30458,24 @@ fn h42_20_s300_ra_roles() {
             H4220S300Ra::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <H4220S300Ra as HasHomingOffset>::ROLE,
+            H4220S300Ra::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <H4220S300Ra as HasMovingThreshold>::ROLE,
+            H4220S300Ra::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <H4220S300Ra as HasReturnDelayTime>::ROLE,
+            H4220S300Ra::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -27973,11 +30513,11 @@ fn h42_20_s300_ra_mode_source() {
 fn h54_100_s500_ra_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::H54100S500Ra;
 
@@ -28127,6 +30667,24 @@ fn h54_100_s500_ra_roles() {
             H54100S500Ra::ACCELERATION_LIMIT,
             "Acceleration Limit",
         ),
+        (
+            Role::HomingOffset,
+            <H54100S500Ra as HasHomingOffset>::ROLE,
+            H54100S500Ra::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <H54100S500Ra as HasMovingThreshold>::ROLE,
+            H54100S500Ra::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <H54100S500Ra as HasReturnDelayTime>::ROLE,
+            H54100S500Ra::RETURN_DELAY_TIME,
+            "Return Delay Time",
+        ),
     ] {
         same_role(data.role(role), tier2, register, name);
     }
@@ -28288,6 +30846,24 @@ fn h54_100_s500_ra_roles() {
             H54100S500Ra::ACCELERATION_LIMIT,
             None,
         ),
+        (
+            Role::HomingOffset,
+            <H54100S500Ra as HasHomingOffset>::ROLE,
+            H54100S500Ra::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <H54100S500Ra as HasMovingThreshold>::ROLE,
+            H54100S500Ra::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <H54100S500Ra as HasReturnDelayTime>::ROLE,
+            H54100S500Ra::RETURN_DELAY_TIME,
+            None,
+        ),
     ] {
         assert_eq!((tier2.from_firmware(), tier2.bounded_by()), (0, None));
         for mode in ALL_MODES {
@@ -28325,11 +30901,11 @@ fn h54_100_s500_ra_mode_source() {
 fn h54_200_s500_ra_roles() {
     use crate::actuator::{
         HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent, HasGoalVelocity,
-        HasHardwareErrorStatus, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-        HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-        HasPresentCurrent, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
-        HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit,
-        LimitMode, Role,
+        HasHardwareErrorStatus, HasHomingOffset, HasLedBlue, HasLedGreen, HasLedRed,
+        HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+        HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature,
+        HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+        HasSpeedLimit, HasTemperatureLimit, HasVelocityLimit, LimitMode, Role,
     };
     use crate::models::H54200S500Ra;
 
@@ -28478,6 +31054,24 @@ fn h54_200_s500_ra_roles() {
             <H54200S500Ra as HasAccelerationLimit>::ROLE,
             H54200S500Ra::ACCELERATION_LIMIT,
             "Acceleration Limit",
+        ),
+        (
+            Role::HomingOffset,
+            <H54200S500Ra as HasHomingOffset>::ROLE,
+            H54200S500Ra::HOMING_OFFSET,
+            "Homing Offset",
+        ),
+        (
+            Role::MovingThreshold,
+            <H54200S500Ra as HasMovingThreshold>::ROLE,
+            H54200S500Ra::MOVING_THRESHOLD,
+            "Moving Threshold",
+        ),
+        (
+            Role::ReturnDelayTime,
+            <H54200S500Ra as HasReturnDelayTime>::ROLE,
+            H54200S500Ra::RETURN_DELAY_TIME,
+            "Return Delay Time",
         ),
     ] {
         same_role(data.role(role), tier2, register, name);
@@ -28638,6 +31232,24 @@ fn h54_200_s500_ra_roles() {
             Role::AccelerationLimit,
             <H54200S500Ra as HasAccelerationLimit>::ROLE,
             H54200S500Ra::ACCELERATION_LIMIT,
+            None,
+        ),
+        (
+            Role::HomingOffset,
+            <H54200S500Ra as HasHomingOffset>::ROLE,
+            H54200S500Ra::HOMING_OFFSET,
+            None,
+        ),
+        (
+            Role::MovingThreshold,
+            <H54200S500Ra as HasMovingThreshold>::ROLE,
+            H54200S500Ra::MOVING_THRESHOLD,
+            None,
+        ),
+        (
+            Role::ReturnDelayTime,
+            <H54200S500Ra as HasReturnDelayTime>::ROLE,
+            H54200S500Ra::RETURN_DELAY_TIME,
             None,
         ),
     ] {
