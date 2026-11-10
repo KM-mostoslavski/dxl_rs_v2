@@ -1,6 +1,6 @@
 (
   source: Unverified,
-  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/", verified: "2026-11-09"),
+  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/", verified: "2026-11-10"),
   protocols: [P1, P2],
   operating_modes: (bounded: [3], unbounded: [4, 5], no_position: [0, 1, 16], current: [0], velocity: [1], pwm: [16], current_position: [5]),
   type_info: {
@@ -11,6 +11,28 @@
     max_radian: 3.1400587,
   },
   unit_info: [
+    {
+      data_name: "Return Delay Time",
+      value: 2.0,
+      unit: "µs",
+      sign_type: "unsigned",
+      range: (min: 0, max: 254),
+    },
+    // DECISION: Homing Offset takes the page's "about 0.088 [°]" as Min/Max Position Limit do (the control table's "1 [pulse]" is the same tick); codegen converts it through the type_info step.
+    {
+      data_name: "Homing Offset",
+      value: 0.088,
+      unit: "deg",
+      sign_type: "twos_complement",
+      range: (min: -1044479, max: 1044479),
+    },
+    {
+      data_name: "Moving Threshold",
+      value: 0.229,
+      unit: "rpm",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
     {
       data_name: "Temperature Limit",
       value: 1.0,

@@ -1,6 +1,6 @@
 (
   source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/mx/mx-64/", verified: "2026-10-29"),
-  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/mx/mx-64/", verified: "2026-11-09"),
+  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/mx/mx-64/", verified: "2026-11-10"),
   protocols: [P1],
   instructions: [
     (protocol: P1, source: "https://emanual.robotis.com/docs/en/dxl/protocol1/",
@@ -17,6 +17,13 @@
     max_radian: 3.1400587,
   },
   unit_info: [
+    {
+      data_name: "Return Delay Time",
+      value: 2.0,
+      unit: "µs",
+      sign_type: "unsigned",
+      range: (min: 0, max: 254),
+    },
     // DECISION: CW/CCW Angle Limit carry no `modes`: the registers hold 0..4095 in every mode (4095/4095 selects multi-turn).
     {
       data_name: "CW Angle Limit",

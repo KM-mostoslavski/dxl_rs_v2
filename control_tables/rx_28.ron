@@ -1,6 +1,6 @@
 (
   source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/rx/rx-28/", verified: "2026-10-28"),
-  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/rx/rx-28/", verified: "2026-11-03"),
+  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/rx/rx-28/", verified: "2026-11-10"),
   protocols: [P1],
   instructions: [
     (protocol: P1, source: "https://emanual.robotis.com/docs/en/dxl/protocol1/",
@@ -14,6 +14,7 @@
     max_radian: 2.6154347,
   },
   unit_info: [
+    { data_name: "Return Delay Time", value: 2.0, unit: "µs", sign_type: "unsigned", range: (min: 0, max: 254) },
     { data_name: "CW Angle Limit", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 1023) },
     { data_name: "CCW Angle Limit", value: 0.29, unit: "deg", sign_type: "unsigned", range: (min: 0, max: 1023) },
     { data_name: "Temperature Limit", value: 1.0, unit: "°C", sign_type: "unsigned", range: (min: 0, max: 100) },
