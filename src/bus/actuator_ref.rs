@@ -180,15 +180,23 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// The EEPROM bound of the goal this actuator's operating mode uses, in
     /// raw register units: Velocity Limit in velocity mode, Current Limit
-    /// in current and current-based position mode, as Setup read it or an
-    /// acknowledged limit write set it since. Goal velocities and currents
-    /// are checked against it (FR-9.3).
+    /// in current and current-based position mode. Setup reads it, an
+    /// acknowledged [`set_operating_mode`](Self::set_operating_mode) into
+    /// such a mode reads it again, and an acknowledged write of it sets it.
+    /// Goal velocities and currents are checked against it (FR-9.3).
     ///
     /// `None` in the other modes, on models whose table records no bound
-    /// (AX, RX, MX on Protocol 1), and after a failed write of it: goals it
-    /// bounds are then refused with
-    /// [`LimitsUnknown`](crate::ValidationError::LimitsUnknown) until the
-    /// next Setup or an acknowledged write of it.
+    /// (AX, RX, MX on Protocol 1), and while it is unknown:
+    ///
+    /// - after a failed write of it, or a failed bound read of
+    ///   `set_operating_mode`, goals it bounds are refused with
+    ///   [`LimitsUnknown`](crate::ValidationError::LimitsUnknown) until the
+    ///   next Setup, an acknowledged write of it, or an acknowledged
+    ///   `set_operating_mode` whose bound read succeeds;
+    /// - after a failed write of the mode, the mode is unknown too: every
+    ///   goal is refused with `LimitsUnknown`, and the bound stays `None`,
+    ///   an acknowledged write of it included, until an acknowledged
+    ///   `set_operating_mode` or the next Setup.
     pub fn goal_bound_raw(&self) -> Option<u32> {
         *self.bound
     }
@@ -1063,7 +1071,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// Reads Velocity Limit, in rad/s (MX(2.0), X, Y, PRO). Never cached;
     /// in velocity mode [`goal_bound_raw`](Self::goal_bound_raw) is the
-    /// bound the bus holds, `None` after a failed write of it.
+    /// bound the bus holds, `None` while it is unknown.
     ///
     /// # Errors
     ///
@@ -1074,7 +1082,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// Reads Current Limit, in amperes (MX(2.0), X, Y, PRO). Never cached;
     /// in a current mode [`goal_bound_raw`](Self::goal_bound_raw) is the
-    /// bound the bus holds, `None` after a failed write of it.
+    /// bound the bus holds, `None` while it is unknown.
     ///
     /// # Errors
     ///

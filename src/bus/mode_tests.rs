@@ -229,7 +229,9 @@ mod xm430 {
 
     /// S3: a write that fails after bytes went out leaves the mode unknown:
     /// every goal is refused with `LimitsUnknown`, also after a limit
-    /// write, until a confirmed `set_operating_mode`.
+    /// write, until a confirmed `set_operating_mode`. The goal bound stays
+    /// unknown with it: a Velocity Limit write does not set the bound of a
+    /// mode the bus does not know.
     #[test]
     fn failed_write_refuses_every_goal() {
         let time = MockTime::new();
@@ -247,6 +249,7 @@ mod xm430 {
         script(&mut bus, &[p2_status(1, 0, &[]), p2_status(1, 0, &[])]);
         let mut xm = bus.actuator(id(1)).unwrap();
         xm.set_velocity_limit(crate::units::Velocity::ZERO).unwrap();
+        assert_eq!(xm.goal_bound_raw(), None);
         xm.enable_torque().unwrap();
         let enabled = mark(&bus);
         let mut xm = bus.actuator(id(1)).unwrap();

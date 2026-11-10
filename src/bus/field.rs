@@ -39,8 +39,8 @@
 //! | Field | Value | Torque on? | Mode | Bound |
 //! |---|---|---|---|---|
 //! | [`GoalPosition`] | [`Position`] | yes | position modes | EEPROM position limits in position mode |
-//! | [`GoalVelocity`] | [`Velocity`] | yes | velocity, wheel | Velocity Limit, read at Setup |
-//! | [`GoalCurrent`] | [`Current`] | yes | current, current-based position | Current Limit, read at Setup |
+//! | [`GoalVelocity`] | [`Velocity`] | yes | velocity, wheel | Velocity Limit the bus holds ([`goal_bound_raw`](crate::ActuatorRef::goal_bound_raw)) |
+//! | [`GoalCurrent`] | [`Current`] | yes | current, current-based position | Current Limit the bus holds ([`goal_bound_raw`](crate::ActuatorRef::goal_bound_raw)) |
 //! | [`SpeedLimit`] | [`units::SpeedLimit`](crate::SpeedLimit) | no | not where it is the goal velocity | e-Manual range |
 //! | [`Led`] | `bool` | no | any | — |
 //! | [`PGain`], [`DGain`] | [`Gain`] | no | any | e-Manual range |

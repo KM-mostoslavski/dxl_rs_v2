@@ -254,8 +254,11 @@ fn joined<'o>(
 
 /// The EEPROM register that bounds the goal `kind`'s recorded mode uses
 /// (Velocity Limit in velocity mode, Current Limit in a current mode), if
-/// its table records one.
+/// its table records one. `None` while the mode is unknown: no register
+/// bounds the goal of a mode the bus does not know.
 pub(super) fn bound_register(kind: &ActuatorKind) -> Option<Register> {
+    // DECISION: with the mode unknown the stale recorded mode names no bound, so an acknowledged Velocity/Current Limit write leaves goal_bound_raw None (plan 2026-11-09 D5: unknown is None) instead of a value no goal is checked against.
+    kind.cache().check_mode_known().ok()?;
     fields::bounded_goal(kind.cache().mode())
         .and_then(|role| kind.data().role(role))
         .and_then(|goal| goal.bounded_by())
