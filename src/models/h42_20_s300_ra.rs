@@ -7,12 +7,12 @@ use crate::actuator::{
     HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
     HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentTemperature, HasPresentVelocity,
     HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit,
-    HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeSource, ModeValues, Model,
-    ModelData, Protocols, RoleRegister, Roles,
+    HasTemperatureLimit, HasVelocityLimit, LimitRegisters, ModeScale, ModeSet, ModeSource,
+    ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
-use crate::units::PositionScale;
+use crate::units::{PositionScale, RegisterScale, Sign};
 
 /// H42-20-S300-RA (model number 51201).
 ///
@@ -53,9 +53,9 @@ impl H4220S300Ra {
                 bounded: &[3],
                 unbounded: &[4],
                 no_position: &[0, 1, 16],
-                current: &[],
-                velocity: &[],
-                pwm: &[],
+                current: &[0],
+                velocity: &[1],
+                pwm: &[16],
                 current_position: &[],
             },
         },
@@ -232,85 +232,132 @@ impl Model for H4220S300Ra {
     const DATA: &'static ModelData = &Self::DATA;
 }
 
-/// Present Temperature: raw only, no unit in the table.
+/// Present Temperature: 1 °C per raw step in every mode.
 impl HasPresentTemperature for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Temperature",
         register: Self::PRESENT_TEMPERATURE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Input Voltage: raw only, no unit in the table.
+/// Present Input Voltage: 0.1 V per raw step in every mode.
 impl HasPresentVoltage for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Input Voltage",
         register: Self::PRESENT_INPUT_VOLTAGE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 2, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Velocity: raw only, no unit in the table.
+/// Present Velocity: 0.01 rpm per raw step in every mode.
 impl HasPresentVelocity for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Velocity",
         register: Self::PRESENT_VELOCITY,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0010471975,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Goal Velocity: raw only, no unit in the table.
+/// Goal Velocity: 0.01 rpm per raw step in every mode.
 impl HasGoalVelocity for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Goal Velocity",
         register: Self::GOAL_VELOCITY,
-        scales: &[],
-        bounded_by: None,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0010471975,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
+            range: None,
+        }],
+        bounded_by: Some(Self::VELOCITY_LIMIT),
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Profile Velocity: raw only, no unit in the table.
+/// Profile Velocity: 0.01 rpm per raw step in every mode, velocity-based profile, raw 0 meaning no limit.
+/// No typed form for 1 ms per raw step in every mode, time-based profile: not a speed limit.
+/// The scale holds only with that Drive Mode profile; Setup does not read Drive Mode.
 impl HasSpeedLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Profile Velocity",
         register: Self::PROFILE_VELOCITY,
-        scales: &[],
-        bounded_by: None,
+        scales: &[
+            ModeScale {
+                modes: ModeSet::ALL,
+                scale: Some(RegisterScale::new(0.0010471975, Sign::Unsigned, 4, true)),
+                range: None,
+            },
+            ModeScale {
+                modes: ModeSet::ALL,
+                scale: None,
+                range: Some((0, 32737)),
+            },
+        ],
+        bounded_by: Some(Self::VELOCITY_LIMIT),
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Current: raw only, no unit in the table.
+/// Present Current: 1 mA per raw step in every mode.
 impl HasPresentCurrent for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Current",
         register: Self::PRESENT_CURRENT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.001, Sign::TwosComplement, 2, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Goal Current: raw only, no unit in the table.
+/// Goal Current: 1 mA per raw step in every mode.
 impl HasGoalCurrent for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Goal Current",
         register: Self::GOAL_CURRENT,
-        scales: &[],
-        bounded_by: None,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.001, Sign::TwosComplement, 2, false)),
+            range: None,
+        }],
+        bounded_by: Some(Self::CURRENT_LIMIT),
         from_fw: 0,
         row_range: None,
     };
@@ -376,12 +423,16 @@ impl HasHardwareErrorStatus for H4220S300Ra {
     };
 }
 
-/// Realtime Tick: raw only, no unit in the table.
+/// Realtime Tick: 1 ms per raw step in every mode.
 impl HasRealtimeTick for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Realtime Tick",
         register: Self::REALTIME_TICK,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
+            range: Some((0, 32767)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -389,6 +440,7 @@ impl HasRealtimeTick for H4220S300Ra {
 }
 
 /// Position P Gain: in register units, no scale.
+/// Raw range 0 to 32767.
 impl HasPGain for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position P Gain",
@@ -396,11 +448,12 @@ impl HasPGain for H4220S300Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 32767)),
     };
 }
 
 /// Position D Gain: in register units, no scale.
+/// Raw range 0 to 32767.
 impl HasDGain for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position D Gain",
@@ -408,40 +461,52 @@ impl HasDGain for H4220S300Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 32767)),
     };
 }
 
-/// Min Voltage Limit: raw only, no unit in the table.
+/// Min Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMinVoltageLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Min Voltage Limit",
         register: Self::MIN_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 2, false)),
+            range: Some((150, 350)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Max Voltage Limit: raw only, no unit in the table.
+/// Max Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMaxVoltageLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Voltage Limit",
         register: Self::MAX_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 2, false)),
+            range: Some((150, 350)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Temperature Limit: raw only, no unit in the table.
+/// Temperature Limit: 1 °C per raw step in every mode.
 impl HasTemperatureLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Temperature Limit",
         register: Self::TEMPERATURE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: Some((0, 100)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -449,6 +514,7 @@ impl HasTemperatureLimit for H4220S300Ra {
 }
 
 /// Min Position Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range -303750 to 303750.
 impl HasMinPositionLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Min Position Limit",
@@ -456,11 +522,12 @@ impl HasMinPositionLimit for H4220S300Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((-303750, 303750)),
     };
 }
 
 /// Max Position Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range -303750 to 303750.
 impl HasMaxPositionLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Position Limit",
@@ -468,88 +535,122 @@ impl HasMaxPositionLimit for H4220S300Ra {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((-303750, 303750)),
     };
 }
 
-/// Velocity Limit: raw only, no unit in the table.
+/// Velocity Limit: 0.01 rpm per raw step in every mode.
 impl HasVelocityLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Velocity Limit",
         register: Self::VELOCITY_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0010471975, Sign::Unsigned, 4, false)),
+            range: Some((0, 2920)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Current Limit: raw only, no unit in the table.
+/// Current Limit: 1 mA per raw step in every mode.
 impl HasCurrentLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Current Limit",
         register: Self::CURRENT_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
+            range: Some((0, 4500)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// PWM Limit: raw only, no unit in the table.
+/// PWM Limit: 0.0498 % per raw step in every mode.
 impl HasPwmLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "PWM Limit",
         register: Self::PWM_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.000498, Sign::Unsigned, 2, false)),
+            range: Some((0, 2009)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Acceleration Limit: raw only, no unit in the table.
+/// Acceleration Limit: 1 rev/min^2 per raw step in every mode.
 impl HasAccelerationLimit for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Acceleration Limit",
         register: Self::ACCELERATION_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0017453292, Sign::Unsigned, 4, false)),
+            range: Some((0, 4306173)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Homing Offset: raw only, no unit in the table.
+/// Homing Offset: 1 pulse per raw step in every mode.
+/// One raw step is one position tick of the model's position scale (`type_info`), with no zero point.
 impl HasHomingOffset for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Homing Offset",
         register: Self::HOMING_OFFSET,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                1.0342692e-5,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
+            range: Some((-2147483648, 2147483647)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Moving Threshold: raw only, no unit in the table.
+/// Moving Threshold: 0.01 rpm per raw step in every mode.
 impl HasMovingThreshold for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Moving Threshold",
         register: Self::MOVING_THRESHOLD,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0010471975, Sign::Unsigned, 4, false)),
+            range: Some((0, 2920)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Return Delay Time: raw only, no unit in the table.
+/// Return Delay Time: 2 µs per raw step in every mode.
 impl HasReturnDelayTime for H4220S300Ra {
     const ROLE: RoleRegister = RoleRegister {
         name: "Return Delay Time",
         register: Self::RETURN_DELAY_TIME,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,

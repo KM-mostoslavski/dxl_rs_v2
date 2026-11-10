@@ -2,15 +2,16 @@
 // Source: control_tables/mx_106_p1.ron
 
 use crate::actuator::{
-    Actuator, Cache, Describe, HasDGain, HasGoalVelocity, HasLed, HasMaxPositionLimit,
-    HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasRealtimeTick,
-    HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitRegisters, ModeSource, Model,
+    Actuator, Cache, Describe, HasDGain, HasGoalCurrent, HasGoalVelocity, HasLed,
+    HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+    HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
+    HasPresentVoltage, HasRealtimeTick, HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit,
+    HasTorqueCtrlModeEnable, LimitMode, LimitRegisters, ModeScale, ModeSet, ModeSource, Model,
     ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
-use crate::units::PositionScale;
+use crate::units::{PositionScale, RegisterScale, Sign};
 
 /// MX-106 (model number 320).
 ///
@@ -45,7 +46,11 @@ impl Mx106P1 {
             ccw: Self::CCW_ANGLE_LIMIT,
         },
         hardware_error: None,
-        mode: ModeSource::AngleLimits,
+        mode: ModeSource::TorqueControl {
+            register: Self::TORQUE_CTRL_MODE_ENABLE,
+            on: 1,
+            values: (0, 1),
+        },
         scale: PositionScale::new(2048, 0, 4095, -3.1415927, 3.1400588),
         roles: Roles {
             present_temperature: Some(<Self as HasPresentTemperature>::ROLE),
@@ -54,11 +59,13 @@ impl Mx106P1 {
             goal_velocity: Some(<Self as HasGoalVelocity>::ROLE),
             speed_limit: Some(<Self as HasSpeedLimit>::ROLE),
             present_load: Some(<Self as HasPresentLoad>::ROLE),
+            goal_current: Some(<Self as HasGoalCurrent>::ROLE),
             moving: Some(<Self as HasMoving>::ROLE),
             led: Some(<Self as HasLed>::ROLE),
             realtime_tick: Some(<Self as HasRealtimeTick>::ROLE),
             p_gain: Some(<Self as HasPGain>::ROLE),
             d_gain: Some(<Self as HasDGain>::ROLE),
+            torque_ctrl_mode_enable: Some(<Self as HasTorqueCtrlModeEnable>::ROLE),
             min_voltage_limit: Some(<Self as HasMinVoltageLimit>::ROLE),
             max_voltage_limit: Some(<Self as HasMaxVoltageLimit>::ROLE),
             temperature_limit: Some(<Self as HasTemperatureLimit>::ROLE),
@@ -158,72 +165,128 @@ impl Model for Mx106P1 {
     const DATA: &'static ModelData = &Self::DATA;
 }
 
-/// Present Temperature: raw only, no unit in the table.
+/// Present Temperature: 1 °C per raw step in every mode.
 impl HasPresentTemperature for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Temperature",
         register: Self::PRESENT_TEMPERATURE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Voltage: raw only, no unit in the table.
+/// Present Voltage: 0.1 V per raw step in every mode.
 impl HasPresentVoltage for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Voltage",
         register: Self::PRESENT_VOLTAGE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Speed: raw only, no unit in the table.
+/// Present Speed: 0.11 rpm per raw step in every mode.
 impl HasPresentVelocity for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Speed",
         register: Self::PRESENT_SPEED,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.011519173,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
+            range: Some((0, 2047)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Moving Speed: raw only, no unit in the table.
+/// Moving Speed: 0.114 rpm per raw step in Wheel mode.
 impl HasGoalVelocity for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Moving Speed",
         register: Self::MOVING_SPEED,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::of(&[LimitMode::Wheel]),
+            scale: Some(RegisterScale::new(
+                0.011938052,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
+            range: Some((0, 2047)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Moving Speed: raw only, no unit in the table.
+/// Moving Speed: 0.114 rpm per raw step in Bounded and Unbounded mode, raw 0 meaning no limit.
 impl HasSpeedLimit for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Moving Speed",
         register: Self::MOVING_SPEED,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::of(&[LimitMode::Bounded, LimitMode::Unbounded]),
+            scale: Some(RegisterScale::new(0.011938052, Sign::Unsigned, 2, true)),
+            range: Some((0, 1023)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Load: raw only, no unit in the table.
+/// Present Load: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: the full magnitude below direction bit 10 is 100 %.
 impl HasPresentLoad for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Load",
         register: Self::PRESENT_LOAD,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0009775171,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
+            range: Some((0, 2047)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Goal Torque: 4.5 mA per raw step in every mode.
+impl HasGoalCurrent for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Goal Torque",
+        register: Self::GOAL_TORQUE,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0045, Sign::DirectionBit(10), 2, false)),
+            range: Some((0, 2047)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -254,19 +317,25 @@ impl HasLed for Mx106P1 {
     };
 }
 
-/// Realtime Tick: raw only, no unit in the table.
+/// Realtime Tick: 1 ms per raw step in every mode.
+/// From firmware v40 on.
 impl HasRealtimeTick for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Realtime Tick",
         register: Self::REALTIME_TICK,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
+            range: Some((0, 32767)),
+        }],
         bounded_by: None,
-        from_fw: 0,
+        from_fw: 40,
         row_range: None,
     };
 }
 
 /// P Gain: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasPGain for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "P Gain",
@@ -274,11 +343,12 @@ impl HasPGain for Mx106P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 254)),
     };
 }
 
 /// D Gain: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasDGain for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "D Gain",
@@ -286,40 +356,65 @@ impl HasDGain for Mx106P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 254)),
     };
 }
 
-/// Min Voltage Limit: raw only, no unit in the table.
+/// Torque Ctrl Mode Enable: in register units, no scale.
+/// Raw range 0 to 1.
+impl HasTorqueCtrlModeEnable for Mx106P1 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Torque Ctrl Mode Enable",
+        register: Self::TORQUE_CTRL_MODE_ENABLE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: Some((0, 1)),
+    };
+}
+
+/// Min Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMinVoltageLimit for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Min Voltage Limit",
         register: Self::MIN_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: Some((50, 160)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Max Voltage Limit: raw only, no unit in the table.
+/// Max Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMaxVoltageLimit for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Voltage Limit",
         register: Self::MAX_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: Some((50, 160)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Temperature Limit: raw only, no unit in the table.
+/// Temperature Limit: 1 °C per raw step in every mode.
 impl HasTemperatureLimit for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Temperature Limit",
         register: Self::TEMPERATURE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: Some((0, 100)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -327,6 +422,7 @@ impl HasTemperatureLimit for Mx106P1 {
 }
 
 /// CW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 4095.
 impl HasMinPositionLimit for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "CW Angle Limit",
@@ -334,11 +430,12 @@ impl HasMinPositionLimit for Mx106P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 4095)),
     };
 }
 
 /// CCW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 4095.
 impl HasMaxPositionLimit for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "CCW Angle Limit",
@@ -346,28 +443,37 @@ impl HasMaxPositionLimit for Mx106P1 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 4095)),
     };
 }
 
-/// Max Torque: raw only, no unit in the table.
+/// Max Torque: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: raw 1023, the top of its range, is 100 %.
 impl HasMaxTorque for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Torque",
         register: Self::MAX_TORQUE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0009775171, Sign::Unsigned, 2, false)),
+            range: Some((0, 1023)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Return Delay Time: raw only, no unit in the table.
+/// Return Delay Time: 2 µs per raw step in every mode.
 impl HasReturnDelayTime for Mx106P1 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Return Delay Time",
         register: Self::RETURN_DELAY_TIME,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,

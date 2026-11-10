@@ -1489,7 +1489,11 @@ impl ActuatorKind {
     ) -> Option<Register> {
         match (protocol, model_number.get()) {
             #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 29) => Some(Mx28P1::FIRMWARE_VERSION),
+            #[cfg(feature = "mx")]
             (ProtocolVersion::P1, 310) => Some(Mx64P1::FIRMWARE_VERSION),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 320) => Some(Mx106P1::FIRMWARE_VERSION),
             #[cfg(feature = "x-series")]
             (ProtocolVersion::P2, 1190) => Some(Xl330M077Fw52::FIRMWARE_VERSION),
             #[cfg(feature = "x-series")]

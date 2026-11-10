@@ -6,11 +6,11 @@ use crate::actuator::{
     HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
     HasMoving, HasPGain, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
     HasPresentVoltage, HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitRegisters,
-    ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
+    ModeScale, ModeSet, ModeSource, ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
-use crate::units::PositionScale;
+use crate::units::{PositionScale, RegisterScale, Sign};
 
 /// XL-320 (model number 350).
 ///
@@ -157,24 +157,32 @@ impl Model for Xl320 {
     const DATA: &'static ModelData = &Self::DATA;
 }
 
-/// Present Temperature: raw only, no unit in the table.
+/// Present Temperature: 1 °C per raw step in every mode.
 impl HasPresentTemperature for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Temperature",
         register: Self::PRESENT_TEMPERATURE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Voltage: raw only, no unit in the table.
+/// Present Voltage: 0.1 V per raw step in every mode.
 impl HasPresentVoltage for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Voltage",
         register: Self::PRESENT_VOLTAGE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -217,12 +225,22 @@ impl HasSpeedLimit for Xl320 {
     };
 }
 
-/// Present Load: raw only, no unit in the table.
+/// Present Load: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: the full magnitude below direction bit 10 is 100 %.
 impl HasPresentLoad for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Load",
         register: Self::PRESENT_LOAD,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0009775171,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
+            range: Some((0, 2047)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -266,6 +284,7 @@ impl HasHardwareErrorStatus for Xl320 {
 }
 
 /// P Gain: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasPGain for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "P Gain",
@@ -273,11 +292,12 @@ impl HasPGain for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 254)),
     };
 }
 
 /// D Gain: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasDGain for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "D Gain",
@@ -285,40 +305,52 @@ impl HasDGain for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 254)),
     };
 }
 
-/// Min Voltage Limit: raw only, no unit in the table.
+/// Min Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMinVoltageLimit for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Min Voltage Limit",
         register: Self::MIN_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: Some((50, 160)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Max Voltage Limit: raw only, no unit in the table.
+/// Max Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMaxVoltageLimit for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Voltage Limit",
         register: Self::MAX_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: Some((50, 160)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Temperature Limit: raw only, no unit in the table.
+/// Temperature Limit: 1 °C per raw step in every mode.
 impl HasTemperatureLimit for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Temperature Limit",
         register: Self::TEMPERATURE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: Some((0, 100)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -326,6 +358,7 @@ impl HasTemperatureLimit for Xl320 {
 }
 
 /// CW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 1023.
 impl HasMinPositionLimit for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "CW Angle Limit",
@@ -333,11 +366,12 @@ impl HasMinPositionLimit for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 1023)),
     };
 }
 
 /// CCW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 1023.
 impl HasMaxPositionLimit for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "CCW Angle Limit",
@@ -345,28 +379,37 @@ impl HasMaxPositionLimit for Xl320 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 1023)),
     };
 }
 
-/// Max Torque: raw only, no unit in the table.
+/// Max Torque: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: raw 1023, the top of its range, is 100 %.
 impl HasMaxTorque for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Torque",
         register: Self::MAX_TORQUE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0009775171, Sign::Unsigned, 2, false)),
+            range: Some((0, 1023)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Return Delay Time: raw only, no unit in the table.
+/// Return Delay Time: 2 µs per raw step in every mode.
 impl HasReturnDelayTime for Xl320 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Return Delay Time",
         register: Self::RETURN_DELAY_TIME,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
