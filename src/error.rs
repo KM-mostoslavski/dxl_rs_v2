@@ -202,7 +202,8 @@ impl Error {
             Self::Validation(V::LimitsUnknown { .. }) => "limits are read at setup",
             Self::Validation(V::NoUnit { .. }) => "use the register's raw form",
             Self::Validation(V::UnsupportedMode { .. }) => {
-                "the model lacks this mode, or its control table does not list it yet"
+                "the model lacks this mode, or its control table does not single it out; \
+                 see OperatingMode"
             }
             Self::Validation(V::UnlistedMode { .. }) => {
                 "its control table names no mode for this value; \
@@ -918,10 +919,11 @@ pub enum ValidationError {
 
     /// An operating mode was to be set that the actuator's control table
     /// lists no single value for: the model lacks the mode (MX-28(2.0) has
-    /// no current control), or its table does not single the mode out yet
-    /// (a table without per-mode lists), so nothing is sent (plan
-    /// 2026-11-10 S3). No value is guessed. Models without a mode register
-    /// (AX, RX, MX on Protocol 1) return
+    /// no current control), its table does not single the mode out yet (a
+    /// table without per-mode lists), or it names the value as another
+    /// mode (RH-P12-RN `CurrentBasedPosition`, see [`OperatingMode`]), so
+    /// nothing is sent (plan 2026-11-10 S3). No value is guessed. Models
+    /// without a mode register (AX, RX, MX on Protocol 1) return
     /// [`Unsupported`](Self::Unsupported) instead.
     #[error("id {}: {mode:?} mode not supported", id.get())]
     UnsupportedMode {
@@ -2988,7 +2990,8 @@ mod tests {
                     mode: OperatingMode::Current,
                 }
                 .into(),
-                "the model lacks this mode, or its control table does not list it yet",
+                "the model lacks this mode, or its control table does not single it out; \
+                 see OperatingMode",
             ),
             (
                 ValidationError::UnlistedMode {

@@ -640,6 +640,7 @@ impl ModeValues {
     /// `None` when that list holds no value or more than one: the table
     /// does not single the mode out, and no value is guessed.
     pub(crate) fn value_of(self, mode: OperatingMode) -> Option<(u8, LimitMode)> {
+        // DECISION: a value is named by the list holding it (plan S3 as written), not by its page's label: the RH-P12-RN's "Current based Position" 5 is Position, documented on OperatingMode, rather than letting current_position overlap bounded, which the tables check, codegen and plan S3 all refuse.
         let value = match mode {
             OperatingMode::Position => only(self.bounded.iter()),
             OperatingMode::ExtendedPosition => only(
@@ -761,7 +762,7 @@ impl LimitMode {
     }
 }
 
-/// An operating mode, by its e-Manual name: what
+/// An operating mode, named as the X-series e-Manual names it: what
 /// [`ActuatorRef::set_operating_mode`](crate::ActuatorRef::set_operating_mode)
 /// writes and
 /// [`ActuatorRef::operating_mode`](crate::ActuatorRef::operating_mode)
@@ -782,6 +783,16 @@ impl LimitMode {
 /// [`LimitMode::Bounded`], `ExtendedPosition` [`LimitMode::Unbounded`],
 /// `CurrentBasedPosition` [`LimitMode::UnboundedCurrent`], `Current`,
 /// `Velocity` and `Pwm` the limit mode of the same name.
+///
+/// A value is named by the list its table puts it in, so by the limit mode
+/// Setup records for it, not by the label of the model's own page. The
+/// two differ on the RH-P12-RN: its page names Operating Mode(11) value 5
+/// "Current based Position Control Mode"
+/// (<https://emanual.robotis.com/docs/en/platform/rh_p12_rn/>), and its
+/// table lists 5 as bounded, so there `Position` writes 5,
+/// [`operating_mode`](crate::ActuatorRef::operating_mode) reads 5 as
+/// `Position`, and `CurrentBasedPosition` is refused with
+/// [`UnsupportedMode`](crate::ValidationError::UnsupportedMode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum OperatingMode {
@@ -794,7 +805,8 @@ pub enum OperatingMode {
     Velocity,
     /// Position Control Mode: position control within one turn, for joints
     /// (joint mode on the XL-320). The firmware applies the EEPROM position
-    /// limits to Goal Position: the mode the table lists as bounded.
+    /// limits to Goal Position: the mode the table lists as bounded, on the
+    /// RH-P12-RN its Current based Position Control Mode (see above).
     Position,
     /// Extended Position Control Mode (multi-turn): position control over
     /// several turns, 512 on the XM430-W350; the EEPROM position limits do
@@ -802,7 +814,8 @@ pub enum OperatingMode {
     ExtendedPosition,
     /// Current-based Position Control Mode: position control over several
     /// turns with Goal Current as the torque limit; the EEPROM position
-    /// limits do not apply.
+    /// limits do not apply. Not the RH-P12-RN mode of that name, which its
+    /// table lists as bounded: that one is [`Position`](Self::Position).
     CurrentBasedPosition,
     /// PWM Control Mode (Voltage Control Mode): the PWM output directly,
     /// through Goal PWM. The bus refuses every goal position, velocity and
@@ -1620,6 +1633,8 @@ mod tests {
                 RH_P12_RN_MODES.value_of(O::Position),
                 Some((5, LimitMode::Bounded))
             );
+            assert_eq!(RH_P12_RN_MODES.value_of(O::CurrentBasedPosition), None);
+            assert_eq!(RH_P12_RN_MODES.mode_of(5), Some(O::Position));
             for mode in OperatingMode::ALL {
                 assert_eq!(NO_MODES.value_of(mode), None, "{mode:?}");
             }
