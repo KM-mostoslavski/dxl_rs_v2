@@ -1,11 +1,11 @@
-//! EEPROM limit writes (plan 2026-11-09, D2 to D5, D8, D9): the checks a
-//! limit write passes before a byte is sent, the packets it sends, and the
-//! cache that follows it.
+//! EEPROM limit and setting writes (plan 2026-11-09, D2 to D5, D8, D9; plan
+//! 2026-11-10, S1, S2): the checks a setting write passes before a byte is
+//! sent, the packets it sends, and the cache that follows it.
 
 use crate::Transport;
 use crate::actuator::{Actuator, Describe, LimitMode, ModeSource, Role, TorqueState};
 use crate::error::{Error, Instruction, ValidationError};
-use crate::field::{LimitField, ReadField};
+use crate::field::{ReadField, SettingField};
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, Protocol};
 use crate::register::{Access, Register};
@@ -59,7 +59,7 @@ impl Checked {
 /// cleared to '0'", <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>,
 /// 2026-11-09); the AX, RX and MX Protocol 1 pages document no such lock
 /// (Lock(47) locks their EEPROM), so there this check is the only guard.
-fn check_off(
+pub(super) fn check_off(
     id: crate::Id,
     state: TorqueState,
     marks: Marks,
@@ -158,14 +158,14 @@ pub(super) fn writes_moving_speed(kind: &ActuatorKind, addr: u16, len: usize) ->
 /// `Unsupported`, `ActuatorIsOn`, `TorqueUnconfirmed`, `NoUnit`,
 /// `NotFinite`, `DoesNotFit`, `OutOfLimits`, `LimitsUnknown`,
 /// `InvertedLimits`, `WheelSpeedUnknown`.
-pub(super) fn check_single<F: LimitField>(
+pub(super) fn check_single<F: SettingField>(
     kind: &ActuatorKind,
     (state, marks): (TorqueState, Marks),
     value: F::Value,
 ) -> Result<Checked, ValidationError> {
-    let site = fields::limit_site::<F>(kind)?;
+    let site = fields::setting_site::<F>(kind)?;
     check_off(kind.id(), state, marks, site.name)?;
-    let raw = fields::limit_raw(&site, value)?;
+    let raw = fields::setting_raw(&site, value)?;
     // DECISION: the wheel check (plan D9) comes last, after the range and order checks, before a byte: it needs the pair the write leaves, and a value refused for itself says so first.
     if let Some(limits) = check_order(kind, &site, raw)? {
         check_wheel(kind, marks, limits)?;
@@ -183,18 +183,18 @@ pub(super) fn check_single<F: LimitField>(
 /// `Unsupported`, `ActuatorIsOn` or `TorqueUnconfirmed` (naming `Lo`),
 /// `NoUnit`, `NotFinite`, `DoesNotFit`, `OutOfLimits`, `InvertedLimits`,
 /// `WheelSpeedUnknown`.
-pub(super) fn check_pair<Lo: LimitField, Hi: LimitField>(
+pub(super) fn check_pair<Lo: SettingField, Hi: SettingField>(
     kind: &ActuatorKind,
     (state, marks): (TorqueState, Marks),
     min: Lo::Value,
     max: Hi::Value,
 ) -> Result<(Checked, Checked), ValidationError> {
-    let lo = fields::limit_site::<Lo>(kind)?;
-    let hi = fields::limit_site::<Hi>(kind)?;
+    let lo = fields::setting_site::<Lo>(kind)?;
+    let hi = fields::setting_site::<Hi>(kind)?;
     // DECISION: a pair refused for torque names its minimum register, the first the caller passes.
     check_off(kind.id(), state, marks, lo.name)?;
-    let min = fields::limit_raw(&lo, min)?;
-    let max = fields::limit_raw(&hi, max)?;
+    let min = fields::setting_raw(&lo, min)?;
+    let max = fields::setting_raw(&hi, max)?;
     let limits = Limits::new(kind.id(), min, max)?;
     if is_position_pair(kind, &lo, &hi) {
         check_wheel(kind, marks, limits)?;
@@ -254,8 +254,11 @@ fn joined<'o>(
 
 /// The EEPROM register that bounds the goal `kind`'s recorded mode uses
 /// (Velocity Limit in velocity mode, Current Limit in a current mode), if
-/// its table records one.
-fn bound_register(kind: &ActuatorKind) -> Option<Register> {
+/// its table records one. `None` while the mode is unknown: no register
+/// bounds the goal of a mode the bus does not know.
+pub(super) fn bound_register(kind: &ActuatorKind) -> Option<Register> {
+    // DECISION: with the mode unknown the stale recorded mode names no bound, so an acknowledged Velocity/Current Limit write leaves goal_bound_raw None (plan 2026-11-09 D5: unknown is None) instead of a value no goal is checked against.
+    kind.cache().check_mode_known().ok()?;
     fields::bounded_goal(kind.cache().mode())
         .and_then(|role| kind.data().role(role))
         .and_then(|goal| goal.bounded_by())
@@ -308,7 +311,8 @@ fn record_written(kind: &mut ActuatorKind, bound: &mut Bound, min: Option<i32>, 
 /// register). Failed: the cache they touch is forgotten, the goal bound
 /// the bus holds included, until the next Setup or an acknowledged write
 /// that determines it. Voltage, temperature, acceleration, PWM and Max
-/// Torque limits are not cached.
+/// Torque limits, and the other settings (Homing Offset, Moving Threshold,
+/// Return Delay Time, plan 2026-11-10 S2), are not cached.
 fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bool) {
     let registers = kind.data().limits;
     let bounding = bound_register(kind);
@@ -346,7 +350,7 @@ fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bo
 impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// Writes `bytes` to `reg`: one acknowledged write, its reply through
     /// the fault check.
-    fn exchange(&mut self, reg: Register, bytes: &[u8]) -> Result<(), Error> {
+    pub(super) fn exchange(&mut self, reg: Register, bytes: &[u8]) -> Result<(), Error> {
         let result = self.wire.write(self.kind.id(), reg, bytes);
         let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);

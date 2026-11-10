@@ -1314,6 +1314,13 @@ class RealTablesTests(unittest.TestCase):
         "Max Torque",
         "Acceleration Limit",
     )
+    # The settings written through typed setters (docs/plans/2026-11-10-settings.md, S2), with
+    # the step, unit and range every page of FR9_STEMS gives them (verified 2026-11-10).
+    TYPED_SETTINGS = {
+        "Return Delay Time": (2.0, "\u00b5s", "unsigned", {"min": 0, "max": 254}),
+        "Homing Offset": (0.088, "deg", "twos_complement", {"min": -1044479, "max": 1044479}),
+        "Moving Threshold": (0.229, "rpm", "unsigned", {"min": 0, "max": 1023}),
+    }
     # MX-64 P1 gives Min/Max Voltage Limit the range 50..160 and Max Voltage Limit the initial
     # value 240 (specs/009-tables-fr9, edge cases): no range for either.
     LIMITS_WITHOUT_RANGE = {("mx_64_p1", "Min Voltage Limit"), ("mx_64_p1", "Max Voltage Limit")}
@@ -1337,6 +1344,24 @@ class RealTablesTests(unittest.TestCase):
                         self.assertIn(key, entry)
                     if (stem, name) not in self.LIMITS_WITHOUT_RANGE:
                         self.assertIn("range", entry)
+
+    def test_fr9_tables_scale_every_typed_setting(self) -> None:
+        _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)
+        seen = set()
+        for stem in self.FR9_STEMS:
+            rows = {r["data_name"] for r in tables[stem]["control_table"]}
+            entries = {e["data_name"]: e for e in tables[stem]["unit_info"]}
+            for name, (value, unit, sign_type, range_) in self.TYPED_SETTINGS.items():
+                if name not in rows:
+                    continue
+                seen.add(name)
+                with self.subTest(stem=stem, register=name):
+                    entry = entries[name]
+                    self.assertEqual(
+                        (entry["value"], entry["unit"], entry["sign_type"], entry["range"]),
+                        (value, unit, sign_type, range_),
+                    )
+        self.assertEqual(seen, set(self.TYPED_SETTINGS))
 
     def test_fr9_tables_carry_unit_source(self) -> None:
         _map, tables = check_tables.load(Path(check_tables.__file__).resolve().parent)

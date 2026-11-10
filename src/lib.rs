@@ -20,7 +20,7 @@ mod register;
 mod transport;
 mod units;
 
-pub use actuator::{Actuator, LimitMode, Model, ModelNumber, TorqueState};
+pub use actuator::{Actuator, LimitMode, Model, ModelNumber, OperatingMode, TorqueState};
 pub use bus::{
     ActuatorRef, Bus, Config, DefaultClock, IdSet, IdSetIter, ModelRef, NoClock, SetupReport, bulk,
     field,

@@ -5,9 +5,9 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasCcwComplianceMargin, HasCcwComplianceSlope,
     HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMaxPositionLimit,
     HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
-    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
-    HasTemperatureLimit, LimitRegisters, ModeSource, Model, ModelData, Protocols, RoleRegister,
-    Roles,
+    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+    HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitRegisters, ModeSource, Model,
+    ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -67,6 +67,7 @@ impl Ax12w {
             min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
             max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
             max_torque: Some(<Self as HasMaxTorque>::ROLE),
+            return_delay_time: Some(<Self as HasReturnDelayTime>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -358,6 +359,18 @@ impl HasMaxTorque for Ax12w {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Torque",
         register: Self::MAX_TORQUE,
+        scales: &[],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Return Delay Time: raw only, no unit in the table.
+impl HasReturnDelayTime for Ax12w {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Return Delay Time",
+        register: Self::RETURN_DELAY_TIME,
         scales: &[],
         bounded_by: None,
         from_fw: 0,
