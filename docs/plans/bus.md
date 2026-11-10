@@ -42,7 +42,7 @@ Plan: [`2026-11-09-typed-limits.md`](2026-11-09-typed-limits.md).
 - [x] T102 bus: D8 torque confirmed off, D9 no wheel switch with a live speed
 - [x] T103 tables, xtask, core, bus: D10 typed Acceleration Limit
 - [ ] T104 tables: unit data of the 70 tables without `unit_source`, from their e-Manual pages (`2026-11-10-settings.md` S4)
-- [ ] T105 bus, core, xtask: `LimitField` → `SettingField`, `write_limit` → `write_setting` (S1)
+- [x] T105 bus, core, xtask: `LimitField` → `SettingField`, `write_limit` → `write_setting` (S1)
 - [ ] T106 tables: Homing Offset, Moving Threshold, Return Delay Time `unit_info` in the six verified tables
 - [ ] T107 xtask, core, bus: typed Homing Offset, Moving Threshold, Return Delay Time (S2)
 - [ ] T108 core, bus: `OperatingMode` and `set_operating_mode` (S3)

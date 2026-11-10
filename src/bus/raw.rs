@@ -54,7 +54,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///   [`disable_torque`](ActuatorRef::disable_torque);
     /// - a write to Operating Mode, or to a position limit, leaves the
     ///   limits and mode read at Setup in force for goal checks until the
-    ///   next Setup. [`write_limit`](ActuatorRef::write_limit) and the
+    ///   next Setup. [`write_setting`](ActuatorRef::write_setting) and the
     ///   limit setters write a limit and keep them true.
     ///
     /// Any address may hold Torque Enable, Moving Speed or an angle limit,

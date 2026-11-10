@@ -148,8 +148,8 @@ mod ax12a {
                 0 => ax.set_temperature_limit(Temperature::from_celsius(70.0)),
                 1 => ax.set_max_torque(Load::from_ratio(1.0)),
                 2 => ax.set_max_torque(Load::from_ratio(0.5)),
-                3 => ax.write_limit(Raw(MaxVoltageLimit), 160),
-                _ => ax.write_limit(MinVoltageLimit, Voltage::from_volts(6.0)),
+                3 => ax.write_setting(Raw(MaxVoltageLimit), 160),
+                _ => ax.write_setting(MinVoltageLimit, Voltage::from_volts(6.0)),
             };
             assert_eq!(result, Ok(()), "call {call}");
             sent.extend(packet);
@@ -200,7 +200,7 @@ mod ax12a {
         script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
         let mut ax = bus.actuator(id(1)).unwrap();
         ax.set_speed_limit(SpeedLimit::Unlimited).unwrap();
-        ax.write_limit(Raw(MaxPositionLimit), 0).unwrap();
+        ax.write_setting(Raw(MaxPositionLimit), 0).unwrap();
         assert_eq!(ax.limit_mode(), LimitMode::Wheel);
         assert_eq!(ax.position_limits_raw(), Some(0..=0));
         script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
@@ -262,7 +262,7 @@ mod ax12a {
         );
         assert_eq!(ax.set_max_torque(Load::from_ratio(1.0)), on("Max Torque"));
         assert_eq!(
-            ax.write_limit(Raw(MaxPositionLimit), 900),
+            ax.write_setting(Raw(MaxPositionLimit), 900),
             on("CCW Angle Limit")
         );
         assert_eq!(ax.torque_state(), TorqueState::On);
@@ -297,7 +297,7 @@ mod ax12a {
             unconfirmed("Max Torque")
         );
         assert_eq!(
-            ax.write_limit(Raw(MaxPositionLimit), 900),
+            ax.write_setting(Raw(MaxPositionLimit), 900),
             unconfirmed("CCW Angle Limit")
         );
         assert_quiet(&bus, mark);
@@ -368,7 +368,7 @@ mod ax12a {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(MinVoltageLimit), 60),
+                .write_setting(Raw(MinVoltageLimit), 60),
             unconfirmed("Min Voltage Limit")
         );
         assert_quiet(&bus, quiet);
@@ -380,7 +380,7 @@ mod ax12a {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(MinVoltageLimit), 60),
+                .write_setting(Raw(MinVoltageLimit), 60),
             unconfirmed("Min Voltage Limit")
         );
         assert_quiet(&bus, quiet);
@@ -400,7 +400,7 @@ mod ax12a {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(MaxPositionLimit), 0),
+                .write_setting(Raw(MaxPositionLimit), 0),
             unconfirmed("CCW Angle Limit")
         );
         assert_quiet(&bus, quiet);
@@ -411,7 +411,7 @@ mod ax12a {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(MaxPositionLimit), 900),
+                .write_setting(Raw(MaxPositionLimit), 900),
             unconfirmed("CCW Angle Limit")
         );
         assert_quiet(&bus, quiet);
@@ -575,17 +575,17 @@ mod ax12a {
             out(101, 0, 100)
         );
         assert_eq!(
-            ax.write_limit(Raw(MaxPositionLimit), 1024),
+            ax.write_setting(Raw(MaxPositionLimit), 1024),
             out(1024, 0, 1023)
         );
         assert_eq!(ax.set_voltage_limits(v(14.0), v(9.5)), inverted(140, 95));
         assert_eq!(ax.set_position_limits(low, high), inverted(900, 100));
         assert_eq!(
-            ax.write_limit(Raw(MinPositionLimit), 900),
+            ax.write_setting(Raw(MinPositionLimit), 900),
             inverted(900, 800)
         );
         assert_eq!(
-            ax.write_limit(Raw(MaxPositionLimit), 100),
+            ax.write_setting(Raw(MaxPositionLimit), 100),
             inverted(200, 100)
         );
         assert_eq!(
@@ -773,7 +773,7 @@ mod ax12a {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(MaxVoltageLimit), 160),
+                .write_setting(Raw(MaxVoltageLimit), 160),
             unconfirmed("Max Voltage Limit")
         );
         assert_quiet(&bus, quiet);
@@ -808,8 +808,8 @@ mod ax12a {
         let quiet = mark(&bus);
         let mut ax = bus.actuator(id(1)).unwrap();
         assert_eq!(ax.set_position_limits(zero, zero), speed_unknown());
-        assert_eq!(ax.write_limit(Raw(MaxPositionLimit), 0), speed_unknown());
-        assert_eq!(ax.write_limit(MinPositionLimit, zero), speed_unknown());
+        assert_eq!(ax.write_setting(Raw(MaxPositionLimit), 0), speed_unknown());
+        assert_eq!(ax.write_setting(MinPositionLimit, zero), speed_unknown());
         assert_quiet(&bus, quiet);
         acks(&mut bus, 3);
         let mut ax = bus.actuator(id(1)).unwrap();
@@ -855,7 +855,7 @@ mod ax12a {
         assert_eq!(ax.write_raw(25, &[1]), Ok(()));
         assert_eq!(ax.write(Raw(GoalVelocity), 0), Ok(()));
         assert_eq!(ax.disable_torque(), Ok(()));
-        assert_eq!(ax.write_limit(Raw(MaxPositionLimit), 0), Ok(()));
+        assert_eq!(ax.write_setting(Raw(MaxPositionLimit), 0), Ok(()));
         live(&mut bus);
         let quiet = mark(&bus);
         assert_eq!(
@@ -888,8 +888,8 @@ mod ax12a {
         let quiet = mark(&bus);
         let mut ax = bus.actuator(id(1)).unwrap();
         assert_eq!(ax.set_position_limits(zero, zero), speed_unknown());
-        assert_eq!(ax.write_limit(MaxPositionLimit, zero), speed_unknown());
-        assert_eq!(ax.write_limit(Raw(MaxPositionLimit), 0), speed_unknown());
+        assert_eq!(ax.write_setting(MaxPositionLimit, zero), speed_unknown());
+        assert_eq!(ax.write_setting(Raw(MaxPositionLimit), 0), speed_unknown());
         assert_eq!(ax.limit_mode(), LimitMode::Bounded);
         assert_quiet(&bus, quiet);
         script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
@@ -914,7 +914,7 @@ mod ax12a {
         script(&mut bus, &[p1_status(1, 0, &[]), p1_status(1, 0, &[])]);
         let mut ax = bus.actuator(id(1)).unwrap();
         ax.write(Raw(SpeedLimitField), 0).unwrap();
-        assert_eq!(ax.write_limit(Raw(MaxPositionLimit), 0), Ok(()));
+        assert_eq!(ax.write_setting(Raw(MaxPositionLimit), 0), Ok(()));
         assert_eq!(ax.limit_mode(), LimitMode::Wheel);
         assert_eq!(
             sent_since(&bus, mark),
@@ -1024,7 +1024,7 @@ mod ax12a {
         assert_eq!(ax.limit_mode(), LimitMode::Wheel);
         assert_eq!(ax.set_position_limits(zero, top), Ok(()));
         assert_eq!(ax.limit_mode(), LimitMode::Bounded);
-        assert_eq!(ax.write_limit(Raw(MinPositionLimit), 10), Ok(()));
+        assert_eq!(ax.write_setting(Raw(MinPositionLimit), 10), Ok(()));
         assert_eq!(
             sent_since(&bus, mark),
             concat(&[
@@ -1061,7 +1061,7 @@ mod ax12a {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(MaxPositionLimit), 0),
+                .write_setting(Raw(MaxPositionLimit), 0),
             Err(ValidationError::LimitsUnknown { id: id(1) }.into())
         );
         assert_quiet(&bus, quiet);
@@ -1109,7 +1109,7 @@ mod ax12a {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(MinPositionLimit), 10),
+                .write_setting(Raw(MinPositionLimit), 10),
             unknown
         );
         assert_quiet(&bus, quiet);
@@ -1435,7 +1435,7 @@ mod xm430 {
             .into())
         );
         assert_eq!(
-            xm.write_limit(Raw(MaxPositionLimit), 999),
+            xm.write_setting(Raw(MaxPositionLimit), 999),
             Err(ValidationError::InvertedLimits {
                 id: id(1),
                 min: 1000,
@@ -1485,7 +1485,7 @@ mod xm430 {
             .into())
         );
         assert_eq!(
-            xm.write_limit(Raw(TemperatureLimit), 300),
+            xm.write_setting(Raw(TemperatureLimit), 300),
             Err(ValidationError::DoesNotFit {
                 raw: 300,
                 size: 1,
@@ -1522,11 +1522,11 @@ mod xm430 {
             no_unit("Min Position Limit")
         );
         assert_eq!(
-            xm.write_limit(MinPositionLimit, scale.to_position(100)),
+            xm.write_setting(MinPositionLimit, scale.to_position(100)),
             no_unit("Min Position Limit")
         );
         assert_eq!(
-            xm.write_limit(MaxPositionLimit, scale.to_position(4000)),
+            xm.write_setting(MaxPositionLimit, scale.to_position(4000)),
             no_unit("Max Position Limit")
         );
         assert_eq!(
@@ -1550,8 +1550,8 @@ mod xm430 {
         assert_quiet(&bus, start);
         script(&mut bus, &[p2_status(1, 0, &[]), p2_status(1, 0, &[])]);
         let mut xm = bus.actuator(id(1)).unwrap();
-        assert_eq!(xm.write_limit(Raw(MaxVoltageLimit), 160), Ok(()));
-        assert_eq!(xm.write_limit(Raw(MinPositionLimit), 0), Ok(()));
+        assert_eq!(xm.write_setting(Raw(MaxVoltageLimit), 160), Ok(()));
+        assert_eq!(xm.write_setting(Raw(MinPositionLimit), 0), Ok(()));
         assert_eq!(
             sent_since(&bus, start),
             concat(&[
@@ -1570,7 +1570,7 @@ mod xm430 {
         ack(&mut bus, 1);
         bus.actuator(id(1))
             .unwrap()
-            .write_limit(MaxPositionLimit, max)
+            .write_setting(MaxPositionLimit, max)
             .unwrap();
         enable(&mut bus);
         let mark = mark(&bus);
@@ -1608,7 +1608,7 @@ mod xm430 {
         ack(&mut bus, 1);
         bus.actuator(id(1))
             .unwrap()
-            .write_limit(Raw(crate::field::VelocityLimit), 100)
+            .write_setting(Raw(crate::field::VelocityLimit), 100)
             .unwrap();
         assert_eq!(bus.actuator(id(1)).unwrap().goal_bound_raw(), Some(100));
         enable(&mut bus);
@@ -1630,7 +1630,7 @@ mod xm430 {
         ack(&mut bus, 1);
         bus.actuator(id(1))
             .unwrap()
-            .write_limit(Raw(crate::field::CurrentLimit), 500)
+            .write_setting(Raw(crate::field::CurrentLimit), 500)
             .unwrap();
         assert_eq!(bus.actuator(id(1)).unwrap().goal_bound_raw(), Some(500));
         enable(&mut bus);
@@ -1649,7 +1649,7 @@ mod xm430 {
         ack(&mut bus, 1);
         bus.actuator(id(1))
             .unwrap()
-            .write_limit(Raw(crate::field::VelocityLimit), 100)
+            .write_setting(Raw(crate::field::VelocityLimit), 100)
             .unwrap();
         assert_eq!(bus.actuator(id(1)).unwrap().goal_bound_raw(), None);
     }
@@ -1665,7 +1665,7 @@ mod xm430 {
         assert_eq!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(Raw(crate::field::VelocityLimit), 100),
+                .write_setting(Raw(crate::field::VelocityLimit), 100),
             Err(TransportError::NoReply {
                 request: on(Instruction::Write, 1, "Velocity Limit", 44, 4),
                 timeout_us: 10_000,
@@ -1687,7 +1687,7 @@ mod xm430 {
         ack(&mut bus, 1);
         bus.actuator(id(1))
             .unwrap()
-            .write_limit(Raw(crate::field::VelocityLimit), 150)
+            .write_setting(Raw(crate::field::VelocityLimit), 150)
             .unwrap();
         assert_eq!(bus.actuator(id(1)).unwrap().goal_bound_raw(), Some(150));
         enable(&mut bus);
@@ -1721,7 +1721,7 @@ mod xm430 {
         assert!(
             bus.actuator(id(1))
                 .unwrap()
-                .write_limit(MaxPositionLimit, max)
+                .write_setting(MaxPositionLimit, max)
                 .is_err()
         );
         assert_eq!(bus.actuator(id(1)).unwrap().position_limits_raw(), None);
@@ -1752,7 +1752,7 @@ mod xm430 {
             assert!(matches!(
                 bus.actuator(id(1))
                     .unwrap()
-                    .write_limit(MaxPositionLimit, max),
+                    .write_setting(MaxPositionLimit, max),
                 Err(Error::Transport(_))
             ));
             assert_eq!(bus.actuator(id(1)).unwrap().position_limits_raw(), None);
@@ -2091,7 +2091,7 @@ mod mx64_p1 {
     /// CCW = 0 still counts as a switch to wheel mode, which takes over
     /// once the switch is off: refused until Moving Speed(32) is 0. The
     /// typed speed limit has no unit in that mode, so the raw form writes
-    /// the 0, as the docs of `write_limit` say.
+    /// the 0, as the docs of `write_setting` say.
     #[test]
     fn torque_control_mode_still_guards_the_wheel_switch() {
         let time = MockTime::new();
@@ -2145,7 +2145,7 @@ mod mx64 {
     const STEP: f32 = 214.577 * core::f32::consts::TAU / 3600.0;
 
     /// Disables torque on actuator 1 with an acknowledged write, as
-    /// [`write_limit`](crate::ActuatorRef::write_limit) asks before EEPROM
+    /// [`write_setting`](crate::ActuatorRef::write_setting) asks before EEPROM
     /// writes where torque may be on.
     fn disable(bus: &mut TestBus<'_, P2>) {
         ack(bus, 1);
@@ -2189,7 +2189,7 @@ mod mx64 {
             mx.set_acceleration_limit(Acceleration::from_rad_per_s2(32_767.0 * STEP)),
             Ok(())
         );
-        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 0), Ok(()));
+        assert_eq!(mx.write_setting(Raw(AccelerationLimit), 0), Ok(()));
         let read = mx.acceleration_limit().unwrap();
         assert!((read.rad_per_s2() - 100.0 * STEP).abs() < 1e-4, "{read:?}");
         assert!((read.rad_per_s2() - 37.450_75).abs() < 1e-4, "{read:?}");
@@ -2228,7 +2228,10 @@ mod mx64 {
             mx.set_acceleration_limit(Acceleration::from_rad_per_s2(32_768.0 * STEP)),
             out(32_768)
         );
-        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 40_000), out(40_000));
+        assert_eq!(
+            mx.write_setting(Raw(AccelerationLimit), 40_000),
+            out(40_000)
+        );
         assert_eq!(
             mx.set_acceleration_limit(Acceleration::from_rad_per_s2(-1.0)),
             Err(ValidationError::DoesNotFit {
@@ -2256,7 +2259,7 @@ mod mx64 {
             .into())
         };
         assert_eq!(mx.set_acceleration_limit(Acceleration::ZERO), is_on());
-        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 100), is_on());
+        assert_eq!(mx.write_setting(Raw(AccelerationLimit), 100), is_on());
         assert_quiet(&bus, enabled);
     }
 
@@ -2353,7 +2356,7 @@ mod mx64 {
             &[p2_status(1, 0, &[]), p2_status(1, 0, &100u32.to_le_bytes())],
         );
         let mut mx = bus.actuator(id(1)).unwrap();
-        assert_eq!(mx.write_limit(Raw(AccelerationLimit), 100), Ok(()));
+        assert_eq!(mx.write_setting(Raw(AccelerationLimit), 100), Ok(()));
         assert_eq!(mx.read(Raw(AccelerationLimit)), Ok(100));
         assert_eq!(
             sent_since(&bus, quiet),
@@ -2365,10 +2368,10 @@ mod mx64 {
 #[cfg(feature = "y-series")]
 mod ym070 {
     use crate::actuator::{Actuator, LimitMode};
-    use crate::bus::field::{limit_site, sealed::Site};
+    use crate::bus::field::{sealed::Site, setting_site};
     use crate::bus::limits::{Checked, ordered};
     use crate::bus::testing::*;
-    use crate::field::{LimitField, MaxPositionLimit, MinPositionLimit, Raw};
+    use crate::field::{MaxPositionLimit, MinPositionLimit, Raw, SettingField};
     use crate::protocol::P2;
     use crate::transport::MockTime;
 
@@ -2408,10 +2411,10 @@ mod ym070 {
         assert_quiet(&bus, start);
         ack(&mut bus, 1);
         let mut ym = bus.actuator(id(1)).unwrap();
-        ym.write_limit(Raw(MinPositionLimit), -500).unwrap();
+        ym.write_setting(Raw(MinPositionLimit), -500).unwrap();
         assert_eq!(ym.position_limits_raw(), Some(-500..=1000));
         assert_eq!(
-            ym.write_limit(Raw(MaxPositionLimit), -600),
+            ym.write_setting(Raw(MaxPositionLimit), -600),
             Err(crate::ValidationError::InvertedLimits {
                 id: id(1),
                 min: -500,
@@ -2428,11 +2431,11 @@ mod ym070 {
     /// Limit `F` of the YM070 at `raw`, checked as a verified table would
     /// allow it: the whole `i32` range, as its e-Manual gives for Max/Min
     /// Position Limit(76, 84).
-    fn checked<F: LimitField>(bus: &mut TestBus<'_, P2>, raw: i32) -> Checked {
+    fn checked<F: SettingField>(bus: &mut TestBus<'_, P2>, raw: i32) -> Checked {
         let ym = bus.actuator(id(1)).unwrap();
         let site = Site {
             range: Some((i64::from(i32::MIN), i64::from(i32::MAX))),
-            ..limit_site::<F>(ym.kind()).unwrap()
+            ..setting_site::<F>(ym.kind()).unwrap()
         };
         Checked::new(site, raw)
     }
@@ -2464,7 +2467,7 @@ mod ym070 {
         send_pair(&mut bus, 2000, 3000).unwrap();
         let mut ym = bus.actuator(id(1)).unwrap();
         assert_eq!(ym.position_limits_raw(), Some(2000..=3000));
-        ym.write_limit(Raw(MinPositionLimit), 2500).unwrap();
+        ym.write_setting(Raw(MinPositionLimit), 2500).unwrap();
         assert_eq!(ym.position_limits_raw(), Some(2500..=3000));
         assert_eq!(
             sent_since(&bus, start),
@@ -2491,7 +2494,7 @@ mod ym070 {
     fn ym_refuses(bus: &mut TestBus<'_, P2>) -> Result<(), crate::Error> {
         bus.actuator(id(1))
             .unwrap()
-            .write_limit(Raw(MaxPositionLimit), 2000)
+            .write_setting(Raw(MaxPositionLimit), 2000)
     }
 
     /// Plan D5: the second write of an apart pair failing leaves the limits

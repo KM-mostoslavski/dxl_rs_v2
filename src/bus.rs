@@ -12,7 +12,7 @@
 //! limits several series share (voltage, temperature, position, velocity,
 //! acceleration, current and PWM limits, Max Torque) are fields too, read
 //! on every tier and written on one actuator only, with
-//! [`ActuatorRef::write_limit`] and its setters.
+//! [`ActuatorRef::write_setting`] and its setters.
 //!
 //! Rules that hold for every call:
 //!

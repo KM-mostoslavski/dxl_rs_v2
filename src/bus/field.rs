@@ -8,7 +8,7 @@
 //!
 //! - one actuator: [`ActuatorRef::read`](crate::ActuatorRef::read) and
 //!   [`ActuatorRef::write`](crate::ActuatorRef::write), and for the EEPROM
-//!   limits ([`LimitField`]) [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit);
+//!   settings ([`SettingField`]) [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting);
 //! - many actuators: [`Bus::read_field`](crate::Bus::read_field) (both
 //!   protocols), [`Bus::sync_write`](crate::Bus::sync_write) (both
 //!   protocols) and [`Bus::sync_read`](crate::Bus::sync_read) (Protocol 2);
@@ -66,8 +66,8 @@
 //! limit needs no unit but the e-Manual range of its row: on a table that
 //! records none (an unverified table) it is refused with `NoUnit` too.
 //!
-//! The limit fields are [`LimitField`]s, written only by
-//! [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) and its
+//! The limit fields are [`SettingField`]s, written only by
+//! [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting) and its
 //! setters, never by a sync or bulk write, so the bus keeps the position
 //! limits, the limit mode and the goal bound it holds true to each write.
 //! The bus writes EEPROM only with torque confirmed off, on every model: a
@@ -246,11 +246,11 @@ pub trait WriteField: Field + Rule {
     type Value: Copy + Encode;
 }
 
-/// An EEPROM limit field: written only by
-/// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit), one
+/// An EEPROM setting field, such as a limit: written only by
+/// [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting), one
 /// acknowledged unicast write with torque confirmed off.
 ///
-/// The limit fields are not [`WriteField`]s, so
+/// The setting fields are not [`WriteField`]s, so
 /// [`Bus::sync_write`](crate::Bus::sync_write),
 /// [`Bus::bulk_write`](crate::Bus::bulk_write) and
 /// [`ActuatorRef::write`](crate::ActuatorRef::write) refuse them at compile
@@ -267,9 +267,9 @@ pub trait WriteField: Field + Rule {
 /// ```
 ///
 /// They are [`ReadField`]s, so every read tier saves them, e.g. before a
-/// run that changes them (NFR-11). [`Raw`] of a limit field writes its raw
-/// register value, with the same checks.
-pub trait LimitField: Field {
+/// run that changes them (NFR-11). [`Raw`] of a setting field writes its
+/// raw register value, with the same checks.
+pub trait SettingField: Field {
     /// The type of one actuator's value.
     type Value: Copy + Encode;
 }
@@ -316,7 +316,7 @@ impl<F: WriteField> WriteField for Raw<F> {
     type Value = i32;
 }
 
-impl<F: LimitField> LimitField for Raw<F> {
+impl<F: SettingField> SettingField for Raw<F> {
     type Value = i32;
 }
 
@@ -648,20 +648,20 @@ role_field!(
 role_field!(
     /// Min Voltage Limit, in volts ([`Voltage`]): the EEPROM bound below
     /// which the actuator reports an input voltage fault. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MinVoltageLimit,
     MinVoltageLimit
 );
 role_field!(
     /// Max Voltage Limit, in volts ([`Voltage`]): the EEPROM bound above
     /// which the actuator reports an input voltage fault. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MaxVoltageLimit,
     MaxVoltageLimit
 );
 role_field!(
     /// Temperature Limit, in °C ([`Temperature`]): the EEPROM bound above
-    /// which the actuator reports overheating. A [`LimitField`].
+    /// which the actuator reports overheating. A [`SettingField`].
     TemperatureLimit,
     TemperatureLimit
 );
@@ -669,7 +669,7 @@ role_field!(
     /// Min Position Limit, or CW Angle Limit (AX, RX, MX on Protocol 1,
     /// XL-320), in radians ([`Position`]): the lower EEPROM position limit,
     /// which goals are checked against in position mode. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MinPositionLimit,
     MinPositionLimit
 );
@@ -677,32 +677,32 @@ role_field!(
     /// Max Position Limit, or CCW Angle Limit (AX, RX, MX on Protocol 1,
     /// XL-320), in radians ([`Position`]): the upper EEPROM position limit,
     /// which goals are checked against in position mode. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MaxPositionLimit,
     MaxPositionLimit
 );
 role_field!(
     /// Velocity Limit, in rad/s ([`Velocity`]): the EEPROM bound of Goal
-    /// Velocity's magnitude. MX(2.0), X, Y, PRO. A [`LimitField`].
+    /// Velocity's magnitude. MX(2.0), X, Y, PRO. A [`SettingField`].
     VelocityLimit,
     VelocityLimit
 );
 role_field!(
     /// Current Limit, in amperes ([`Current`]): the EEPROM bound of Goal
-    /// Current's magnitude. MX(2.0), X, Y, PRO. A [`LimitField`].
+    /// Current's magnitude. MX(2.0), X, Y, PRO. A [`SettingField`].
     CurrentLimit,
     CurrentLimit
 );
 role_field!(
     /// PWM Limit, a ratio of the full PWM output ([`Pwm`]). MX(2.0), X, Y,
-    /// PRO. A [`LimitField`].
+    /// PRO. A [`SettingField`].
     PwmLimit,
     PwmLimit
 );
 role_field!(
     /// Max Torque, a ratio of the maximum torque ([`Load`]): the torque
     /// limit the actuator starts with at power-on. AX, RX, MX on Protocol 1,
-    /// XL-320. A [`LimitField`].
+    /// XL-320. A [`SettingField`].
     ///
     /// The running bound is Torque Limit (RAM), which power-on resets to
     /// Max Torque (AX-12A: "When the power is turned on, Torque Limit(34) is
@@ -718,7 +718,7 @@ role_field!(
     /// "Profile Acceleration(108) can’t be configured with any values
     /// exceeding Acceleration Limit(40)",
     /// <https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/>, 2026-11-09).
-    /// MX(2.0), PRO, PRO+, Y, RH-P12-RN. A [`LimitField`].
+    /// MX(2.0), PRO, PRO+, Y, RH-P12-RN. A [`SettingField`].
     AccelerationLimit,
     AccelerationLimit
 );
@@ -850,16 +850,16 @@ read_values! {
     AccelerationLimit: Acceleration;
 }
 
-/// Declares the limit fields; a limit writes the type it reads.
-macro_rules! limit_values {
+/// Declares the setting fields; a setting writes the type it reads.
+macro_rules! setting_values {
     ($($field:ident),* $(,)?) => {$(
-        impl LimitField for $field {
+        impl SettingField for $field {
             type Value = <$field as ReadField>::Value;
         }
     )*};
 }
 
-limit_values! {
+setting_values! {
     MinVoltageLimit,
     MaxVoltageLimit,
     TemperatureLimit,
@@ -1164,13 +1164,13 @@ pub(crate) fn encode_write<'o, F: WriteField>(
     Ok((site.reg, bytes))
 }
 
-/// The site of limit field `F` on `kind`, checked before anything is
+/// The site of setting field `F` on `kind`, checked before anything is
 /// sent: the model has the register, writable.
 ///
 /// # Errors
 ///
 /// [`ValidationError::Unsupported`].
-pub(crate) fn limit_site<F: LimitField>(kind: &ActuatorKind) -> Result<Site, ValidationError> {
+pub(crate) fn setting_site<F: SettingField>(kind: &ActuatorKind) -> Result<Site, ValidationError> {
     let site = F::site(kind)?;
     if site.reg.access == Access::RW {
         Ok(site)
@@ -1182,7 +1182,7 @@ pub(crate) fn limit_site<F: LimitField>(kind: &ActuatorKind) -> Result<Site, Val
     }
 }
 
-/// The register value of limit `value` at `site`, checked against the
+/// The register value of setting `value` at `site`, checked against the
 /// e-Manual range the table records for it.
 ///
 /// # Errors
@@ -1190,7 +1190,7 @@ pub(crate) fn limit_site<F: LimitField>(kind: &ActuatorKind) -> Result<Site, Val
 /// The value's conversion error (`NoUnit`, `NotFinite`, `DoesNotFit`),
 /// then `OutOfLimits`. A typed position on a site with no recorded range
 /// (an unverified table) is `NoUnit` (plan D6).
-pub(crate) fn limit_raw<V: Encode>(site: &Site, value: V) -> Result<i32, ValidationError> {
+pub(crate) fn setting_raw<V: Encode>(site: &Site, value: V) -> Result<i32, ValidationError> {
     if V::NEEDS_RANGE && site.range.is_none() {
         return Err(ValidationError::NoUnit {
             id: site.id,

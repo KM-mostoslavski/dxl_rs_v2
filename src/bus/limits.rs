@@ -5,7 +5,7 @@
 use crate::Transport;
 use crate::actuator::{Actuator, Describe, LimitMode, ModeSource, Role, TorqueState};
 use crate::error::{Error, Instruction, ValidationError};
-use crate::field::{LimitField, ReadField};
+use crate::field::{ReadField, SettingField};
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, Protocol};
 use crate::register::{Access, Register};
@@ -158,14 +158,14 @@ pub(super) fn writes_moving_speed(kind: &ActuatorKind, addr: u16, len: usize) ->
 /// `Unsupported`, `ActuatorIsOn`, `TorqueUnconfirmed`, `NoUnit`,
 /// `NotFinite`, `DoesNotFit`, `OutOfLimits`, `LimitsUnknown`,
 /// `InvertedLimits`, `WheelSpeedUnknown`.
-pub(super) fn check_single<F: LimitField>(
+pub(super) fn check_single<F: SettingField>(
     kind: &ActuatorKind,
     (state, marks): (TorqueState, Marks),
     value: F::Value,
 ) -> Result<Checked, ValidationError> {
-    let site = fields::limit_site::<F>(kind)?;
+    let site = fields::setting_site::<F>(kind)?;
     check_off(kind.id(), state, marks, site.name)?;
-    let raw = fields::limit_raw(&site, value)?;
+    let raw = fields::setting_raw(&site, value)?;
     // DECISION: the wheel check (plan D9) comes last, after the range and order checks, before a byte: it needs the pair the write leaves, and a value refused for itself says so first.
     if let Some(limits) = check_order(kind, &site, raw)? {
         check_wheel(kind, marks, limits)?;
@@ -183,18 +183,18 @@ pub(super) fn check_single<F: LimitField>(
 /// `Unsupported`, `ActuatorIsOn` or `TorqueUnconfirmed` (naming `Lo`),
 /// `NoUnit`, `NotFinite`, `DoesNotFit`, `OutOfLimits`, `InvertedLimits`,
 /// `WheelSpeedUnknown`.
-pub(super) fn check_pair<Lo: LimitField, Hi: LimitField>(
+pub(super) fn check_pair<Lo: SettingField, Hi: SettingField>(
     kind: &ActuatorKind,
     (state, marks): (TorqueState, Marks),
     min: Lo::Value,
     max: Hi::Value,
 ) -> Result<(Checked, Checked), ValidationError> {
-    let lo = fields::limit_site::<Lo>(kind)?;
-    let hi = fields::limit_site::<Hi>(kind)?;
+    let lo = fields::setting_site::<Lo>(kind)?;
+    let hi = fields::setting_site::<Hi>(kind)?;
     // DECISION: a pair refused for torque names its minimum register, the first the caller passes.
     check_off(kind.id(), state, marks, lo.name)?;
-    let min = fields::limit_raw(&lo, min)?;
-    let max = fields::limit_raw(&hi, max)?;
+    let min = fields::setting_raw(&lo, min)?;
+    let max = fields::setting_raw(&hi, max)?;
     let limits = Limits::new(kind.id(), min, max)?;
     if is_position_pair(kind, &lo, &hi) {
         check_wheel(kind, marks, limits)?;

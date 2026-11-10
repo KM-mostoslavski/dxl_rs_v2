@@ -126,7 +126,7 @@ pub trait Actuator: sealed::Describe {
     /// The position limits read from the actuator's EEPROM at Setup, in raw
     /// ticks: Min/Max Position Limit, or CW/CCW Angle Limit. A limit
     /// written since with
-    /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) or
+    /// [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting) or
     /// [`set_position_limits`](crate::ActuatorRef::set_position_limits)
     /// replaces them once acknowledged. `None` until Setup read them, and
     /// after a limit write that failed, until the next Setup or an
@@ -149,7 +149,7 @@ pub trait Actuator: sealed::Describe {
     /// [`LimitMode::UnboundedCurrent`] goal currents. A mode changed after
     /// Setup is not seen until the next Setup, except the one an angle-limit
     /// write through
-    /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) sets on
+    /// [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting) sets on
     /// AX, RX and MX on Protocol 1.
     ///
     /// On those models an angle-limit write that failed leaves the mode

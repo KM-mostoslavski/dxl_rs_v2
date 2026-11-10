@@ -5,10 +5,10 @@ use crate::actuator::{Actuator, Cache, Describe, ModelData, TorqueState};
 use crate::error::{Error, StatusError, StatusReport};
 use crate::field::{
     AccelerationLimit, CurrentLimit, DGain, GoalCurrent, GoalPosition, GoalVelocity,
-    HardwareErrorStatus, Led, LimitField, MaxPositionLimit, MaxTorque, MaxVoltageLimit,
-    MinPositionLimit, MinVoltageLimit, Moving, PGain, PresentCurrent, PresentLoad, PresentPosition,
+    HardwareErrorStatus, Led, MaxPositionLimit, MaxTorque, MaxVoltageLimit, MinPositionLimit,
+    MinVoltageLimit, Moving, PGain, PresentCurrent, PresentLoad, PresentPosition,
     PresentTemperature, PresentVelocity, PresentVoltage, PwmLimit, Raw, ReadField, RealtimeTick,
-    SpeedLimit as SpeedLimitField, TemperatureLimit, VelocityLimit, WriteField,
+    SettingField, SpeedLimit as SpeedLimitField, TemperatureLimit, VelocityLimit, WriteField,
 };
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, P2, Protocol};
@@ -89,7 +89,7 @@ fn poke<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) {
 ///
 /// The EEPROM limits several series share (voltage, temperature, position,
 /// velocity, acceleration, current and PWM limits, Max Torque) are read the
-/// same way and written with [`write_limit`](ActuatorRef::write_limit) and
+/// same way and written with [`write_setting`](ActuatorRef::write_setting) and
 /// its setters ([`set_voltage_limits`](ActuatorRef::set_voltage_limits),
 /// [`set_position_limits`](ActuatorRef::set_position_limits), ...): one
 /// acknowledged write once torque is confirmed off (an acknowledged
@@ -214,7 +214,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// in every state.
     ///
     /// A reply that shows the actuator ran the write confirms torque off,
-    /// which [`write_limit`](Self::write_limit) and the limit setters need:
+    /// which [`write_setting`](Self::write_setting) and the limit setters need:
     /// a reply with no error, or one reporting only a hardware fault
     /// (Protocol 1: Input Voltage, Overheating, Overload; Protocol 2: the
     /// alert bit with no error code). So an actuator held `Faulted` at
@@ -664,7 +664,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         self.read(DGain)
     }
 
-    /// Writes EEPROM limit `F`: one acknowledged unicast write of its
+    /// Writes EEPROM setting `F`: one acknowledged unicast write of its
     /// register, with torque confirmed off, no read-back. `Raw(F)` writes
     /// the register value, with the same checks. The pair setters
     /// ([`set_voltage_limits`](Self::set_voltage_limits),
@@ -748,8 +748,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// fn widen<T: Transport, C: Clock>(ax: &mut ActuatorRef<'_, P1, T, C>) -> Result<(), Error> {
     ///     ax.disable_torque()?;
-    ///     ax.write_limit(TemperatureLimit, Temperature::from_celsius(75.0))?;
-    ///     ax.write_limit(Raw(MaxVoltageLimit), 160)
+    ///     ax.write_setting(TemperatureLimit, Temperature::from_celsius(75.0))?;
+    ///     ax.write_setting(Raw(MaxVoltageLimit), 160)
     /// }
     /// ```
     ///
@@ -788,7 +788,11 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`InvertedLimits`]: crate::ValidationError::InvertedLimits
     /// [`LimitsUnknown`]: crate::ValidationError::LimitsUnknown
     /// [`reboot`]: ActuatorRef::reboot
-    pub fn write_limit<F: LimitField>(&mut self, field: F, value: F::Value) -> Result<(), Error> {
+    pub fn write_setting<F: SettingField>(
+        &mut self,
+        field: F,
+        value: F::Value,
+    ) -> Result<(), Error> {
         let _ = field;
         let write = limits::check_single::<F>(self.kind, (*self.state, *self.marks), value)?;
         self.send_limits(write, None)
@@ -799,13 +803,13 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// where the registers are adjacent (every model), with torque
     /// confirmed off.
     ///
-    /// Checked as [`write_limit`](Self::write_limit), both values before a
+    /// Checked as [`write_setting`](Self::write_setting), both values before a
     /// byte is sent, each against the e-Manual range where the table
     /// records one, and `min` must not lie above `max`.
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); [`InvertedLimits`] when `min`
+    /// As [`write_setting`](Self::write_setting); [`InvertedLimits`] when `min`
     /// is above `max`, in raw units; [`ActuatorIsOn`] and
     /// [`TorqueUnconfirmed`] name Min Voltage Limit.
     ///
@@ -827,7 +831,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// XL-320). One acknowledged write of both where the registers are
     /// adjacent, else one each, with torque confirmed off.
     ///
-    /// Checked as [`write_limit`](Self::write_limit), both values before a
+    /// Checked as [`write_setting`](Self::write_setting), both values before a
     /// byte is sent, and `min` must not lie above `max`. Acknowledged, they
     /// replace the limits the bus holds
     /// ([`position_limits`](Actuator::position_limits)), also limits a
@@ -842,7 +846,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// ([`set_speed_limit(SpeedLimit::Unlimited)`](Self::set_speed_limit),
     /// or `write(Raw(SpeedLimit), 0)` where that returns `NoUnit`); with
     /// the mode unknown after a failed angle-limit write, write a non-wheel
-    /// pair first, as [`write_limit`](Self::write_limit) says. Leaving
+    /// pair first, as [`write_setting`](Self::write_setting) says. Leaving
     /// wheel mode is not refused. After a raw write, CW = CCW = 0 counts as
     /// a switch even where the bus holds wheel mode, until an acknowledged
     /// call of this. Where the two registers are apart (Y series),
@@ -857,7 +861,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); [`InvertedLimits`] when `min`
+    /// As [`write_setting`](Self::write_setting); [`InvertedLimits`] when `min`
     /// is above `max`; [`ActuatorIsOn`] and [`TorqueUnconfirmed`] name the
     /// minimum register; [`WheelSpeedUnknown`] for a switch to wheel mode
     /// with Moving Speed not known to be 0.
@@ -882,9 +886,9 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit).
+    /// As [`write_setting`](Self::write_setting).
     pub fn set_temperature_limit(&mut self, limit: Temperature) -> Result<(), Error> {
-        self.write_limit(TemperatureLimit, limit)
+        self.write_setting(TemperatureLimit, limit)
     }
 
     /// Sets Velocity Limit, in rad/s (MX(2.0), X, Y, PRO). One acknowledged
@@ -893,10 +897,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it.
     pub fn set_velocity_limit(&mut self, limit: Velocity) -> Result<(), Error> {
-        self.write_limit(VelocityLimit, limit)
+        self.write_setting(VelocityLimit, limit)
     }
 
     /// Sets Current Limit, in amperes (MX(2.0), X, Y, PRO). One
@@ -906,10 +910,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it.
     pub fn set_current_limit(&mut self, limit: Current) -> Result<(), Error> {
-        self.write_limit(CurrentLimit, limit)
+        self.write_setting(CurrentLimit, limit)
     }
 
     /// Sets PWM Limit, a ratio of the full PWM output (MX(2.0), X, Y, PRO).
@@ -917,10 +921,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it.
     pub fn set_pwm_limit(&mut self, limit: Pwm) -> Result<(), Error> {
-        self.write_limit(PwmLimit, limit)
+        self.write_setting(PwmLimit, limit)
     }
 
     /// Sets Max Torque, a ratio of the maximum torque from 0 to 1 (AX, RX,
@@ -935,11 +939,11 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it; `DoesNotFit` for a ratio below minus half a raw step (a
     /// smaller negative one is written as 0).
     pub fn set_max_torque(&mut self, limit: Load) -> Result<(), Error> {
-        self.write_limit(MaxTorque, limit)
+        self.write_setting(MaxTorque, limit)
     }
 
     /// Sets Acceleration Limit, in rad/s² (MX(2.0), PRO, PRO+, Y,
@@ -952,12 +956,12 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it; `NoUnit` where the table gives it no unit (write
     /// `Raw(AccelerationLimit)`); `DoesNotFit` for an acceleration below
     /// minus half a raw step (a smaller negative one is written as 0).
     pub fn set_acceleration_limit(&mut self, limit: Acceleration) -> Result<(), Error> {
-        self.write_limit(AccelerationLimit, limit)
+        self.write_setting(AccelerationLimit, limit)
     }
 
     /// Reads Min and Max Voltage Limit, in volts, `(min, max)`: one read
@@ -1113,7 +1117,7 @@ impl<T: Transport, C: Clock> ActuatorRef<'_, P2, T, C> {
     /// means goal writes are refused until
     /// [`enable_torque`](Self::enable_torque). Torque is no longer
     /// confirmed off, and Moving Speed no longer known to be 0, once the
-    /// instruction is sent: [`write_limit`](Self::write_limit) and the
+    /// instruction is sent: [`write_setting`](Self::write_setting) and the
     /// limit setters are refused with
     /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
     /// until an acknowledged [`disable_torque`](Self::disable_torque).
