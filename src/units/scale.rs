@@ -1,6 +1,8 @@
 //! [`RegisterScale`]: how one register of one model maps raw values to an
 //! SI quantity.
 
+use core::time::Duration;
+
 use crate::error::{Request, ValidationError};
 
 use super::position::round_half_away;
@@ -195,6 +197,36 @@ impl RegisterScale {
         }
         self.raw_of(round_half_away(si * self.raw_per_si))
     }
+
+    /// The duration of raw `raw`, a register in seconds per step (Return
+    /// Delay Time), rounded to the nearest nanosecond.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::DoesNotFit`] with the signed value when it is
+    /// negative: no duration holds it.
+    pub(crate) fn duration(&self, raw: u32) -> Result<Duration, ValidationError> {
+        // DECISION: a duration is rounded to the nearest nanosecond, so a whole number of 2 µs steps reads as exactly that many µs, not one f32 rounding below.
+        let nanos = round_half_away(self.si_of(raw) * 1e9);
+        u64::try_from(nanos)
+            .map(Duration::from_nanos)
+            .map_err(|_| ValidationError::DoesNotFit {
+                raw: self.signed_of(raw),
+                size: self.size,
+                request: Request::NONE,
+            })
+    }
+
+    /// The raw value nearest to `duration`, half a step rounding away from
+    /// zero.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::DoesNotFit`] if the raw value does not fit the
+    /// register.
+    pub(crate) fn duration_to_raw(&self, duration: Duration) -> Result<u32, ValidationError> {
+        self.raw_of_si(duration.as_secs_f32())
+    }
 }
 
 #[cfg(test)]
@@ -320,6 +352,44 @@ pub(crate) mod tests {
         assert_eq!(AX_SPEED.si_per_raw(), rpm(0.111));
         assert!(!AX_SPEED.zero_is_unlimited());
         assert!(AX_MOVING_SPEED.zero_is_unlimited());
+    }
+
+    /// AX-12A / XM430-W350 Return Delay Time: 2 µs, 1 byte, 0 to 254.
+    const RETURN_DELAY: RegisterScale = RegisterScale::new(2e-6, Sign::Unsigned, 1, false);
+
+    #[test]
+    fn durations_are_whole_nanoseconds() {
+        for raw in 0..=254 {
+            let duration = RETURN_DELAY.duration(raw).unwrap();
+            assert_eq!(
+                duration,
+                Duration::from_micros(2 * u64::from(raw)),
+                "raw {raw}"
+            );
+            assert_eq!(RETURN_DELAY.duration_to_raw(duration), Ok(raw), "raw {raw}");
+        }
+        assert_eq!(
+            RETURN_DELAY.duration_to_raw(Duration::from_nanos(2_900)),
+            Ok(1)
+        );
+        assert_eq!(
+            RETURN_DELAY.duration_to_raw(Duration::from_millis(1)),
+            Err(ValidationError::DoesNotFit {
+                raw: 500,
+                size: 1,
+                request: Request::NONE,
+            })
+        );
+        assert!(RETURN_DELAY.duration_to_raw(Duration::MAX).is_err());
+        let signed = RegisterScale::new(2e-6, Sign::TwosComplement, 1, false);
+        assert_eq!(
+            signed.duration(0xFF),
+            Err(ValidationError::DoesNotFit {
+                raw: -1,
+                size: 1,
+                request: Request::NONE,
+            })
+        );
     }
 
     /// Every raw value converts to SI and back to itself (SC-002): sizes 1

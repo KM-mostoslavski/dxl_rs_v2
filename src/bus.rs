@@ -9,10 +9,11 @@
 //! [`field`]: read and written on one actuator, on many with
 //! [`Bus::read_field`] and [`Bus::sync_write`], and several at once with
 //! [`Bus::bulk_read`] and [`Bus::bulk_write`] ([`bulk`]). The EEPROM
-//! limits several series share (voltage, temperature, position, velocity,
-//! acceleration, current and PWM limits, Max Torque) are fields too, read
-//! on every tier and written on one actuator only, with
-//! [`ActuatorRef::write_setting`] and its setters.
+//! settings several series share (voltage, temperature, position, velocity,
+//! acceleration, current and PWM limits, Max Torque, Homing Offset, Moving
+//! Threshold, Return Delay Time) are fields too, read on every tier and
+//! written on one actuator only, with [`ActuatorRef::write_setting`] and
+//! its setters.
 //!
 //! Rules that hold for every call:
 //!
@@ -116,6 +117,8 @@ mod partial;
 mod raw;
 #[cfg(feature = "std")]
 mod serial;
+#[cfg(test)]
+mod setting_tests;
 mod setup;
 mod slots;
 #[cfg(test)]
@@ -255,7 +258,7 @@ impl Default for Config {
 /// short-lived [`ActuatorRef`] from [`actuator`](Bus::actuator).
 ///
 /// Setup reads no Torque Enable and writes nothing, so the hardware may
-/// still have torque on: EEPROM limit writes are refused until an
+/// still have torque on: EEPROM setting writes are refused until an
 /// acknowledged [`disable_torque`](Bus::disable_torque) (or
 /// [`ActuatorRef::disable_torque`]) confirms it off.
 ///

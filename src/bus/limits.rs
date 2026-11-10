@@ -1,6 +1,6 @@
-//! EEPROM limit writes (plan 2026-11-09, D2 to D5, D8, D9): the checks a
-//! limit write passes before a byte is sent, the packets it sends, and the
-//! cache that follows it.
+//! EEPROM limit and setting writes (plan 2026-11-09, D2 to D5, D8, D9; plan
+//! 2026-11-10, S1, S2): the checks a setting write passes before a byte is
+//! sent, the packets it sends, and the cache that follows it.
 
 use crate::Transport;
 use crate::actuator::{Actuator, Describe, LimitMode, ModeSource, Role, TorqueState};
@@ -308,7 +308,8 @@ fn record_written(kind: &mut ActuatorKind, bound: &mut Bound, min: Option<i32>, 
 /// register). Failed: the cache they touch is forgotten, the goal bound
 /// the bus holds included, until the next Setup or an acknowledged write
 /// that determines it. Voltage, temperature, acceleration, PWM and Max
-/// Torque limits are not cached.
+/// Torque limits, and the other settings (Homing Offset, Moving Threshold,
+/// Return Delay Time, plan 2026-11-10 S2), are not cached.
 fn follow(kind: &mut ActuatorKind, bound: &mut Bound, writes: &[Checked], ok: bool) {
     let registers = kind.data().limits;
     let bounding = bound_register(kind);
