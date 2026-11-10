@@ -2281,7 +2281,15 @@ mod tests {
             #[cfg(feature = "pro")]
             {
                 use crate::models::{H54200S500Ra, RhP12Rn};
-                let h54 = mode_register(11, &[3], &[4], &[0, 1, 16]);
+                let h54 = ModeSource::Register {
+                    register: reg(11, 1, Access::RW, Area::Eeprom),
+                    values: ModeValues {
+                        current: &[0],
+                        velocity: &[1],
+                        pwm: &[16],
+                        ..coarse(&[3], &[4], &[0, 1, 16])
+                    },
+                };
                 assert_eq!(mode_of(&H54200S500Ra::new(id(1))), h54);
                 assert_eq!(
                     mode_of(&RhP12Rn::new(id(1))),
@@ -2290,7 +2298,14 @@ mod tests {
             }
             #[cfg(feature = "y-series")]
             {
-                let ym = mode_register(33, &[3], &[], &[0, 1]);
+                let ym = ModeSource::Register {
+                    register: reg(33, 1, Access::RW, Area::Eeprom),
+                    values: ModeValues {
+                        current: &[0],
+                        velocity: &[1],
+                        ..coarse(&[3], &[], &[0, 1])
+                    },
+                };
                 assert_eq!(mode_of(&crate::models::Ym070210M001::new(id(1))), ym);
             }
             #[cfg(feature = "ax")]

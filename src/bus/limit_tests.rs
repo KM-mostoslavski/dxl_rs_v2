@@ -12,7 +12,7 @@
 extern crate std;
 
 /// `instruction` of `register` at `addr` (`len` bytes) on actuator `n`.
-#[cfg(any(feature = "ax", feature = "mx", feature = "x-series"))]
+#[cfg(any(feature = "ax", feature = "mx", feature = "x-series", feature = "pro"))]
 fn on(
     instruction: crate::error::Instruction,
     n: u8,
@@ -1271,10 +1271,7 @@ mod xm430 {
     use crate::actuator::{Actuator, Describe, LimitMode, ModelNumber};
     use crate::bus::testing::*;
     use crate::error::{Error, Instruction, TransportError, ValidationError};
-    use crate::field::{
-        GoalCurrent, GoalVelocity, MaxPositionLimit, MaxVoltageLimit, MinPositionLimit, Raw,
-        TemperatureLimit,
-    };
+    use crate::field::{GoalCurrent, GoalVelocity, MaxPositionLimit, Raw};
     use crate::protocol::P2;
     use crate::transport::MockTime;
     use crate::units::{Current, Position, Pwm, Temperature, Velocity, Voltage};
@@ -1455,10 +1452,9 @@ mod xm430 {
         assert_quiet(&bus, quiet);
     }
 
-    /// NFR-12: the errors of the getters and of a raw limit that fits no
-    /// register, with their requests.
+    /// NFR-12: a getter's error carries its request.
     #[test]
-    fn getter_and_encode_errors_carry_their_request() {
+    fn getter_errors_carry_their_request() {
         let time = MockTime::new();
         let mut bus = xm430(&time, 3);
         assert_eq!(
@@ -1468,96 +1464,6 @@ mod xm430 {
                 timeout_us: 10_000,
             }
             .into())
-        );
-
-        let mut bus = test_bus::<P2, 32>(&time);
-        hold(&mut bus, 1030, 1, (0, 4095), LimitMode::Bounded, OFF);
-        disable(&mut bus);
-        let quiet = mark(&bus);
-        let mut xm = bus.actuator(id(1)).unwrap();
-        assert_eq!(
-            xm.voltage_limits(),
-            Err(ValidationError::NoUnit {
-                id: id(1),
-                register: "Min Voltage Limit",
-                mode: LimitMode::Bounded,
-            }
-            .into())
-        );
-        assert_eq!(
-            xm.write_setting(Raw(TemperatureLimit), 300),
-            Err(ValidationError::DoesNotFit {
-                raw: 300,
-                size: 1,
-                request: on(Instruction::Write, 1, "Temperature Limit", 31, 1),
-            }
-            .into())
-        );
-        assert_quiet(&bus, quiet);
-    }
-
-    /// Plan D6: a model whose table has no unit for the register (an
-    /// unverified XM430-W210) refuses the typed form; the raw form works.
-    /// A typed position limit needs the e-Manual range a verified table
-    /// records, though `Position` converts through `type_info`.
-    #[test]
-    fn no_unit_refuses_the_typed_form_only() {
-        let time = MockTime::new();
-        let mut bus = test_bus::<P2, 32>(&time);
-        hold(&mut bus, 1030, 1, (0, 4095), LimitMode::Bounded, OFF);
-        disable(&mut bus);
-        let start = mark(&bus);
-        let mut xm = bus.actuator(id(1)).unwrap();
-        let scale = xm.position_scale();
-        let no_unit = |register| {
-            Err(ValidationError::NoUnit {
-                id: id(1),
-                register,
-                mode: LimitMode::Bounded,
-            }
-            .into())
-        };
-        assert_eq!(
-            xm.set_position_limits(Position::from_radians(-4.0), Position::from_radians(4.0)),
-            no_unit("Min Position Limit")
-        );
-        assert_eq!(
-            xm.write_setting(MinPositionLimit, scale.to_position(100)),
-            no_unit("Min Position Limit")
-        );
-        assert_eq!(
-            xm.write_setting(MaxPositionLimit, scale.to_position(4000)),
-            no_unit("Max Position Limit")
-        );
-        assert_eq!(
-            xm.set_voltage_limits(Voltage::from_volts(10.0), Voltage::from_volts(16.0)),
-            Err(ValidationError::NoUnit {
-                id: id(1),
-                register: "Min Voltage Limit",
-                mode: LimitMode::Bounded,
-            }
-            .into())
-        );
-        assert_eq!(
-            xm.set_temperature_limit(Temperature::from_celsius(70.0)),
-            Err(ValidationError::NoUnit {
-                id: id(1),
-                register: "Temperature Limit",
-                mode: LimitMode::Bounded,
-            }
-            .into())
-        );
-        assert_quiet(&bus, start);
-        script(&mut bus, &[p2_status(1, 0, &[]), p2_status(1, 0, &[])]);
-        let mut xm = bus.actuator(id(1)).unwrap();
-        assert_eq!(xm.write_setting(Raw(MaxVoltageLimit), 160), Ok(()));
-        assert_eq!(xm.write_setting(Raw(MinPositionLimit), 0), Ok(()));
-        assert_eq!(
-            sent_since(&bus, start),
-            concat(&[
-                p2_write(1, 32, &160u16.to_le_bytes()),
-                p2_write(1, 52, &0i32.to_le_bytes()),
-            ])
         );
     }
 
@@ -2136,10 +2042,6 @@ mod mx64 {
     use crate::transport::MockTime;
     use crate::units::Acceleration;
 
-    /// MX-28(2.0) model number: its table, unverified, has Acceleration
-    /// Limit(40) and no unit for it.
-    const MX28: u16 = 30;
-
     /// One raw step of MX-64(2.0) Acceleration Limit(40), "214.577
     /// Rev/min²", in rad/s².
     const STEP: f32 = 214.577 * core::f32::consts::TAU / 3600.0;
@@ -2323,46 +2225,6 @@ mod mx64 {
             ])
         );
     }
-
-    /// Plan D6: MX-28(2.0)'s table gives Acceleration Limit no unit, so the
-    /// typed setter and getter are refused; the raw forms work.
-    #[test]
-    fn no_unit_refuses_the_typed_form_only() {
-        let time = MockTime::new();
-        let mut bus = test_bus::<P2, 32>(&time);
-        hold(&mut bus, MX28, 1, (0, 4095), LimitMode::Bounded, OFF);
-        disable(&mut bus);
-        let quiet = mark(&bus);
-        let mut mx = bus.actuator(id(1)).unwrap();
-        let no_unit = || -> Result<(), Error> {
-            Err(ValidationError::NoUnit {
-                id: id(1),
-                register: "Acceleration Limit",
-                mode: LimitMode::Bounded,
-            }
-            .into())
-        };
-        assert_eq!(
-            mx.set_acceleration_limit(Acceleration::from_rad_per_s2(37.45)),
-            no_unit()
-        );
-        assert_eq!(
-            mx.acceleration_limit(),
-            no_unit().map(|()| Acceleration::ZERO)
-        );
-        assert_quiet(&bus, quiet);
-        script(
-            &mut bus,
-            &[p2_status(1, 0, &[]), p2_status(1, 0, &100u32.to_le_bytes())],
-        );
-        let mut mx = bus.actuator(id(1)).unwrap();
-        assert_eq!(mx.write_setting(Raw(AccelerationLimit), 100), Ok(()));
-        assert_eq!(mx.read(Raw(AccelerationLimit)), Ok(100));
-        assert_eq!(
-            sent_since(&bus, quiet),
-            concat(&[p2_write(1, 40, &100u32.to_le_bytes()), p2_read(1, 40, 4),])
-        );
-    }
 }
 
 #[cfg(feature = "y-series")]
@@ -2388,43 +2250,41 @@ mod ym070 {
         bus
     }
 
-    /// Plan D6: the YM070 table is unverified, so it records no e-Manual
-    /// range for its position limits and the typed form is refused; single
-    /// raw writes keep the order check against the other limit.
+    /// Plan D6: the YM070 page gives Max/Min Position Limit(76, 84) in
+    /// pulses over the whole `i32` range, so the typed pair is written, the
+    /// minimum first; a single raw write keeps the order check against the
+    /// other limit.
     #[test]
-    fn unverified_y_takes_raw_position_limits_only() {
+    fn y_position_limits_typed_and_raw() {
         let time = MockTime::new();
         let mut bus = ym070(&time);
         let start = mark(&bus);
         let scale = bus.actuator(id(1)).unwrap().position_scale();
-        assert_eq!(
-            bus.actuator(id(1))
-                .unwrap()
-                .set_position_limits(scale.to_position(-500), scale.to_position(500)),
-            Err(crate::ValidationError::NoUnit {
-                id: id(1),
-                register: "Min Position Limit",
-                mode: LimitMode::Bounded,
-            }
-            .into())
-        );
-        assert_quiet(&bus, start);
-        ack(&mut bus, 1);
+        script(&mut bus, &std::vec![p2_status(1, 0, &[]); 3]);
         let mut ym = bus.actuator(id(1)).unwrap();
-        ym.write_setting(Raw(MinPositionLimit), -500).unwrap();
-        assert_eq!(ym.position_limits_raw(), Some(-500..=1000));
+        assert_eq!(
+            ym.set_position_limits(scale.to_position(-500), scale.to_position(500)),
+            Ok(())
+        );
+        assert_eq!(ym.position_limits_raw(), Some(-500..=500));
+        ym.write_setting(Raw(MinPositionLimit), -400).unwrap();
+        assert_eq!(ym.position_limits_raw(), Some(-400..=500));
         assert_eq!(
             ym.write_setting(Raw(MaxPositionLimit), -600),
             Err(crate::ValidationError::InvertedLimits {
                 id: id(1),
-                min: -500,
+                min: -400,
                 max: -600
             }
             .into())
         );
         assert_eq!(
             sent_since(&bus, start),
-            p2_write(1, 84, &(-500i32).to_le_bytes())
+            concat(&[
+                p2_write(1, 84, &(-500i32).to_le_bytes()),
+                p2_write(1, 76, &500i32.to_le_bytes()),
+                p2_write(1, 84, &(-400i32).to_le_bytes()),
+            ])
         );
     }
 
@@ -2528,6 +2388,119 @@ mod ym070 {
             concat(&[
                 p2_write(1, 84, &(-400i32).to_le_bytes()),
                 p2_write(1, 76, &400i32.to_le_bytes()),
+            ])
+        );
+    }
+}
+
+/// The RH-P12-RN, whose table has no unit data yet (D-24: its position
+/// scale has no e-Manual source), the one model left whose typed limits are
+/// refused (plan D6).
+#[cfg(feature = "pro")]
+mod rh_p12_rn {
+    use crate::actuator::{Actuator, LimitMode};
+    use crate::bus::testing::*;
+    use crate::error::{Error, Instruction, ValidationError};
+    use crate::field::{
+        AccelerationLimit, MaxPositionLimit, MaxVoltageLimit, MinPositionLimit, Raw,
+        TemperatureLimit,
+    };
+    use crate::protocol::P2;
+    use crate::transport::MockTime;
+    use crate::units::{Acceleration, Position, Temperature, Voltage};
+
+    /// RH-P12-RN(A) model number.
+    const RH_P12_RN: u16 = 35074;
+
+    /// `NoUnit` for `register` of actuator 1 in its position mode.
+    fn no_unit(register: &'static str) -> Result<(), Error> {
+        Err(ValidationError::NoUnit {
+            id: id(1),
+            register,
+            mode: LimitMode::Bounded,
+        }
+        .into())
+    }
+
+    /// Plan D6: a model whose table has no unit for the register refuses
+    /// the typed setters and getters, nothing sent; the raw forms work. A
+    /// typed position limit needs the e-Manual range a verified table
+    /// records, though `Position` converts through `type_info`. NFR-12: a
+    /// raw value that fits no register, with no range to check first, is
+    /// refused with its request.
+    #[test]
+    fn no_unit_refuses_the_typed_form_only() {
+        let time = MockTime::new();
+        let mut bus = test_bus::<P2, 32>(&time);
+        hold(&mut bus, RH_P12_RN, 1, (-740, 740), LimitMode::Bounded, OFF);
+        ack(&mut bus, 1);
+        bus.actuator(id(1)).unwrap().disable_torque().unwrap();
+        let start = mark(&bus);
+        let mut rh = bus.actuator(id(1)).unwrap();
+        let scale = rh.position_scale();
+        assert_eq!(
+            rh.set_position_limits(Position::from_radians(-1.0), Position::from_radians(1.0)),
+            no_unit("Min Position Limit")
+        );
+        assert_eq!(
+            rh.write_setting(MinPositionLimit, scale.to_position(-100)),
+            no_unit("Min Position Limit")
+        );
+        assert_eq!(
+            rh.write_setting(MaxPositionLimit, scale.to_position(700)),
+            no_unit("Max Position Limit")
+        );
+        assert_eq!(
+            rh.set_voltage_limits(Voltage::from_volts(15.0), Voltage::from_volts(28.0)),
+            no_unit("Min Voltage Limit")
+        );
+        assert_eq!(
+            rh.voltage_limits().map(|_| ()),
+            no_unit("Min Voltage Limit")
+        );
+        assert_eq!(
+            rh.set_temperature_limit(Temperature::from_celsius(70.0)),
+            no_unit("Temperature Limit")
+        );
+        assert_eq!(
+            rh.set_acceleration_limit(Acceleration::from_rad_per_s2(37.45)),
+            no_unit("Acceleration Limit")
+        );
+        assert_eq!(
+            rh.acceleration_limit().map(|_| ()),
+            no_unit("Acceleration Limit")
+        );
+        assert_eq!(
+            rh.write_setting(Raw(TemperatureLimit), 300),
+            Err(ValidationError::DoesNotFit {
+                raw: 300,
+                size: 1,
+                request: super::on(Instruction::Write, 1, "Temperature Limit", 31, 1),
+            }
+            .into())
+        );
+        assert_quiet(&bus, start);
+        script(
+            &mut bus,
+            &[
+                p2_status(1, 0, &[]),
+                p2_status(1, 0, &[]),
+                p2_status(1, 0, &[]),
+                p2_status(1, 0, &100u32.to_le_bytes()),
+            ],
+        );
+        let mut rh = bus.actuator(id(1)).unwrap();
+        assert_eq!(rh.write_setting(Raw(MaxVoltageLimit), 280), Ok(()));
+        assert_eq!(rh.write_setting(Raw(MinPositionLimit), 0), Ok(()));
+        assert_eq!(rh.write_setting(Raw(AccelerationLimit), 100), Ok(()));
+        assert_eq!(rh.read(Raw(AccelerationLimit)), Ok(100));
+        assert_eq!(
+            sent_since(&bus, start),
+            concat(&[
+                p2_write(1, 32, &280u16.to_le_bytes()),
+                p2_write(1, 52, &0i32.to_le_bytes()),
+                p2_write(1, 40, &100u32.to_le_bytes()),
+                p2_read(1, 40, 4),
             ])
         );
     }

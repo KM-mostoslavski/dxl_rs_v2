@@ -40,9 +40,10 @@ mod xm430 {
     use crate::transport::MockTime;
     use crate::units::{Position, Velocity};
 
-    /// XM430-W210 model number: its table, unverified, has the three
-    /// settings and no unit for them.
-    const XM430_W210: u16 = 1030;
+    /// RH-P12-RN(A) model number: its table has the three settings and no
+    /// unit data yet (D-24), at the XM430-W350's addresses.
+    #[cfg(feature = "pro")]
+    const RH_P12_RN: u16 = 35074;
 
     /// An XM430-W350 at ID 1, limits 1000..=3000, in Operating Mode `mode`,
     /// as Setup leaves it: torque `Off`, not confirmed off.
@@ -339,14 +340,15 @@ mod xm430 {
     }
 
     /// Plan 2026-11-09 D6: a model whose table gives the settings no unit
-    /// (an unverified XM430-W210) refuses the typed forms, the getters
-    /// included: a Homing Offset never falls back to the position scale
-    /// and its zero point. The raw forms work.
+    /// (the RH-P12-RN) refuses the typed forms, the getters included: a
+    /// Homing Offset never falls back to the position scale and its zero
+    /// point. The raw forms work.
+    #[cfg(feature = "pro")]
     #[test]
     fn no_unit_refuses_the_typed_form_only() {
         let time = MockTime::new();
         let mut bus = test_bus::<P2, 32>(&time);
-        hold(&mut bus, XM430_W210, 1, (0, 4095), LimitMode::Bounded, OFF);
+        hold(&mut bus, RH_P12_RN, 1, (-740, 740), LimitMode::Bounded, OFF);
         disable(&mut bus);
         let quiet = mark(&bus);
         let mut xm = bus.actuator(id(1)).unwrap();

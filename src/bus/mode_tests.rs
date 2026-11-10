@@ -39,10 +39,11 @@ mod xm430 {
     use crate::protocol::P2;
     use crate::transport::MockTime;
 
-    /// XM430-W210 model number: its table, unverified, gives only the
-    /// coarse mode lists (`bounded` 3, `unbounded` 4 and 5, `no_position`
-    /// 0, 1 and 16).
-    const XM430_W210: u16 = 1030;
+    /// RH-P12-RN(A) model number: its table gives only the coarse mode
+    /// lists (`bounded` 5, `no_position` 0; D-24), Operating Mode(11) as on
+    /// the XM430-W350.
+    #[cfg(feature = "pro")]
+    const RH_P12_RN: u16 = 35074;
 
     /// An XM430-W350 at ID 1, limits 1000..=3000, in Operating Mode `mode`,
     /// as Setup leaves it: torque `Off`, not confirmed off.
@@ -353,11 +354,12 @@ mod xm430 {
 
     /// S3: a table that lists no single value for a mode refuses it with
     /// `UnsupportedMode`, nothing sent; the mode it does single out works.
+    #[cfg(feature = "pro")]
     #[test]
     fn mode_without_one_value_is_unsupported() {
         let time = MockTime::new();
         let mut bus = test_bus(&time);
-        hold(&mut bus, XM430_W210, 1, (0, 4095), LimitMode::Bounded, OFF);
+        hold(&mut bus, RH_P12_RN, 1, (-740, 740), LimitMode::Bounded, OFF);
         disable(&mut bus);
         let quiet = mark(&bus);
         let mut xm = bus.actuator(id(1)).unwrap();
@@ -377,7 +379,7 @@ mod xm430 {
         ack(&mut bus, 1);
         let mut xm = bus.actuator(id(1)).unwrap();
         assert_eq!(xm.set_operating_mode(OperatingMode::Position), Ok(()));
-        assert_eq!(sent_since(&bus, quiet), p2_write(1, 11, &[3]));
+        assert_eq!(sent_since(&bus, quiet), p2_write(1, 11, &[5]));
     }
 
     /// S3: `operating_mode` reads Operating Mode(11) once, maps it back to
@@ -427,12 +429,13 @@ mod xm430 {
 
     /// S3: on a table with only the coarse lists, a mode it does not single
     /// out reads back as `UnlistedMode`.
+    #[cfg(feature = "pro")]
     #[test]
     fn coarse_table_reads_unnamed_modes_as_unlisted() {
         let time = MockTime::new();
         let mut bus = test_bus::<P2, 32>(&time);
-        hold(&mut bus, XM430_W210, 1, (0, 4095), LimitMode::Bounded, OFF);
-        script(&mut bus, &[p2_status(1, 0, &[3]), p2_status(1, 0, &[1])]);
+        hold(&mut bus, RH_P12_RN, 1, (-740, 740), LimitMode::Bounded, OFF);
+        script(&mut bus, &[p2_status(1, 0, &[5]), p2_status(1, 0, &[0])]);
         let mut xm = bus.actuator(id(1)).unwrap();
         assert_eq!(xm.operating_mode(), Ok(OperatingMode::Position));
         assert_eq!(
@@ -440,7 +443,7 @@ mod xm430 {
             Err(ValidationError::UnlistedMode {
                 id: id(1),
                 register: "Operating Mode",
-                value: 1,
+                value: 0,
             }
             .into())
         );

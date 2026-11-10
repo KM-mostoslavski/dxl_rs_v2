@@ -1504,7 +1504,7 @@ mod mx64_p2 {
 mod pro {
     use super::*;
     use crate::bus::testing::*;
-    use crate::error::{Error, ValidationError};
+    use crate::error::ValidationError;
     use crate::models::Ph54200S500;
     use crate::protocol::P2;
     use crate::transport::MockTime;
@@ -1524,15 +1524,13 @@ mod pro {
             }
             .into())
         );
-        assert!(matches!(
-            handle.present_temperature(),
-            Err(Error::Validation(ValidationError::NoUnit { .. }))
-        ));
         assert_quiet(&bus, mark);
-        let mut replies = std::vec![p2_status(1, 0, &[]); 3];
+        let mut replies = std::vec![p2_status(1, 0, &[41])];
+        replies.extend(std::vec![p2_status(1, 0, &[]); 3]);
         replies.push(p2_status(1, 0, &[9]));
         script(&mut bus, &replies);
         let mut handle = bus.actuator(id(1)).unwrap();
+        assert_eq!(handle.present_temperature().unwrap().celsius(), 41.0);
         let mut pro = handle.model::<Ph54200S500>().unwrap();
         pro.set_led_red(255).unwrap();
         pro.set_led_green(0).unwrap();
@@ -1541,6 +1539,7 @@ mod pro {
         assert_eq!(
             sent_since(&bus, mark),
             concat(&[
+                p2_read(1, 594, 1),
                 p2_write(1, 513, &[255]),
                 p2_write(1, 514, &[0]),
                 p2_write(1, 515, &[9]),
