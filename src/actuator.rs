@@ -659,6 +659,7 @@ impl ModeValues {
     /// `value`: the inverse of writing it. `None` when no named mode takes
     /// that value.
     pub(crate) fn mode_of(self, value: u8) -> Option<OperatingMode> {
+        // DECISION: reading back is the strict inverse of value_of, so operating_mode() names a value only if set_operating_mode() of that name writes it; a value only a coarse list holds (MX-106 velocity 1) is UnlistedMode, no mode guessed.
         OperatingMode::ALL
             .into_iter()
             .find(|&mode| self.value_of(mode).is_some_and(|(named, _)| named == value))

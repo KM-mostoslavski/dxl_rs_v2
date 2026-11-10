@@ -1235,6 +1235,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`UnsupportedMode`]: crate::ValidationError::UnsupportedMode
     /// [`LimitsUnknown`]: crate::ValidationError::LimitsUnknown
     pub fn set_operating_mode(&mut self, mode: OperatingMode) -> Result<(), Error> {
+        // DECISION: the plan's "write the goal before enable_torque" cannot hold on the typed tier, which refuses goals with torque off (Principle III), so the docs give the two ways that can: write_raw before enable_torque, or the bound the firmware resets the goal to.
         let write = super::mode::check_mode(self.kind, (*self.state, *self.marks), mode)?;
         self.send_mode(write)
     }

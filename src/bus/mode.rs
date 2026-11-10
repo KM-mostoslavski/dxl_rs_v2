@@ -106,6 +106,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         let Some(reg) = bound_register(self.kind) else {
             return Ok(());
         };
+        // DECISION: the bound read is a runtime read like every other, so a reply carrying a hardware fault fails it (bound unknown) where Setup's read would tolerate it.
         match self.read_reg(reg) {
             Ok(raw) => {
                 *self.bound = Some(raw.cast_unsigned());

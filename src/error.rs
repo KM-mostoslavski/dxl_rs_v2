@@ -935,6 +935,7 @@ pub enum ValidationError {
     /// table lists for no [`OperatingMode`] (plan 2026-11-10 S3): a mode
     /// the table does not single out, or a value it does not list at all.
     /// The read was sent; no mode is guessed.
+    // DECISION: the value read back is carried with the mode register's name, as SetupError::UnknownOperatingMode carries it, so Operating Mode and XL-320 Control Mode tell apart in one line.
     #[error("id {}: {register} {value} matches no OperatingMode", id.get())]
     UnlistedMode {
         /// The actuator that was read.
