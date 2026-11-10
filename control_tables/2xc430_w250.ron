@@ -1,7 +1,8 @@
 (
   source: Unverified,
+  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/x/2xc430-w250/", verified: "2026-11-10"),
   protocols: [P1, P2],
-  operating_modes: (bounded: [3], unbounded: [4], no_position: [1, 16]),
+  operating_modes: (bounded: [3], unbounded: [4], no_position: [1, 16], current: [], velocity: [1], pwm: [16], current_position: []),
   type_info: {
     value_of_zero_radian_position: 2048,
     value_of_max_radian_position: 4095,
@@ -11,16 +12,135 @@
   },
   unit_info: [
     {
-      data_name: "Present Velocity",
-      value: 0.0239691227,
-      unit: "rad/s",
-      sign_type: "signed",
+      data_name: "Return Delay Time",
+      value: 2.0,
+      unit: "µs",
+      sign_type: "unsigned",
+      range: (min: 0, max: 254),
+    },
+    // DECISION: Homing Offset takes the control table unit 1 pulse (one position tick of type_info, exact) over the about 0.088 deg of the description.
+    {
+      data_name: "Homing Offset",
+      value: 1.0,
+      unit: "pulse",
+      sign_type: "twos_complement",
+      range: (min: -1044479, max: 1044479),
+    },
+    {
+      data_name: "Moving Threshold",
+      value: 0.229,
+      unit: "rpm",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    {
+      data_name: "Temperature Limit",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
+      range: (min: 0, max: 100),
+    },
+    // DECISION: Min/Max Voltage Limit take the control table Range 60 ~ 160, which holds the initial value 160 the page gives Max Voltage Limit; the register description says 60 ~ 140.
+    {
+      data_name: "Max Voltage Limit",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+      range: (min: 60, max: 160),
+    },
+    {
+      data_name: "Min Voltage Limit",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+      range: (min: 60, max: 160),
+    },
+    {
+      data_name: "PWM Limit",
+      value: 0.113,
+      unit: "%",
+      sign_type: "unsigned",
+      range: (min: 0, max: 885),
+    },
+    {
+      data_name: "Velocity Limit",
+      value: 0.229,
+      unit: "rpm",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1023),
+    },
+    // DECISION: Min/Max Position Limit take the 0.088 deg scale of the page description, as xm430_w350 does; Goal/Present Position stay on type_info.
+    {
+      data_name: "Max Position Limit",
+      value: 0.088,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 4095),
+    },
+    {
+      data_name: "Min Position Limit",
+      value: 0.088,
+      unit: "deg",
+      sign_type: "unsigned",
+      range: (min: 0, max: 4095),
     },
     {
       data_name: "Goal Velocity",
-      value: 0.0239691227,
-      unit: "rad/s",
-      sign_type: "signed",
+      value: 0.229,
+      unit: "rpm",
+      sign_type: "twos_complement",
+      bounded_by: "Velocity Limit",
+    },
+    {
+      data_name: "Profile Velocity",
+      value: 0.229,
+      unit: "rpm",
+      sign_type: "unsigned",
+      profile: "velocity_based",
+      zero_is_unlimited: true,
+      range: (min: 0, max: 32767),
+    },
+    {
+      data_name: "Profile Velocity",
+      value: 1.0,
+      unit: "ms",
+      sign_type: "unsigned",
+      profile: "time_based",
+      zero_is_unlimited: true,
+      range: (min: 0, max: 32737),
+      from_fw: 42,
+    },
+    {
+      data_name: "Realtime Tick",
+      value: 1.0,
+      unit: "ms",
+      sign_type: "unsigned",
+      range: (min: 0, max: 32767),
+    },
+    {
+      data_name: "Present Load",
+      value: 0.1,
+      unit: "%",
+      sign_type: "twos_complement",
+      range: (min: -1000, max: 1000),
+    },
+    {
+      data_name: "Present Velocity",
+      value: 0.229,
+      unit: "rpm",
+      sign_type: "twos_complement",
+    },
+    {
+      data_name: "Present Input Voltage",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+    },
+    {
+      data_name: "Present Temperature",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
     },
   ],
   control_table: [
@@ -205,6 +325,7 @@
       data_name: "Velocity I Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 16383),
     },
     {
       address: 78,
@@ -212,6 +333,7 @@
       data_name: "Velocity P Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 16383),
     },
     {
       address: 80,
@@ -219,6 +341,7 @@
       data_name: "Position D Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 16383),
     },
     {
       address: 82,
@@ -226,6 +349,7 @@
       data_name: "Position I Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 16383),
     },
     {
       address: 84,
@@ -233,6 +357,7 @@
       data_name: "Position P Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 16383),
     },
     {
       address: 88,
@@ -240,6 +365,7 @@
       data_name: "Feedforward 2nd Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 16383),
     },
     {
       address: 90,
@@ -247,6 +373,7 @@
       data_name: "Feedforward 1st Gain",
       access: RW,
       area: RAM,
+      range: (min: 0, max: 16383),
     },
     {
       address: 98,

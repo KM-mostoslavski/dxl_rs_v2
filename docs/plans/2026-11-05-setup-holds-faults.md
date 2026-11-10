@@ -51,8 +51,8 @@ Bench, not mock (add to T090's run): an AX-12A below its Min Voltage Limit. Whet
 
 ### Task T091 [human]: Architect: decide D1 to D3, amend the SRS
 
-- [ ] Accept or overrule D1, D2, D3 above.
-- [ ] Write FR-2.7, FR-6.2 and the § 8 sentence in `docs/srs/SRS.md`. This supersedes the "FR-2.7 (fault at Setup fails Setup)" item of T087.
+- [x] Accept or overrule D1, D2, D3 above. Accepted 2026-11-10 (maintainer delegated).
+- [x] Write FR-2.7, FR-6.2 and the § 8 sentence in `docs/srs/SRS.md`. This supersedes the "FR-2.7 (fault at Setup fails Setup)" item of T087.
 - [ ] Triage D-01 in `docs/deferred.md` at the next `/start` as `next`, module `bus`, step 4.
 
 Gate: T092 does not start before this. Building against today's FR-2.7 would be a conflict, which is a deferral.

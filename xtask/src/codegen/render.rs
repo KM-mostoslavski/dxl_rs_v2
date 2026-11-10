@@ -322,6 +322,11 @@ fn role_doc(role: &GenRole) -> String {
             "\n/// One raw step is 1/{top} of the maximum: {full} is 100 %."
         );
     }
+    if role.def.quantity == Quantity::Offset && !role.scales.is_empty() {
+        doc.push_str(
+            "\n/// One raw step is one position tick of the model's position scale (`type_info`), with no zero point.",
+        );
+    }
     if let Some((min, max)) = role.row_range {
         let _ = write!(doc, "\n/// Raw range {min} to {max}.");
     }
@@ -986,6 +991,46 @@ mod tests {
             assert!(text.lines().any(|l| l == line), "{line}");
         }
         assert!(!c.contains("implHasMaxTorqueforXm"));
+    }
+
+    #[test]
+    fn model_file_with_setting_roles() {
+        let xm = Table::xm_fr9()
+            .with_row(9, 1, "Return Delay Time", "RW", "EEPROM")
+            .with_row(20, 4, "Homing Offset", "RW", "EEPROM")
+            .with_row(24, 4, "Moving Threshold", "RW", "EEPROM")
+            .unit(r#"data_name: "Return Delay Time", value: 2.0, unit: "µs", sign_type: "unsigned", range: (min: 0, max: 254)"#)
+            .unit(r#"data_name: "Homing Offset", value: 0.088, unit: "deg", sign_type: "twos_complement", range: (min: -1044479, max: 1044479)"#)
+            .unit(r#"data_name: "Moving Threshold", value: 0.229, unit: "rpm", sign_type: "unsigned", range: (min: 0, max: 1023)"#);
+        let files = one("xm", xm);
+        let text = file(&files, "models/xm.rs");
+        let c = compact(text);
+        for part in [
+            "homing_offset:Some(<SelfasHasHomingOffset>::ROLE),moving_threshold:Some(<SelfasHasMovingThreshold>::ROLE),return_delay_time:Some(<SelfasHasReturnDelayTime>::ROLE)",
+            "implHasHomingOffsetforXm{constROLE:RoleRegister=RoleRegister{name:\"HomingOffset\",register:Self::HOMING_OFFSET,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.0015343555,Sign::TwosComplement,4,false)),range:Some((-1044479,1044479))}],",
+            "implHasMovingThresholdforXm{constROLE:RoleRegister=RoleRegister{name:\"MovingThreshold\",register:Self::MOVING_THRESHOLD,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(0.023980824,Sign::Unsigned,4,false)),range:Some((0,1023))}],",
+            "implHasReturnDelayTimeforXm{constROLE:RoleRegister=RoleRegister{name:\"ReturnDelayTime\",register:Self::RETURN_DELAY_TIME,scales:&[ModeScale{modes:ModeSet::ALL,scale:Some(RegisterScale::new(2e-6,Sign::Unsigned,1,false)),range:Some((0,254))}],",
+        ] {
+            assert!(c.contains(part), "{part}");
+        }
+        for line in [
+            "/// Homing Offset: 0.088 deg per raw step in every mode.",
+            "/// One raw step is one position tick of the model's position scale (`type_info`), with no zero point.",
+            "/// Moving Threshold: 0.229 rpm per raw step in every mode.",
+            "/// Return Delay Time: 2 µs per raw step in every mode.",
+        ] {
+            assert!(text.lines().any(|l| l == line), "{line}");
+        }
+        let raw = one(
+            "xm",
+            Table::xm().with_row(20, 4, "Homing Offset", "RW", "EEPROM"),
+        );
+        let text = file(&raw, "models/xm.rs");
+        assert!(!text.contains("One raw step is one position tick"));
+        assert!(
+            text.lines()
+                .any(|l| l == "/// Homing Offset: raw only, no unit in the table.")
+        );
     }
 
     #[test]

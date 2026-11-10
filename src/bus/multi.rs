@@ -225,12 +225,13 @@ impl<P: Protocol, T: Transport, C: Clock, const N: usize> Bus<P, T, C, N> {
     ///
     /// Each goal is converted to the nearest tick of its model and checked
     /// like [`ActuatorRef::set_goal_position`](crate::ActuatorRef::set_goal_position)
-    /// does. Limits and operating mode are those read at Setup. Position
-    /// mode applies the EEPROM limits. Extended and current-based position
-    /// modes and MX multi-turn apply none, as the firmware does; only the
-    /// register size is checked. Velocity, current, PWM and wheel modes
-    /// refuse every goal (`NotPositionMode`). A mode changed after Setup is
-    /// not seen until the next Setup.
+    /// does. Limits and operating mode are those read at Setup, or written
+    /// since through the bus (`set_position_limits`, `set_operating_mode`).
+    /// Position mode applies the EEPROM limits. Extended and current-based
+    /// position modes and MX multi-turn apply none, as the firmware does;
+    /// only the register size is checked. Velocity, current, PWM and wheel
+    /// modes refuse every goal (`NotPositionMode`). A mode changed otherwise
+    /// is not seen until the next Setup.
     ///
     /// A Sync Write gets no reply, so a fault shows on the next read. The
     /// call is all-or-nothing at validation only: targets with different
@@ -338,7 +339,7 @@ assert_eq!(present, [512, 612]);
     /// Each target is checked as
     /// [`ActuatorRef::set_goal_velocity`](crate::ActuatorRef::set_goal_velocity)
     /// checks it: torque on, velocity or wheel mode, within the Velocity
-    /// Limit read at Setup. A refusal sends nothing to anyone. Not atomic
+    /// Limit the bus holds (read at Setup, kept by setting writes). A refusal sends nothing to anyone. Not atomic
     /// across layouts on the wire; a fault shows on the next read.
     ///
     /// # Errors
@@ -359,7 +360,8 @@ assert_eq!(present, [512, 612]);
     /// Each target is checked as
     /// [`ActuatorRef::set_goal_current`](crate::ActuatorRef::set_goal_current)
     /// checks it: torque on, current or current-based position mode, within
-    /// the Current Limit read at Setup. A refusal sends nothing to anyone.
+    /// the Current Limit the bus holds (read at Setup, kept by setting
+    /// writes). A refusal sends nothing to anyone.
     ///
     /// # Errors
     ///

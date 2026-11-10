@@ -5,9 +5,9 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasCcwComplianceMargin, HasCcwComplianceSlope,
     HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMaxPositionLimit,
     HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
-    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
-    HasTemperatureLimit, LimitMode, LimitRegisters, ModeScale, ModeSet, ModeSource, Model,
-    ModelData, Protocols, RoleRegister, Roles,
+    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+    HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitMode, LimitRegisters, ModeScale,
+    ModeSet, ModeSource, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
@@ -67,6 +67,7 @@ impl Rx28 {
             min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
             max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
             max_torque: Some(<Self as HasMaxTorque>::ROLE),
+            return_delay_time: Some(<Self as HasReturnDelayTime>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -431,6 +432,22 @@ impl HasMaxTorque for Rx28 {
             modes: ModeSet::ALL,
             scale: Some(RegisterScale::new(0.0009775171, Sign::Unsigned, 2, false)),
             range: Some((0, 1023)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Return Delay Time: 2 µs per raw step in every mode.
+impl HasReturnDelayTime for Rx28 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Return Delay Time",
+        register: Self::RETURN_DELAY_TIME,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
         }],
         bounded_by: None,
         from_fw: 0,

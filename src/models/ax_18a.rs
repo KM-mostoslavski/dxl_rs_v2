@@ -5,13 +5,13 @@ use crate::actuator::{
     Actuator, Cache, Describe, HasCcwComplianceMargin, HasCcwComplianceSlope,
     HasCwComplianceMargin, HasCwComplianceSlope, HasGoalVelocity, HasLed, HasMaxPositionLimit,
     HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving,
-    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasSpeedLimit,
-    HasTemperatureLimit, LimitRegisters, ModeSource, Model, ModelData, Protocols, RoleRegister,
-    Roles,
+    HasPresentLoad, HasPresentTemperature, HasPresentVelocity, HasPresentVoltage,
+    HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, LimitMode, LimitRegisters, ModeScale,
+    ModeSet, ModeSource, Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
-use crate::units::PositionScale;
+use crate::units::{PositionScale, RegisterScale, Sign};
 
 /// AX-18A (model number 18, also sold as AX-18F).
 ///
@@ -67,6 +67,7 @@ impl Ax18a {
             min_position_limit: Some(<Self as HasMinPositionLimit>::ROLE),
             max_position_limit: Some(<Self as HasMaxPositionLimit>::ROLE),
             max_torque: Some(<Self as HasMaxTorque>::ROLE),
+            return_delay_time: Some(<Self as HasReturnDelayTime>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -149,72 +150,116 @@ impl Model for Ax18a {
     const DATA: &'static ModelData = &Self::DATA;
 }
 
-/// Present Temperature: raw only, no unit in the table.
+/// Present Temperature: 1 °C per raw step in every mode.
 impl HasPresentTemperature for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Temperature",
         register: Self::PRESENT_TEMPERATURE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Voltage: raw only, no unit in the table.
+/// Present Voltage: 0.1 V per raw step in every mode.
 impl HasPresentVoltage for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Voltage",
         register: Self::PRESENT_VOLTAGE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Speed: raw only, no unit in the table.
+/// Present Speed: 0.111 rpm per raw step in Bounded mode.
+/// No typed form for 0.1 % per raw step in Wheel mode: not a present velocity.
 impl HasPresentVelocity for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Speed",
         register: Self::PRESENT_SPEED,
-        scales: &[],
+        scales: &[
+            ModeScale {
+                modes: ModeSet::of(&[LimitMode::Bounded]),
+                scale: Some(RegisterScale::new(
+                    0.011623893,
+                    Sign::DirectionBit(10),
+                    2,
+                    false,
+                )),
+                range: Some((0, 2047)),
+            },
+            ModeScale {
+                modes: ModeSet::of(&[LimitMode::Wheel]),
+                scale: None,
+                range: Some((0, 2047)),
+            },
+        ],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Moving Speed: raw only, no unit in the table.
+/// Moving Speed: raw only.
+/// No typed form for 0.1 % per raw step in Wheel mode: not a goal velocity.
 impl HasGoalVelocity for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Moving Speed",
         register: Self::MOVING_SPEED,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::of(&[LimitMode::Wheel]),
+            scale: None,
+            range: Some((0, 2047)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Moving Speed: raw only, no unit in the table.
+/// Moving Speed: 0.111 rpm per raw step in Bounded mode, raw 0 meaning no limit.
 impl HasSpeedLimit for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Moving Speed",
         register: Self::MOVING_SPEED,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::of(&[LimitMode::Bounded]),
+            scale: Some(RegisterScale::new(0.011623893, Sign::Unsigned, 2, true)),
+            range: Some((0, 1023)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Load: raw only, no unit in the table.
+/// Present Load: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: the full magnitude below direction bit 10 is 100 %.
 impl HasPresentLoad for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Load",
         register: Self::PRESENT_LOAD,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0009775171,
+                Sign::DirectionBit(10),
+                2,
+                false,
+            )),
+            range: Some((0, 2047)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -245,24 +290,32 @@ impl HasLed for Ax18a {
     };
 }
 
-/// CW Compliance Margin: raw only, no unit in the table.
+/// CW Compliance Margin: 0.29 deg per raw step in every mode.
 impl HasCwComplianceMargin for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CW Compliance Margin",
         register: Self::CW_COMPLIANCE_MARGIN,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false)),
+            range: Some((0, 255)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// CCW Compliance Margin: raw only, no unit in the table.
+/// CCW Compliance Margin: 0.29 deg per raw step in every mode.
 impl HasCcwComplianceMargin for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CCW Compliance Margin",
         register: Self::CCW_COMPLIANCE_MARGIN,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0050614546, Sign::Unsigned, 1, false)),
+            range: Some((0, 255)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -270,6 +323,7 @@ impl HasCcwComplianceMargin for Ax18a {
 }
 
 /// CW Compliance Slope: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasCwComplianceSlope for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CW Compliance Slope",
@@ -277,11 +331,12 @@ impl HasCwComplianceSlope for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 254)),
     };
 }
 
 /// CCW Compliance Slope: in register units, no scale.
+/// Raw range 0 to 254.
 impl HasCcwComplianceSlope for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CCW Compliance Slope",
@@ -289,40 +344,52 @@ impl HasCcwComplianceSlope for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 254)),
     };
 }
 
-/// Min Voltage Limit: raw only, no unit in the table.
+/// Min Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMinVoltageLimit for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Min Voltage Limit",
         register: Self::MIN_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: Some((50, 160)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Max Voltage Limit: raw only, no unit in the table.
+/// Max Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMaxVoltageLimit for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Voltage Limit",
         register: Self::MAX_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 1, false)),
+            range: Some((50, 160)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Temperature Limit: raw only, no unit in the table.
+/// Temperature Limit: 1 °C per raw step in every mode.
 impl HasTemperatureLimit for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Temperature Limit",
         register: Self::TEMPERATURE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(1.0, Sign::Unsigned, 1, false)),
+            range: Some((0, 99)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -330,6 +397,7 @@ impl HasTemperatureLimit for Ax18a {
 }
 
 /// CW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 1023.
 impl HasMinPositionLimit for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CW Angle Limit",
@@ -337,11 +405,12 @@ impl HasMinPositionLimit for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 1023)),
     };
 }
 
 /// CCW Angle Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range 0 to 1023.
 impl HasMaxPositionLimit for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "CCW Angle Limit",
@@ -349,16 +418,37 @@ impl HasMaxPositionLimit for Ax18a {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 1023)),
     };
 }
 
-/// Max Torque: raw only, no unit in the table.
+/// Max Torque: 0.1 % per raw step in every mode.
+/// One raw step is 1/1023 of the maximum: raw 1023, the top of its range, is 100 %.
 impl HasMaxTorque for Ax18a {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Torque",
         register: Self::MAX_TORQUE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0009775171, Sign::Unsigned, 2, false)),
+            range: Some((0, 1023)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Return Delay Time: 2 µs per raw step in every mode.
+impl HasReturnDelayTime for Ax18a {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Return Delay Time",
+        register: Self::RETURN_DELAY_TIME,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,

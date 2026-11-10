@@ -8,7 +8,7 @@
 //!
 //! - one actuator: [`ActuatorRef::read`](crate::ActuatorRef::read) and
 //!   [`ActuatorRef::write`](crate::ActuatorRef::write), and for the EEPROM
-//!   limits ([`LimitField`]) [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit);
+//!   settings ([`SettingField`]) [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting);
 //! - many actuators: [`Bus::read_field`](crate::Bus::read_field) (both
 //!   protocols), [`Bus::sync_write`](crate::Bus::sync_write) (both
 //!   protocols) and [`Bus::sync_read`](crate::Bus::sync_read) (Protocol 2);
@@ -39,8 +39,8 @@
 //! | Field | Value | Torque on? | Mode | Bound |
 //! |---|---|---|---|---|
 //! | [`GoalPosition`] | [`Position`] | yes | position modes | EEPROM position limits in position mode |
-//! | [`GoalVelocity`] | [`Velocity`] | yes | velocity, wheel | Velocity Limit, read at Setup |
-//! | [`GoalCurrent`] | [`Current`] | yes | current, current-based position | Current Limit, read at Setup |
+//! | [`GoalVelocity`] | [`Velocity`] | yes | velocity, wheel | Velocity Limit the bus holds ([`goal_bound_raw`](crate::ActuatorRef::goal_bound_raw)) |
+//! | [`GoalCurrent`] | [`Current`] | yes | current, current-based position | Current Limit the bus holds ([`goal_bound_raw`](crate::ActuatorRef::goal_bound_raw)) |
 //! | [`SpeedLimit`] | [`units::SpeedLimit`](crate::SpeedLimit) | no | not where it is the goal velocity | e-Manual range |
 //! | [`Led`] | `bool` | no | any | — |
 //! | [`PGain`], [`DGain`] | [`Gain`] | no | any | e-Manual range |
@@ -54,6 +54,9 @@
 //! | [`PwmLimit`] | [`Pwm`] | confirmed off | any | e-Manual range |
 //! | [`MaxTorque`] | [`Load`] | confirmed off | any | e-Manual range |
 //! | [`AccelerationLimit`] | [`Acceleration`] | confirmed off | any | e-Manual range |
+//! | [`HomingOffset`] | [`Position`], an offset | confirmed off | any | e-Manual range |
+//! | [`MovingThreshold`] | [`Velocity`] | confirmed off | any | e-Manual range |
+//! | [`ReturnDelayTime`] | [`Duration`] | confirmed off | any | e-Manual range |
 //!
 //! Every value is also checked against the register size. "e-Manual
 //! range" is the range the table records for the register: a register
@@ -64,14 +67,18 @@
 //! where the table gives the register no unit refuses it with
 //! [`ValidationError::NoUnit`] (the raw form still works). A typed position
 //! limit needs no unit but the e-Manual range of its row: on a table that
-//! records none (an unverified table) it is refused with `NoUnit` too.
+//! records none (an unverified table) it is refused with `NoUnit` too. A
+//! Homing Offset is an angle offset, not a position: it converts through
+//! its own unit, one position tick per raw step with no zero point, and
+//! without that unit it is refused with `NoUnit`.
 //!
-//! The limit fields are [`LimitField`]s, written only by
-//! [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) and its
+//! The limit fields and the other EEPROM settings (Homing Offset, Moving
+//! Threshold, Return Delay Time) are [`SettingField`]s, written only by
+//! [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting) and its
 //! setters, never by a sync or bulk write, so the bus keeps the position
 //! limits, the limit mode and the goal bound it holds true to each write.
 //! The bus writes EEPROM only with torque confirmed off, on every model: a
-//! limit write while the torque state it holds is on is refused with
+//! setting write while the torque state it holds is on is refused with
 //! [`ValidationError::ActuatorIsOn`], and in any other state until an
 //! acknowledged `disable_torque()` (whose reply shows the write ran, a
 //! hardware fault flag included) with [`ValidationError::TorqueUnconfirmed`]:
@@ -98,8 +105,11 @@
 //! could not keep its torque state true to the hardware. Use
 //! [`Bus::enable_torque`](crate::Bus::enable_torque) and
 //! [`Bus::disable_torque`](crate::Bus::disable_torque). Nor are ID, baud
-//! rate and the registers of one series (Position Limit Threshold, Y;
-//! ...): those stay raw (`raw-registers`).
+//! rate, protocol type, Drive Mode, Shutdown and the registers of one
+//! series (Position Limit Threshold, Y; ...): those stay raw
+//! (`raw-registers`).
+
+use core::time::Duration;
 
 use crate::Id;
 use crate::actuator::{Actuator, Cache, Describe, LimitMode, Role};
@@ -133,6 +143,10 @@ pub(crate) mod sealed {
         pub(crate) scale: Option<RegisterScale>,
         /// The raw range the e-Manual gives for the register in `mode`.
         pub(crate) range: Option<(i64, i64)>,
+        /// A [`Position`](crate::Position) here is an angle offset
+        /// (Homing Offset): it converts through `scale`, one position tick
+        /// per raw step with no zero point, never through `position`.
+        pub(crate) offset: bool,
     }
 
     impl Site {
@@ -215,10 +229,12 @@ pub(crate) mod sealed {
 
     /// A value type a field writes from. Only this crate implements it.
     pub trait Encode: Copy {
-        /// Whether a limit write of this value needs the e-Manual range the
-        /// table records for the register: a position converts through
-        /// `type_info`, which no `unit_info` row backs, so the recorded
-        /// range is what tells a verified table (plan 2026-11-09 D6).
+        /// Whether a setting write of this value, at a site with no
+        /// register scale, needs the e-Manual range the table records for
+        /// the register: a position converts through `type_info`, which no
+        /// `unit_info` row backs, so the recorded range is what tells a
+        /// verified table (plan 2026-11-09 D6). A position offset converts
+        /// through its register scale, which tells it instead.
         const NEEDS_RANGE: bool = false;
 
         /// The register value for `self`.
@@ -246,11 +262,11 @@ pub trait WriteField: Field + Rule {
     type Value: Copy + Encode;
 }
 
-/// An EEPROM limit field: written only by
-/// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit), one
+/// An EEPROM setting field, such as a limit: written only by
+/// [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting), one
 /// acknowledged unicast write with torque confirmed off.
 ///
-/// The limit fields are not [`WriteField`]s, so
+/// The setting fields are not [`WriteField`]s, so
 /// [`Bus::sync_write`](crate::Bus::sync_write),
 /// [`Bus::bulk_write`](crate::Bus::bulk_write) and
 /// [`ActuatorRef::write`](crate::ActuatorRef::write) refuse them at compile
@@ -267,9 +283,9 @@ pub trait WriteField: Field + Rule {
 /// ```
 ///
 /// They are [`ReadField`]s, so every read tier saves them, e.g. before a
-/// run that changes them (NFR-11). [`Raw`] of a limit field writes its raw
-/// register value, with the same checks.
-pub trait LimitField: Field {
+/// run that changes them (NFR-11). [`Raw`] of a setting field writes its
+/// raw register value, with the same checks.
+pub trait SettingField: Field {
     /// The type of one actuator's value.
     type Value: Copy + Encode;
 }
@@ -316,7 +332,7 @@ impl<F: WriteField> WriteField for Raw<F> {
     type Value = i32;
 }
 
-impl<F: LimitField> LimitField for Raw<F> {
+impl<F: SettingField> SettingField for Raw<F> {
     type Value = i32;
 }
 
@@ -331,6 +347,7 @@ fn plain_site(kind: &ActuatorKind, reg: Register, name: &'static str) -> Site {
         position: data.scale,
         scale: None,
         range: None,
+        offset: false,
     }
 }
 
@@ -379,7 +396,8 @@ fn saturate(v: i64) -> i32 {
 }
 
 /// The bound check of a goal velocity or current: the signed value's
-/// magnitude must not pass `bound`, the EEPROM limit read at Setup.
+/// magnitude must not pass `bound`, the EEPROM limit the bus holds (read at
+/// Setup, kept by setting writes).
 fn within_bound(site: &Site, bound: Option<u32>, raw: i32) -> Result<i32, ValidationError> {
     let Some(bound) = bound else {
         return in_range(site, raw);
@@ -523,7 +541,8 @@ role_field!(
 role_field!(
     /// Goal Velocity, or Moving Speed in wheel mode (Protocol 1), in rad/s
     /// ([`Velocity`]). Written only in velocity or wheel mode, with torque
-    /// on, and within the Velocity Limit read at Setup.
+    /// on, and within the Velocity Limit the bus holds (read at Setup, kept
+    /// by setting writes).
     ///
     /// AX and RX wheel-mode Moving Speed is a share of output (about 0.1 %
     /// per step, bit 10 the direction), not a velocity: only its raw form
@@ -545,7 +564,8 @@ role_field!(
 role_field!(
     /// Goal Current, or Goal Torque (MX on Protocol 1), in amperes
     /// ([`Current`]). Written only in current or current-based position
-    /// mode, with torque on, and within the Current Limit read at Setup.
+    /// mode, with torque on, and within the Current Limit the bus holds
+    /// (read at Setup, kept by setting writes).
     GoalCurrent,
     GoalCurrent
 );
@@ -648,20 +668,20 @@ role_field!(
 role_field!(
     /// Min Voltage Limit, in volts ([`Voltage`]): the EEPROM bound below
     /// which the actuator reports an input voltage fault. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MinVoltageLimit,
     MinVoltageLimit
 );
 role_field!(
     /// Max Voltage Limit, in volts ([`Voltage`]): the EEPROM bound above
     /// which the actuator reports an input voltage fault. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MaxVoltageLimit,
     MaxVoltageLimit
 );
 role_field!(
     /// Temperature Limit, in °C ([`Temperature`]): the EEPROM bound above
-    /// which the actuator reports overheating. A [`LimitField`].
+    /// which the actuator reports overheating. A [`SettingField`].
     TemperatureLimit,
     TemperatureLimit
 );
@@ -669,7 +689,7 @@ role_field!(
     /// Min Position Limit, or CW Angle Limit (AX, RX, MX on Protocol 1,
     /// XL-320), in radians ([`Position`]): the lower EEPROM position limit,
     /// which goals are checked against in position mode. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MinPositionLimit,
     MinPositionLimit
 );
@@ -677,32 +697,32 @@ role_field!(
     /// Max Position Limit, or CCW Angle Limit (AX, RX, MX on Protocol 1,
     /// XL-320), in radians ([`Position`]): the upper EEPROM position limit,
     /// which goals are checked against in position mode. Every model. A
-    /// [`LimitField`].
+    /// [`SettingField`].
     MaxPositionLimit,
     MaxPositionLimit
 );
 role_field!(
     /// Velocity Limit, in rad/s ([`Velocity`]): the EEPROM bound of Goal
-    /// Velocity's magnitude. MX(2.0), X, Y, PRO. A [`LimitField`].
+    /// Velocity's magnitude. MX(2.0), X, Y, PRO. A [`SettingField`].
     VelocityLimit,
     VelocityLimit
 );
 role_field!(
     /// Current Limit, in amperes ([`Current`]): the EEPROM bound of Goal
-    /// Current's magnitude. MX(2.0), X, Y, PRO. A [`LimitField`].
+    /// Current's magnitude. MX(2.0), X, Y, PRO. A [`SettingField`].
     CurrentLimit,
     CurrentLimit
 );
 role_field!(
     /// PWM Limit, a ratio of the full PWM output ([`Pwm`]). MX(2.0), X, Y,
-    /// PRO. A [`LimitField`].
+    /// PRO. A [`SettingField`].
     PwmLimit,
     PwmLimit
 );
 role_field!(
     /// Max Torque, a ratio of the maximum torque ([`Load`]): the torque
     /// limit the actuator starts with at power-on. AX, RX, MX on Protocol 1,
-    /// XL-320. A [`LimitField`].
+    /// XL-320. A [`SettingField`].
     ///
     /// The running bound is Torque Limit (RAM), which power-on resets to
     /// Max Torque (AX-12A: "When the power is turned on, Torque Limit(34) is
@@ -718,9 +738,55 @@ role_field!(
     /// "Profile Acceleration(108) can’t be configured with any values
     /// exceeding Acceleration Limit(40)",
     /// <https://emanual.robotis.com/docs/en/dxl/mx/mx-64-2/>, 2026-11-09).
-    /// MX(2.0), PRO, PRO+, Y, RH-P12-RN. A [`LimitField`].
+    /// MX(2.0), PRO, PRO+, Y, RH-P12-RN. A [`SettingField`].
     AccelerationLimit,
     AccelerationLimit
+);
+
+/// Homing Offset, an angle offset in radians ([`Position`]): the EEPROM
+/// value the actuator adds to Present Position ("Present Position(132) =
+/// Actual Position + Homing Offset(20)", XM430-W350,
+/// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>, 2026-11-10).
+/// One raw step is one position tick of the model's position scale, with
+/// no zero point: [`Position::ZERO`] is raw 0. MX(2.0), X, Y, PRO. A
+/// [`SettingField`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HomingOffset;
+
+impl Field for HomingOffset {
+    fn site(kind: &ActuatorKind) -> Result<Site, ValidationError> {
+        Ok(Site {
+            offset: true,
+            ..role_site(kind, Role::HomingOffset)?
+        })
+    }
+}
+
+role_field!(
+    /// Moving Threshold, in rad/s ([`Velocity`]): the EEPROM speed above
+    /// which the actuator reports Moving. MX(2.0), X, Y, PRO. A
+    /// [`SettingField`].
+    MovingThreshold,
+    MovingThreshold
+);
+role_field!(
+    /// Return Delay Time ([`Duration`]): how long the actuator waits after
+    /// an instruction packet before its status packet, in 2 µs steps on
+    /// every page seen (AX-12A Return Delay Time(5): "its unit is 2
+    /// \[μsec\]", <https://emanual.robotis.com/docs/en/dxl/ax/ax-12a/>,
+    /// 2026-11-10). Every model. A [`SettingField`], not a [`WriteField`]:
+    ///
+    /// ```compile_fail,E0277
+    /// use core::time::Duration;
+    /// use dxl_rs_v2::field::ReturnDelayTime;
+    /// use dxl_rs_v2::{ActuatorRef, Clock, Error, P2, Transport};
+    ///
+    /// fn quicken<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) -> Result<(), Error> {
+    ///     xm.write(ReturnDelayTime, Duration::ZERO)
+    /// }
+    /// ```
+    ReturnDelayTime,
+    ReturnDelayTime
 );
 
 impl Rule for GoalVelocity {
@@ -848,18 +914,21 @@ read_values! {
     PwmLimit: Pwm;
     MaxTorque: Load;
     AccelerationLimit: Acceleration;
+    HomingOffset: Position;
+    MovingThreshold: Velocity;
+    ReturnDelayTime: Duration;
 }
 
-/// Declares the limit fields; a limit writes the type it reads.
-macro_rules! limit_values {
+/// Declares the setting fields; a setting writes the type it reads.
+macro_rules! setting_values {
     ($($field:ident),* $(,)?) => {$(
-        impl LimitField for $field {
+        impl SettingField for $field {
             type Value = <$field as ReadField>::Value;
         }
     )*};
 }
 
-limit_values! {
+setting_values! {
     MinVoltageLimit,
     MaxVoltageLimit,
     TemperatureLimit,
@@ -870,6 +939,9 @@ limit_values! {
     PwmLimit,
     MaxTorque,
     AccelerationLimit,
+    HomingOffset,
+    MovingThreshold,
+    ReturnDelayTime,
 }
 
 write_values! {
@@ -1012,12 +1084,20 @@ impl Encode for Load {
 }
 
 impl Decode for Position {
-    fn check_site(_: &Site) -> Result<(), ValidationError> {
-        Ok(())
+    fn check_site(site: &Site) -> Result<(), ValidationError> {
+        if site.offset {
+            scale_of(site).map(drop)
+        } else {
+            Ok(())
+        }
     }
 
     fn from_raw(raw: i32, site: &Site) -> Result<Self, ValidationError> {
-        Ok(site.position.to_position(raw))
+        if site.offset {
+            Ok(Self::from_radians(scale_of(site)?.si_of(bits(raw))))
+        } else {
+            Ok(site.position.to_position(raw))
+        }
     }
 }
 
@@ -1025,7 +1105,28 @@ impl Encode for Position {
     const NEEDS_RANGE: bool = true;
 
     fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
-        site.position.to_raw(self)
+        if site.offset {
+            scaled(site, self.radians())
+        } else {
+            site.position.to_raw(self)
+        }
+    }
+}
+
+impl Decode for Duration {
+    fn check_site(site: &Site) -> Result<(), ValidationError> {
+        scale_of(site).map(drop)
+    }
+
+    fn from_raw(raw: i32, site: &Site) -> Result<Self, ValidationError> {
+        scale_of(site)?.duration(bits(raw))
+    }
+}
+
+impl Encode for Duration {
+    fn to_raw(self, site: &Site) -> Result<i32, ValidationError> {
+        let scale = scale_of(site)?;
+        register_value(scale, scale.duration_to_raw(self)?)
     }
 }
 
@@ -1164,13 +1265,13 @@ pub(crate) fn encode_write<'o, F: WriteField>(
     Ok((site.reg, bytes))
 }
 
-/// The site of limit field `F` on `kind`, checked before anything is
+/// The site of setting field `F` on `kind`, checked before anything is
 /// sent: the model has the register, writable.
 ///
 /// # Errors
 ///
 /// [`ValidationError::Unsupported`].
-pub(crate) fn limit_site<F: LimitField>(kind: &ActuatorKind) -> Result<Site, ValidationError> {
+pub(crate) fn setting_site<F: SettingField>(kind: &ActuatorKind) -> Result<Site, ValidationError> {
     let site = F::site(kind)?;
     if site.reg.access == Access::RW {
         Ok(site)
@@ -1182,16 +1283,18 @@ pub(crate) fn limit_site<F: LimitField>(kind: &ActuatorKind) -> Result<Site, Val
     }
 }
 
-/// The register value of limit `value` at `site`, checked against the
+/// The register value of setting `value` at `site`, checked against the
 /// e-Manual range the table records for it.
 ///
 /// # Errors
 ///
 /// The value's conversion error (`NoUnit`, `NotFinite`, `DoesNotFit`),
 /// then `OutOfLimits`. A typed position on a site with no recorded range
-/// (an unverified table) is `NoUnit` (plan D6).
-pub(crate) fn limit_raw<V: Encode>(site: &Site, value: V) -> Result<i32, ValidationError> {
-    if V::NEEDS_RANGE && site.range.is_none() {
+/// (an unverified table) is `NoUnit` (plan D6); a position offset needs its
+/// scale instead.
+pub(crate) fn setting_raw<V: Encode>(site: &Site, value: V) -> Result<i32, ValidationError> {
+    // DECISION: a Homing Offset needs its unit_info scale, which only a verified table gives, not a recorded range: with a scale and no range it gets the size check only, as every other scaled setting (plan 2026-11-09 D4).
+    if V::NEEDS_RANGE && !site.offset && site.range.is_none() {
         return Err(ValidationError::NoUnit {
             id: site.id,
             register: site.name,
@@ -1239,6 +1342,7 @@ mod tests {
             position: PositionScale::new(2048, 0, 4095, -3.0, 3.0),
             scale,
             range,
+            offset: false,
         }
     }
 
@@ -1382,5 +1486,76 @@ mod tests {
         assert_eq!(Position::check_site(&none), Ok(()));
         assert_eq!(Position::from_raw(2048, &none), Ok(Position::ZERO));
         assert_eq!(Position::ZERO.to_raw(&none), Ok(2048));
+    }
+
+    /// Plan 2026-11-10 S2: a position offset converts through the register
+    /// scale with no zero point, and without a scale it has no typed form,
+    /// never a fallback to the position scale.
+    #[test]
+    fn offsets_need_a_scale_and_have_no_zero_point() {
+        let offset = |scale| Site {
+            offset: true,
+            ..site(scale, None)
+        };
+        let none = offset(None);
+        let missing = Err(ValidationError::NoUnit {
+            id: id(1),
+            register: "Goal Velocity",
+            mode: LimitMode::Velocity,
+        });
+        assert_eq!(Position::check_site(&none), missing);
+        assert_eq!(
+            Position::from_raw(2048, &none),
+            missing.map(|()| Position::ZERO)
+        );
+        assert_eq!(Position::ZERO.to_raw(&none), missing.map(|()| 0));
+        let scaled = offset(Some(SIGNED));
+        assert_eq!(Position::check_site(&scaled), Ok(()));
+        assert_eq!(Position::from_raw(0, &scaled), Ok(Position::ZERO));
+        assert_eq!(
+            Position::from_raw(-3, &scaled),
+            Ok(Position::from_radians(-3.0))
+        );
+        assert_eq!(Position::ZERO.to_raw(&scaled), Ok(0));
+        assert_eq!(Position::from_radians(-3.0).to_raw(&scaled), Ok(-3));
+        assert_eq!(
+            Position::from_radians(f32::NAN).to_raw(&scaled),
+            Err(ValidationError::NOT_FINITE)
+        );
+        assert_eq!(setting_raw(&scaled, Position::from_radians(4.0)), Ok(4));
+        assert_eq!(
+            setting_raw(&site(None, None), Position::ZERO),
+            Err(ValidationError::NoUnit {
+                id: id(1),
+                register: "Goal Velocity",
+                mode: LimitMode::Velocity,
+            })
+        );
+    }
+
+    #[test]
+    fn durations_need_a_scale() {
+        let none = site(None, None);
+        let missing = Err(ValidationError::NoUnit {
+            id: id(1),
+            register: "Goal Velocity",
+            mode: LimitMode::Velocity,
+        });
+        assert_eq!(Duration::check_site(&none), missing);
+        assert_eq!(
+            Duration::from_raw(1, &none),
+            missing.map(|()| Duration::ZERO)
+        );
+        assert_eq!(Duration::ZERO.to_raw(&none), missing.map(|()| 0));
+        let micros = site(
+            Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            Some((0, 254)),
+        );
+        assert_eq!(Duration::check_site(&micros), Ok(()));
+        assert_eq!(
+            Duration::from_raw(250, &micros),
+            Ok(Duration::from_micros(500))
+        );
+        assert_eq!(Duration::from_micros(508).to_raw(&micros), Ok(254));
     }
 }

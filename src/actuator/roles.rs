@@ -350,6 +350,16 @@ roles! {
     /// Acceleration Limit (MX(2.0), PRO, PRO+, Y, RH-P12-RN), rad/s²: the
     /// EEPROM bound of Profile Acceleration.
     AccelerationLimit, acceleration_limit, HasAccelerationLimit, "Acceleration Limit";
+    /// Homing Offset (MX(2.0), X, Y, PRO), an angle offset: the EEPROM
+    /// value the actuator adds to Present Position, one position tick per
+    /// raw step, with no zero point.
+    HomingOffset, homing_offset, HasHomingOffset, "Homing Offset";
+    /// Moving Threshold (MX(2.0), X, Y, PRO), rad/s: the EEPROM speed above
+    /// which the actuator reports Moving.
+    MovingThreshold, moving_threshold, HasMovingThreshold, "Moving Threshold";
+    /// Return Delay Time, a duration: how long the actuator waits after an
+    /// instruction packet before its status packet.
+    ReturnDelayTime, return_delay_time, HasReturnDelayTime, "Return Delay Time";
 }
 
 #[cfg(test)]
@@ -511,7 +521,7 @@ mod tests {
         assert_eq!(roles.get(Role::SpeedLimit), Some(&MOVING_SPEED));
         assert_eq!(roles.get(Role::RealtimeTick), Some(&TICK));
         assert_eq!(roles.get(Role::GoalVelocity), None);
-        assert_eq!(Role::ALL.len(), 32);
+        assert_eq!(Role::ALL.len(), 35);
         assert_eq!(Role::TemperatureLimit.name(), "Temperature Limit");
         assert_eq!(Role::MinPositionLimit.name(), "Min Position Limit");
         assert_eq!(Role::MaxPositionLimit.name(), "Max Position Limit");
@@ -520,6 +530,9 @@ mod tests {
         assert_eq!(Role::PwmLimit.name(), "PWM Limit");
         assert_eq!(Role::MaxTorque.name(), "Max Torque");
         assert_eq!(Role::AccelerationLimit.name(), "Acceleration Limit");
+        assert_eq!(Role::HomingOffset.name(), "Homing Offset");
+        assert_eq!(Role::MovingThreshold.name(), "Moving Threshold");
+        assert_eq!(Role::ReturnDelayTime.name(), "Return Delay Time");
         roles.max_torque = Some(SLOPE);
         assert_eq!(roles.get(Role::MaxTorque), Some(&SLOPE));
         assert_eq!(roles.get(Role::PwmLimit), None);

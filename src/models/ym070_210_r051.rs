@@ -3,14 +3,15 @@
 
 use crate::actuator::{
     Actuator, Cache, Describe, HasAccelerationLimit, HasCurrentLimit, HasDGain, HasGoalCurrent,
-    HasGoalVelocity, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit, HasMinPositionLimit,
-    HasMinVoltageLimit, HasPGain, HasPresentCurrent, HasPresentVelocity, HasPresentVoltage,
-    HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasVelocityLimit, LimitRegisters, ModeSource,
-    ModeValues, Model, ModelData, Protocols, RoleRegister, Roles,
+    HasGoalVelocity, HasHomingOffset, HasLed, HasMaxPositionLimit, HasMaxVoltageLimit,
+    HasMinPositionLimit, HasMinVoltageLimit, HasMovingThreshold, HasPGain, HasPresentCurrent,
+    HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasReturnDelayTime,
+    HasSpeedLimit, HasVelocityLimit, LimitRegisters, ModeScale, ModeSet, ModeSource, ModeValues,
+    Model, ModelData, Protocols, RoleRegister, Roles,
 };
 use crate::id::Id;
 use crate::register::{Access, Area, Register};
-use crate::units::PositionScale;
+use crate::units::{PositionScale, RegisterScale, Sign};
 
 /// YM070-210-R051 (model number 4020).
 ///
@@ -51,8 +52,8 @@ impl Ym070210R051 {
                 bounded: &[3],
                 unbounded: &[],
                 no_position: &[0, 1],
-                current: &[],
-                velocity: &[],
+                current: &[0],
+                velocity: &[1],
                 pwm: &[],
                 current_position: &[],
             },
@@ -77,6 +78,9 @@ impl Ym070210R051 {
             current_limit: Some(<Self as HasCurrentLimit>::ROLE),
             pwm_limit: Some(<Self as HasPwmLimit>::ROLE),
             acceleration_limit: Some(<Self as HasAccelerationLimit>::ROLE),
+            homing_offset: Some(<Self as HasHomingOffset>::ROLE),
+            moving_threshold: Some(<Self as HasMovingThreshold>::ROLE),
+            return_delay_time: Some(<Self as HasReturnDelayTime>::ROLE),
             ..Roles::NONE
         },
         bulk_read_p1: false,
@@ -321,73 +325,108 @@ impl Model for Ym070210R051 {
     const DATA: &'static ModelData = &Self::DATA;
 }
 
-/// Present Input Voltage: raw only, no unit in the table.
+/// Present Input Voltage: 0.1 V per raw step in every mode.
 impl HasPresentVoltage for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Input Voltage",
         register: Self::PRESENT_INPUT_VOLTAGE,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 2, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Velocity: raw only, no unit in the table.
+/// Present Velocity: 0.01 rpm per raw step in every mode.
 impl HasPresentVelocity for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Velocity",
         register: Self::PRESENT_VELOCITY,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0010471975,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Goal Velocity: raw only, no unit in the table.
+/// Goal Velocity: 0.01 rpm per raw step in every mode.
 impl HasGoalVelocity for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Goal Velocity",
         register: Self::GOAL_VELOCITY,
-        scales: &[],
-        bounded_by: None,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                0.0010471975,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
+            range: None,
+        }],
+        bounded_by: Some(Self::VELOCITY_LIMIT),
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Profile Velocity: raw only, no unit in the table.
+/// Profile Velocity: 0.01 rpm per raw step in every mode, velocity-based profile, raw 0 meaning no limit.
+/// The scale holds only with that Drive Mode profile; Setup does not read Drive Mode.
 impl HasSpeedLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Profile Velocity",
         register: Self::PROFILE_VELOCITY,
-        scales: &[],
-        bounded_by: None,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0010471975, Sign::Unsigned, 4, true)),
+            range: None,
+        }],
+        bounded_by: Some(Self::VELOCITY_LIMIT),
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Present Current: raw only, no unit in the table.
+/// Present Current: 10 mA per raw step in every mode.
 impl HasPresentCurrent for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Present Current",
         register: Self::PRESENT_CURRENT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.01, Sign::TwosComplement, 2, false)),
+            range: None,
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Goal Current: raw only, no unit in the table.
+/// Goal Current: 10 mA per raw step in every mode.
 impl HasGoalCurrent for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Goal Current",
         register: Self::GOAL_CURRENT,
-        scales: &[],
-        bounded_by: None,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.01, Sign::TwosComplement, 2, false)),
+            range: None,
+        }],
+        bounded_by: Some(Self::CURRENT_LIMIT),
         from_fw: 0,
         row_range: None,
     };
@@ -405,12 +444,16 @@ impl HasLed for Ym070210R051 {
     };
 }
 
-/// Realtime Tick: raw only, no unit in the table.
+/// Realtime Tick: 1 ms per raw step in every mode.
 impl HasRealtimeTick for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Realtime Tick",
         register: Self::REALTIME_TICK,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
+            range: Some((0, 32767)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -418,6 +461,7 @@ impl HasRealtimeTick for Ym070210R051 {
 }
 
 /// Position P Gain: in register units, no scale.
+/// Raw range 0 to 2147483647.
 impl HasPGain for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position P Gain",
@@ -425,11 +469,12 @@ impl HasPGain for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 2147483647)),
     };
 }
 
 /// Position D Gain: in register units, no scale.
+/// Raw range 0 to 2147483647.
 impl HasDGain for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Position D Gain",
@@ -437,28 +482,36 @@ impl HasDGain for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((0, 2147483647)),
     };
 }
 
-/// Min Voltage Limit: raw only, no unit in the table.
+/// Min Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMinVoltageLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Min Voltage Limit",
         register: Self::MIN_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 2, false)),
+            range: Some((160, 400)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Max Voltage Limit: raw only, no unit in the table.
+/// Max Voltage Limit: 0.1 V per raw step in every mode.
 impl HasMaxVoltageLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Voltage Limit",
         register: Self::MAX_VOLTAGE_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.1, Sign::Unsigned, 2, false)),
+            range: Some((240, 400)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
@@ -466,6 +519,7 @@ impl HasMaxVoltageLimit for Ym070210R051 {
 }
 
 /// Min Position Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range -2147483648 to 2147483647.
 impl HasMinPositionLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Min Position Limit",
@@ -473,11 +527,12 @@ impl HasMinPositionLimit for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((-2147483648, 2147483647)),
     };
 }
 
 /// Max Position Limit: a position, converted with the model's position scale (`type_info`).
+/// Raw range -2147483648 to 2147483647.
 impl HasMaxPositionLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Max Position Limit",
@@ -485,39 +540,101 @@ impl HasMaxPositionLimit for Ym070210R051 {
         scales: &[],
         bounded_by: None,
         from_fw: 0,
-        row_range: None,
+        row_range: Some((-2147483648, 2147483647)),
     };
 }
 
-/// Velocity Limit: raw only, no unit in the table.
+/// Velocity Limit: 0.01 rpm per raw step in every mode.
 impl HasVelocityLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Velocity Limit",
         register: Self::VELOCITY_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.0010471975, Sign::Unsigned, 4, false)),
+            range: Some((0, 12592)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// Current Limit: raw only, no unit in the table.
+/// Current Limit: 10 mA per raw step in every mode.
 impl HasCurrentLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "Current Limit",
         register: Self::CURRENT_LIMIT,
-        scales: &[],
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.01, Sign::Unsigned, 2, false)),
+            range: Some((0, 2080)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,
     };
 }
 
-/// PWM Limit: raw only, no unit in the table.
+/// PWM Limit: 0.1 % per raw step in every mode.
 impl HasPwmLimit for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
         name: "PWM Limit",
         register: Self::PWM_LIMIT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.001, Sign::Unsigned, 2, false)),
+            range: Some((0, 1000)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Acceleration Limit: 10 rev/min^2 per raw step in every mode.
+impl HasAccelerationLimit for Ym070210R051 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Acceleration Limit",
+        register: Self::ACCELERATION_LIMIT,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(0.017453292, Sign::Unsigned, 4, false)),
+            range: Some((0, 755294)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Homing Offset: 1 pulse per raw step in every mode.
+/// One raw step is one position tick of the model's position scale (`type_info`), with no zero point.
+impl HasHomingOffset for Ym070210R051 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Homing Offset",
+        register: Self::HOMING_OFFSET,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(
+                2.3498481e-7,
+                Sign::TwosComplement,
+                4,
+                false,
+            )),
+            range: Some((-2147483648, 2147483647)),
+        }],
+        bounded_by: None,
+        from_fw: 0,
+        row_range: None,
+    };
+}
+
+/// Moving Threshold: raw only, no unit in the table.
+impl HasMovingThreshold for Ym070210R051 {
+    const ROLE: RoleRegister = RoleRegister {
+        name: "Moving Threshold",
+        register: Self::MOVING_THRESHOLD,
         scales: &[],
         bounded_by: None,
         from_fw: 0,
@@ -525,12 +642,16 @@ impl HasPwmLimit for Ym070210R051 {
     };
 }
 
-/// Acceleration Limit: raw only, no unit in the table.
-impl HasAccelerationLimit for Ym070210R051 {
+/// Return Delay Time: 2 µs per raw step in every mode.
+impl HasReturnDelayTime for Ym070210R051 {
     const ROLE: RoleRegister = RoleRegister {
-        name: "Acceleration Limit",
-        register: Self::ACCELERATION_LIMIT,
-        scales: &[],
+        name: "Return Delay Time",
+        register: Self::RETURN_DELAY_TIME,
+        scales: &[ModeScale {
+            modes: ModeSet::ALL,
+            scale: Some(RegisterScale::new(2e-6, Sign::Unsigned, 1, false)),
+            range: Some((0, 254)),
+        }],
         bounded_by: None,
         from_fw: 0,
         row_range: None,

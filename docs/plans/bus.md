@@ -23,7 +23,7 @@ Plan, decisions and tests in
 [`2026-11-05-setup-holds-faults.md`](2026-11-05-setup-holds-faults.md).
 Changes a merged contract: step 3 → 4 → 5.
 
-- [ ] T091 [human] Architect: decide D1 (hold by default), D2 (`SetupReport { actuators, faulted: IdSet }`), D3 (hardware-only flags); amend FR-2.7, FR-6.2 and the § 8 "Typed EEPROM writes" sentence (supersedes T087's FR-2.7 item); triage D-01 as bus step 4
+- [x] T091 [human] Architect: decide D1 (hold by default), D2 (`SetupReport { actuators, faulted: IdSet }`), D3 (hardware-only flags); amend FR-2.7, FR-6.2 and the § 8 "Typed EEPROM writes" sentence (supersedes T087's FR-2.7 item); triage D-01 as bus step 4
 - [x] T092 Contract: `SetupReport<'a>`, `declare`/`autoscan` on `Bus` and `DynBus` return it, callers and examples updated, the four old fault tests renamed to `todo!()`, new test stubs
 - [x] T093 Declared Setup holds an actuator whose replies carry only hardware fault flags as `Faulted`; mixed flags and P2 error codes still fail
 - [x] T094 Autoscan holds a hardware-faulted pong the same way
@@ -33,7 +33,7 @@ Changes a merged contract: step 3 → 4 → 5.
 
 Plan: [`2026-11-09-typed-limits.md`](2026-11-09-typed-limits.md).
 
-- [ ] T096 [human] Architect: SRS text for typed limit writes (plan D1 to D10)
+- [x] T096 [human] Architect: SRS text for typed limit writes (plan D1 to D10)
 - [x] T097 tables: `unit_info` for the D1 registers in the six verified tables
 - [x] T098 xtask: limit roles and the `Pwm` quantity; regenerate models
 - [x] T099 core: `units::Pwm`, `ValidationError::ActuatorIsOn`, the new roles
@@ -41,3 +41,10 @@ Plan: [`2026-11-09-typed-limits.md`](2026-11-09-typed-limits.md).
 - [x] T101 bus: docs and step end
 - [x] T102 bus: D8 torque confirmed off, D9 no wheel switch with a live speed
 - [x] T103 tables, xtask, core, bus: D10 typed Acceleration Limit
+- [x] T104 tables: unit data of the 70 tables without `unit_source`, from their e-Manual pages (`2026-11-10-settings.md` S4)
+- [x] T105 bus, core, xtask: `LimitField` → `SettingField`, `write_limit` → `write_setting` (S1)
+- [x] T106 tables: Homing Offset, Moving Threshold, Return Delay Time `unit_info` in the six verified tables
+- [x] T107 xtask, core, bus: typed Homing Offset, Moving Threshold, Return Delay Time (S2)
+- [x] T108 core, bus: `OperatingMode` and `set_operating_mode` (S3)
+- [x] T109 bus: docs, codegen over all tables, oracle, step end
+- [x] T110 SRS: FR-10 reconciled with D1 to D10 and S1 to S5

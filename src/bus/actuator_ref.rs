@@ -1,14 +1,17 @@
 //! A short-lived handle on one held actuator.
 
+use core::time::Duration;
+
 use crate::Transport;
-use crate::actuator::{Actuator, Cache, Describe, ModelData, TorqueState};
+use crate::actuator::{Actuator, Cache, Describe, ModelData, OperatingMode, TorqueState};
 use crate::error::{Error, StatusError, StatusReport};
 use crate::field::{
     AccelerationLimit, CurrentLimit, DGain, GoalCurrent, GoalPosition, GoalVelocity,
-    HardwareErrorStatus, Led, LimitField, MaxPositionLimit, MaxTorque, MaxVoltageLimit,
-    MinPositionLimit, MinVoltageLimit, Moving, PGain, PresentCurrent, PresentLoad, PresentPosition,
-    PresentTemperature, PresentVelocity, PresentVoltage, PwmLimit, Raw, ReadField, RealtimeTick,
-    SpeedLimit as SpeedLimitField, TemperatureLimit, VelocityLimit, WriteField,
+    HardwareErrorStatus, HomingOffset, Led, MaxPositionLimit, MaxTorque, MaxVoltageLimit,
+    MinPositionLimit, MinVoltageLimit, Moving, MovingThreshold, PGain, PresentCurrent, PresentLoad,
+    PresentPosition, PresentTemperature, PresentVelocity, PresentVoltage, PwmLimit, Raw, ReadField,
+    RealtimeTick, ReturnDelayTime, SettingField, SpeedLimit as SpeedLimitField, TemperatureLimit,
+    VelocityLimit, WriteField,
 };
 use crate::models::ActuatorKind;
 use crate::protocol::{Clock, P2, Protocol};
@@ -87,18 +90,26 @@ fn poke<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) {
 /// and sends nothing; [`model`](ActuatorRef::model) gives the Tier 2
 /// handle, where such a call does not compile.
 ///
-/// The EEPROM limits several series share (voltage, temperature, position,
-/// velocity, acceleration, current and PWM limits, Max Torque) are read the
-/// same way and written with [`write_limit`](ActuatorRef::write_limit) and
-/// its setters ([`set_voltage_limits`](ActuatorRef::set_voltage_limits),
-/// [`set_position_limits`](ActuatorRef::set_position_limits), ...): one
-/// acknowledged write once torque is confirmed off (an acknowledged
+/// The EEPROM settings several series share are read the same way and
+/// written with [`write_setting`](ActuatorRef::write_setting) and its
+/// setters: the limits (voltage, temperature, position, velocity,
+/// acceleration, current and PWM limits, Max Torque:
+/// [`set_voltage_limits`](ActuatorRef::set_voltage_limits),
+/// [`set_position_limits`](ActuatorRef::set_position_limits), ...), Homing
+/// Offset ([`set_homing_offset`](ActuatorRef::set_homing_offset)), Moving
+/// Threshold ([`set_moving_threshold`](ActuatorRef::set_moving_threshold))
+/// and Return Delay Time
+/// ([`set_return_delay_time`](ActuatorRef::set_return_delay_time)). Each is
+/// one acknowledged write once torque is confirmed off (an acknowledged
 /// [`disable_torque`](ActuatorRef::disable_torque) since Setup, and nothing
 /// since that may turn torque on), checked against the e-Manual range
 /// where the table records one and, for a pair, its order. The bus follows
 /// each write: goals are then checked against the new position limits,
-/// limit mode and goal bound. ID, baud rate and the registers of one series
-/// stay raw (`raw-registers`).
+/// limit mode and goal bound. The operating mode is set the same way, with
+/// [`set_operating_mode`](ActuatorRef::set_operating_mode), and goals then
+/// follow the new mode; [`operating_mode`](ActuatorRef::operating_mode)
+/// reads it. ID, baud rate and the registers of one series stay raw
+/// (`raw-registers`).
 #[cfg_attr(
     all(feature = "mock", feature = "rx"),
     doc = r#"
@@ -169,15 +180,23 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// The EEPROM bound of the goal this actuator's operating mode uses, in
     /// raw register units: Velocity Limit in velocity mode, Current Limit
-    /// in current and current-based position mode, as Setup read it or an
-    /// acknowledged limit write set it since. Goal velocities and currents
-    /// are checked against it (FR-9.3).
+    /// in current and current-based position mode. Setup reads it, an
+    /// acknowledged [`set_operating_mode`](Self::set_operating_mode) into
+    /// such a mode reads it again, and an acknowledged write of it sets it.
+    /// Goal velocities and currents are checked against it (FR-9.3).
     ///
     /// `None` in the other modes, on models whose table records no bound
-    /// (AX, RX, MX on Protocol 1), and after a failed write of it: goals it
-    /// bounds are then refused with
-    /// [`LimitsUnknown`](crate::ValidationError::LimitsUnknown) until the
-    /// next Setup or an acknowledged write of it.
+    /// (AX, RX, MX on Protocol 1), and while it is unknown:
+    ///
+    /// - after a failed write of it, or a failed bound read of
+    ///   `set_operating_mode`, goals it bounds are refused with
+    ///   [`LimitsUnknown`](crate::ValidationError::LimitsUnknown) until the
+    ///   next Setup, an acknowledged write of it, or an acknowledged
+    ///   `set_operating_mode` whose bound read succeeds;
+    /// - after a failed write of the mode, the mode is unknown too: every
+    ///   goal is refused with `LimitsUnknown`, and the bound stays `None`,
+    ///   an acknowledged write of it included, until an acknowledged
+    ///   `set_operating_mode` or the next Setup.
     pub fn goal_bound_raw(&self) -> Option<u32> {
         *self.bound
     }
@@ -185,7 +204,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// Turns torque on: one acknowledged write of Torque Enable = 1.
     ///
     /// Once the write is sent, whatever its reply, torque is no longer
-    /// confirmed off: limit writes are refused with
+    /// confirmed off: setting writes are refused with
     /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
     /// until the next acknowledged [`disable_torque`](Self::disable_torque).
     ///
@@ -214,7 +233,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// in every state.
     ///
     /// A reply that shows the actuator ran the write confirms torque off,
-    /// which [`write_limit`](Self::write_limit) and the limit setters need:
+    /// which [`write_setting`](Self::write_setting) and its setters need:
     /// a reply with no error, or one reporting only a hardware fault
     /// (Protocol 1: Input Voltage, Overheating, Overload; Protocol 2: the
     /// alert bit with no error code). So an actuator held `Faulted` at
@@ -342,12 +361,14 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// The angle is converted to the nearest tick, then checked like
     /// [`set_goal_position_raw`](Self::set_goal_position_raw).
     ///
-    /// Limits and operating mode are those read at Setup. Position mode
+    /// Limits and operating mode are those read at Setup, or written since
+    /// through the bus ([`set_position_limits`](Self::set_position_limits),
+    /// [`set_operating_mode`](Self::set_operating_mode)). Position mode
     /// applies the EEPROM limits. Extended and current-based position modes
     /// and MX multi-turn apply none, as the firmware does; only the register
     /// size is checked. Velocity, current, PWM and wheel modes refuse every
-    /// goal (`NotPositionMode`). A mode changed after Setup is not seen until
-    /// the next Setup.
+    /// goal (`NotPositionMode`). A mode changed otherwise (a raw write,
+    /// another program) is not seen until the next Setup.
     ///
     /// # Errors
     ///
@@ -372,12 +393,14 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// Sends goal position `raw`, in ticks: one acknowledged write of Goal
     /// Position, no read-back.
     ///
-    /// Limits and operating mode are those read at Setup. Position mode
+    /// Limits and operating mode are those read at Setup, or written since
+    /// through the bus ([`set_position_limits`](Self::set_position_limits),
+    /// [`set_operating_mode`](Self::set_operating_mode)). Position mode
     /// applies the EEPROM limits. Extended and current-based position modes
     /// and MX multi-turn apply none, as the firmware does; only the register
     /// size is checked. Velocity, current, PWM and wheel modes refuse every
-    /// goal (`NotPositionMode`). A mode changed after Setup is not seen until
-    /// the next Setup.
+    /// goal (`NotPositionMode`). A mode changed otherwise (a raw write,
+    /// another program) is not seen until the next Setup.
     ///
     /// # Errors
     ///
@@ -439,7 +462,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// Only velocity mode (Protocol 2) and wheel mode (Protocol 1, CW = CCW
     /// Angle Limit = 0) use it (FR-9.4), and only with torque on. The
-    /// magnitude must not pass the Velocity Limit read at Setup. AX and RX
+    /// magnitude must not pass the Velocity Limit the bus holds (read at
+    /// Setup, kept by setting writes). AX and RX
     /// give wheel-mode Moving Speed in % of output, not as a velocity, so
     /// they take only `write(Raw(GoalVelocity), raw)` (bit 10 the
     /// direction).
@@ -664,7 +688,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         self.read(DGain)
     }
 
-    /// Writes EEPROM limit `F`: one acknowledged unicast write of its
+    /// Writes EEPROM setting `F`: one acknowledged unicast write of its
     /// register, with torque confirmed off, no read-back. `Raw(F)` writes
     /// the register value, with the same checks. The pair setters
     /// ([`set_voltage_limits`](Self::set_voltage_limits),
@@ -727,7 +751,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// = 4095 (raw) is multi-turn mode, where goal positions are no longer
     /// checked against the angle limits, only against the register size. A
     /// Velocity or Current Limit the operating mode bounds its goal with
-    /// replaces that bound.
+    /// replaces that bound. The other settings (voltage, temperature,
+    /// acceleration and PWM limits, Max Torque, Homing Offset, Moving
+    /// Threshold, Return Delay Time) are not held, so writing them changes
+    /// no check.
     ///
     /// Failed, whatever it was written to is unknown: every goal that
     /// depends on it is refused with [`LimitsUnknown`], until the next Setup
@@ -748,8 +775,8 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// fn widen<T: Transport, C: Clock>(ax: &mut ActuatorRef<'_, P1, T, C>) -> Result<(), Error> {
     ///     ax.disable_torque()?;
-    ///     ax.write_limit(TemperatureLimit, Temperature::from_celsius(75.0))?;
-    ///     ax.write_limit(Raw(MaxVoltageLimit), 160)
+    ///     ax.write_setting(TemperatureLimit, Temperature::from_celsius(75.0))?;
+    ///     ax.write_setting(Raw(MaxVoltageLimit), 160)
     /// }
     /// ```
     ///
@@ -788,7 +815,11 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`InvertedLimits`]: crate::ValidationError::InvertedLimits
     /// [`LimitsUnknown`]: crate::ValidationError::LimitsUnknown
     /// [`reboot`]: ActuatorRef::reboot
-    pub fn write_limit<F: LimitField>(&mut self, field: F, value: F::Value) -> Result<(), Error> {
+    pub fn write_setting<F: SettingField>(
+        &mut self,
+        field: F,
+        value: F::Value,
+    ) -> Result<(), Error> {
         let _ = field;
         let write = limits::check_single::<F>(self.kind, (*self.state, *self.marks), value)?;
         self.send_limits(write, None)
@@ -799,13 +830,13 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// where the registers are adjacent (every model), with torque
     /// confirmed off.
     ///
-    /// Checked as [`write_limit`](Self::write_limit), both values before a
+    /// Checked as [`write_setting`](Self::write_setting), both values before a
     /// byte is sent, each against the e-Manual range where the table
     /// records one, and `min` must not lie above `max`.
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); [`InvertedLimits`] when `min`
+    /// As [`write_setting`](Self::write_setting); [`InvertedLimits`] when `min`
     /// is above `max`, in raw units; [`ActuatorIsOn`] and
     /// [`TorqueUnconfirmed`] name Min Voltage Limit.
     ///
@@ -827,7 +858,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// XL-320). One acknowledged write of both where the registers are
     /// adjacent, else one each, with torque confirmed off.
     ///
-    /// Checked as [`write_limit`](Self::write_limit), both values before a
+    /// Checked as [`write_setting`](Self::write_setting), both values before a
     /// byte is sent, and `min` must not lie above `max`. Acknowledged, they
     /// replace the limits the bus holds
     /// ([`position_limits`](Actuator::position_limits)), also limits a
@@ -842,7 +873,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// ([`set_speed_limit(SpeedLimit::Unlimited)`](Self::set_speed_limit),
     /// or `write(Raw(SpeedLimit), 0)` where that returns `NoUnit`); with
     /// the mode unknown after a failed angle-limit write, write a non-wheel
-    /// pair first, as [`write_limit`](Self::write_limit) says. Leaving
+    /// pair first, as [`write_setting`](Self::write_setting) says. Leaving
     /// wheel mode is not refused. After a raw write, CW = CCW = 0 counts as
     /// a switch even where the bus holds wheel mode, until an acknowledged
     /// call of this. Where the two registers are apart (Y series),
@@ -857,7 +888,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); [`InvertedLimits`] when `min`
+    /// As [`write_setting`](Self::write_setting); [`InvertedLimits`] when `min`
     /// is above `max`; [`ActuatorIsOn`] and [`TorqueUnconfirmed`] name the
     /// minimum register; [`WheelSpeedUnknown`] for a switch to wheel mode
     /// with Moving Speed not known to be 0.
@@ -882,9 +913,9 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit).
+    /// As [`write_setting`](Self::write_setting).
     pub fn set_temperature_limit(&mut self, limit: Temperature) -> Result<(), Error> {
-        self.write_limit(TemperatureLimit, limit)
+        self.write_setting(TemperatureLimit, limit)
     }
 
     /// Sets Velocity Limit, in rad/s (MX(2.0), X, Y, PRO). One acknowledged
@@ -893,10 +924,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it.
     pub fn set_velocity_limit(&mut self, limit: Velocity) -> Result<(), Error> {
-        self.write_limit(VelocityLimit, limit)
+        self.write_setting(VelocityLimit, limit)
     }
 
     /// Sets Current Limit, in amperes (MX(2.0), X, Y, PRO). One
@@ -906,10 +937,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it.
     pub fn set_current_limit(&mut self, limit: Current) -> Result<(), Error> {
-        self.write_limit(CurrentLimit, limit)
+        self.write_setting(CurrentLimit, limit)
     }
 
     /// Sets PWM Limit, a ratio of the full PWM output (MX(2.0), X, Y, PRO).
@@ -917,10 +948,10 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it.
     pub fn set_pwm_limit(&mut self, limit: Pwm) -> Result<(), Error> {
-        self.write_limit(PwmLimit, limit)
+        self.write_setting(PwmLimit, limit)
     }
 
     /// Sets Max Torque, a ratio of the maximum torque from 0 to 1 (AX, RX,
@@ -935,11 +966,11 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it; `DoesNotFit` for a ratio below minus half a raw step (a
     /// smaller negative one is written as 0).
     pub fn set_max_torque(&mut self, limit: Load) -> Result<(), Error> {
-        self.write_limit(MaxTorque, limit)
+        self.write_setting(MaxTorque, limit)
     }
 
     /// Sets Acceleration Limit, in rad/s² (MX(2.0), PRO, PRO+, Y,
@@ -952,12 +983,70 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     ///
     /// # Errors
     ///
-    /// As [`write_limit`](Self::write_limit); `Unsupported` on models
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
     /// without it; `NoUnit` where the table gives it no unit (write
     /// `Raw(AccelerationLimit)`); `DoesNotFit` for an acceleration below
     /// minus half a raw step (a smaller negative one is written as 0).
     pub fn set_acceleration_limit(&mut self, limit: Acceleration) -> Result<(), Error> {
-        self.write_limit(AccelerationLimit, limit)
+        self.write_setting(AccelerationLimit, limit)
+    }
+
+    /// Sets Homing Offset, an angle offset in radians (MX(2.0), X, Y, PRO):
+    /// the actuator adds it to Present Position ("Present Position(132) =
+    /// Actual Position + Homing Offset(20)", XM430-W350,
+    /// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>). One
+    /// acknowledged write, with torque confirmed off.
+    ///
+    /// `offset` is an angle, not a position: one raw step is one position
+    /// tick of [`position_scale`](Actuator::position_scale), with no zero
+    /// point, so [`Position::ZERO`] writes raw 0 and an offset of `n` ticks
+    /// shifts Present Position by `n` ticks. The bus holds no copy of it:
+    /// the position limits it holds stay the raw values Setup read, and the
+    /// firmware still applies them to goal positions in the shifted frame,
+    /// so a goal is checked against the same raw limits after the write.
+    /// The XM430-W350 ignores an offset outside ±1,024 ticks in position
+    /// mode (e-Manual); the bus checks only the table's range.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
+    /// without it; `NoUnit` where the table gives it no unit (write
+    /// `Raw(HomingOffset)`).
+    pub fn set_homing_offset(&mut self, offset: Position) -> Result<(), Error> {
+        self.write_setting(HomingOffset, offset)
+    }
+
+    /// Sets Moving Threshold, in rad/s (MX(2.0), X, Y, PRO): above it the
+    /// actuator reports Moving ([`is_moving`](Self::is_moving)). One
+    /// acknowledged write, with torque confirmed off.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_setting`](Self::write_setting); `Unsupported` on models
+    /// without it; `NoUnit` where the table gives it no unit (write
+    /// `Raw(MovingThreshold)`); `DoesNotFit` for a speed below minus half a
+    /// raw step (a smaller negative one is written as 0).
+    pub fn set_moving_threshold(&mut self, threshold: Velocity) -> Result<(), Error> {
+        self.write_setting(MovingThreshold, threshold)
+    }
+
+    /// Sets Return Delay Time: how long the actuator waits after an
+    /// instruction packet before its status packet, rounded to the nearest
+    /// raw step (2 µs on every page seen, 0 to 254 steps). One acknowledged
+    /// write, with torque confirmed off.
+    ///
+    /// The delay adds to the latency of every reply, so the bus's reply
+    /// timeout ([`Config::timeout`](crate::Config::timeout)) must stay
+    /// above it plus the reply's transfer time; the default 10 ms covers
+    /// the largest delay the register holds, 508 µs.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_setting`](Self::write_setting); `NoUnit` where the table
+    /// gives it no unit (write `Raw(ReturnDelayTime)`); `DoesNotFit` for a
+    /// delay the register cannot hold.
+    pub fn set_return_delay_time(&mut self, delay: Duration) -> Result<(), Error> {
+        self.write_setting(ReturnDelayTime, delay)
     }
 
     /// Reads Min and Max Voltage Limit, in volts, `(min, max)`: one read
@@ -983,7 +1072,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// Reads Velocity Limit, in rad/s (MX(2.0), X, Y, PRO). Never cached;
     /// in velocity mode [`goal_bound_raw`](Self::goal_bound_raw) is the
-    /// bound the bus holds, `None` after a failed write of it.
+    /// bound the bus holds, `None` while it is unknown.
     ///
     /// # Errors
     ///
@@ -994,7 +1083,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// Reads Current Limit, in amperes (MX(2.0), X, Y, PRO). Never cached;
     /// in a current mode [`goal_bound_raw`](Self::goal_bound_raw) is the
-    /// bound the bus holds, `None` after a failed write of it.
+    /// bound the bus holds, `None` while it is unknown.
     ///
     /// # Errors
     ///
@@ -1036,6 +1125,151 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
         self.read(AccelerationLimit)
     }
 
+    /// Reads Homing Offset, an angle offset in radians with no zero point
+    /// (MX(2.0), X, Y, PRO). Never cached.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `Unsupported` on models without it;
+    /// `NoUnit` where the table gives it no unit (read `Raw(HomingOffset)`).
+    pub fn homing_offset(&mut self) -> Result<Position, Error> {
+        self.read(HomingOffset)
+    }
+
+    /// Reads Moving Threshold, in rad/s (MX(2.0), X, Y, PRO). Never cached.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `Unsupported` on models without it;
+    /// `NoUnit` where the table gives it no unit (read
+    /// `Raw(MovingThreshold)`).
+    pub fn moving_threshold(&mut self) -> Result<Velocity, Error> {
+        self.read(MovingThreshold)
+    }
+
+    /// Reads Return Delay Time, to the nanosecond. Never cached.
+    ///
+    /// # Errors
+    ///
+    /// As [`read`](Self::read); `NoUnit` where the table gives it no unit
+    /// (read `Raw(ReturnDelayTime)`).
+    pub fn return_delay_time(&mut self) -> Result<Duration, Error> {
+        self.read(ReturnDelayTime)
+    }
+
+    /// Sets the operating mode: one acknowledged write of the mode register
+    /// (Operating Mode, XL-320 Control Mode), with torque confirmed off,
+    /// then, in a mode that bounds its goal, one read of that bound.
+    ///
+    /// The value written is the one the model's control table lists for
+    /// `mode` ([`OperatingMode`]); a mode it lists no single value for is
+    /// refused. Checked as [`write_setting`](Self::write_setting) checks a
+    /// setting, before a byte is sent: the model has a mode register, then
+    /// torque is confirmed off, then the mode has its value. AX, RX and MX
+    /// on Protocol 1 have no mode register: their mode follows the angle
+    /// limits, so [`set_position_limits`](Self::set_position_limits)
+    /// switches them between joint, wheel (both limits 0) and, on MX,
+    /// multi-turn mode.
+    ///
+    /// The bus follows the write as Setup would have read the new mode.
+    /// Acknowledged, goals are checked in the new mode from then on
+    /// ([`limit_mode`](Actuator::limit_mode)); a mode that bounds its goal
+    /// (velocity: Velocity Limit; current and current-based position:
+    /// Current Limit) then reads that bound once, where the table has the
+    /// register, and checks goals against it
+    /// ([`goal_bound_raw`](Self::goal_bound_raw)): that read is part of
+    /// this call. If the read fails, the mode is set and recorded but the
+    /// bound is unknown: goals it bounds are refused with
+    /// [`LimitsUnknown`] until the next Setup or an acknowledged write of
+    /// the bound ([`set_velocity_limit`](Self::set_velocity_limit),
+    /// [`set_current_limit`](Self::set_current_limit)), and the call
+    /// returns the read's error. A write that fails once bytes went out
+    /// (no reply, a corrupted one, a hardware fault) leaves the mode
+    /// unknown: every goal is refused with [`LimitsUnknown`] until an
+    /// acknowledged `set_operating_mode` or the next Setup. The position
+    /// limits the bus holds do not change.
+    ///
+    /// The firmware resets other registers on a mode change (XM430-W350
+    /// Operating Mode(11),
+    /// <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>): "value of
+    /// Gains, such as Velocity PI(76, 78); Position PID(80, 82, 84);
+    /// Feedforward(88, 90), will be reset fitting to a selected Operating
+    /// Mode(11)"; Profile Velocity(112) and Profile Acceleration(108) are
+    /// reset to 0; "The Goal PWM(100) and Goal Current(102) are reset to
+    /// the value of PWM Limit(36) and Current Limit(38) respectively"; in
+    /// Current-based Position Control Mode, Position PID(80, 82, 84) and
+    /// PWM Limit(36) are reset too. Write gains and profiles again after
+    /// the call, where they matter.
+    ///
+    /// Every other goal register keeps its last value, and the actuator
+    /// acts on its goals as soon as torque is on: in current mode
+    /// [`enable_torque`](Self::enable_torque) drives Goal Current, now
+    /// Current Limit; in velocity mode, the last Goal Velocity. The typed
+    /// goal setters need torque on ([`ActuatorIsOff`]), so to start from a
+    /// goal of your own, write it before `enable_torque` with `write_raw`
+    /// (`raw-registers`), or set the bound it starts from first
+    /// ([`set_current_limit`](Self::set_current_limit) before switching to
+    /// current mode).
+    ///
+    /// ```
+    /// use dxl_rs_v2::{ActuatorRef, Clock, Error, OperatingMode, P2, Transport, Velocity};
+    ///
+    /// fn spin<T: Transport, C: Clock>(xm: &mut ActuatorRef<'_, P2, T, C>) -> Result<(), Error> {
+    ///     xm.disable_torque()?;
+    ///     xm.set_operating_mode(OperatingMode::Velocity)?;
+    ///     xm.enable_torque()?;
+    ///     xm.set_goal_velocity(Velocity::from_rad_per_s(1.0))
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Refused with nothing sent:
+    /// - [`Unsupported`]: no mode register (AX, RX, MX on Protocol 1),
+    ///   naming Operating Mode.
+    /// - [`ActuatorIsOn`]: torque is [`On`](TorqueState::On).
+    /// - [`TorqueUnconfirmed`]: torque is not `On`, but not confirmed off
+    ///   either: call [`disable_torque`](Self::disable_torque) first.
+    /// - [`UnsupportedMode`]: the table lists no single value for `mode`:
+    ///   the model lacks it, or the table does not single it out yet.
+    ///
+    /// Otherwise any error of the write, or of the bound read after an
+    /// acknowledged write; a reply reporting a hardware fault marks the
+    /// actuator `Faulted`.
+    ///
+    /// [`Unsupported`]: crate::ValidationError::Unsupported
+    /// [`ActuatorIsOn`]: crate::ValidationError::ActuatorIsOn
+    /// [`ActuatorIsOff`]: crate::ValidationError::ActuatorIsOff
+    /// [`TorqueUnconfirmed`]: crate::ValidationError::TorqueUnconfirmed
+    /// [`UnsupportedMode`]: crate::ValidationError::UnsupportedMode
+    /// [`LimitsUnknown`]: crate::ValidationError::LimitsUnknown
+    pub fn set_operating_mode(&mut self, mode: OperatingMode) -> Result<(), Error> {
+        // DECISION: the plan's "write the goal before enable_torque" cannot hold on the typed tier, which refuses goals with torque off (Principle III), so the docs give the two ways that can: write_raw before enable_torque, or the bound the firmware resets the goal to.
+        let write = super::mode::check_mode(self.kind, (*self.state, *self.marks), mode)?;
+        self.send_mode(write)
+    }
+
+    /// Reads the operating mode: one read of the mode register (Operating
+    /// Mode, XL-320 Control Mode), mapped back to the [`OperatingMode`]
+    /// whose value the control table lists. Never cached: the limit mode
+    /// the bus checks goals in ([`limit_mode`](Actuator::limit_mode)) does
+    /// not change.
+    ///
+    /// # Errors
+    ///
+    /// - [`Unsupported`] with nothing sent: no mode register (AX, RX, MX on
+    ///   Protocol 1), naming Operating Mode.
+    /// - Any error of the read; a reply reporting a hardware fault marks
+    ///   the actuator `Faulted`.
+    /// - [`UnlistedMode`]: the value read is the value of no named mode in
+    ///   the table, carried in the error.
+    ///
+    /// [`Unsupported`]: crate::ValidationError::Unsupported
+    /// [`UnlistedMode`]: crate::ValidationError::UnlistedMode
+    pub fn operating_mode(&mut self) -> Result<OperatingMode, Error> {
+        self.read_mode()
+    }
+
     /// Reads and decodes `reg`, the actuator's fault report, as
     /// [`read_reg`](Self::read_reg) does, except that a reply whose only
     /// error is the Protocol 2 alert bit returns the non-zero value it
@@ -1061,7 +1295,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
 
     /// Reads and decodes `reg`; a hardware fault in the reply marks the
     /// actuator `Faulted`.
-    fn read_reg(&mut self, reg: crate::register::Register) -> Result<i32, Error> {
+    pub(super) fn read_reg(&mut self, reg: crate::register::Register) -> Result<i32, Error> {
         let result = self.wire.read_value(self.kind.id(), reg);
         let result = diagnosed(&mut self.wire, self.kind, result);
         observe(self.state, &result);
@@ -1081,7 +1315,7 @@ impl<P: Protocol, T: Transport, C: Clock> ActuatorRef<'_, P, T, C> {
     /// [`reboot`](Self::reboot) (or power-cycle it), then `clear_fault`.
     ///
     /// It sends no reboot on either protocol (a read or a ping), so it
-    /// leaves torque confirmed off if it was: a limit write needs no new
+    /// leaves torque confirmed off if it was: a setting write needs no new
     /// [`disable_torque`](Self::disable_torque) after it.
     ///
     /// # Errors
@@ -1113,8 +1347,8 @@ impl<T: Transport, C: Clock> ActuatorRef<'_, P2, T, C> {
     /// means goal writes are refused until
     /// [`enable_torque`](Self::enable_torque). Torque is no longer
     /// confirmed off, and Moving Speed no longer known to be 0, once the
-    /// instruction is sent: [`write_limit`](Self::write_limit) and the
-    /// limit setters are refused with
+    /// instruction is sent: [`write_setting`](Self::write_setting) and its
+    /// setters are refused with
     /// [`TorqueUnconfirmed`](crate::ValidationError::TorqueUnconfirmed)
     /// until an acknowledged [`disable_torque`](Self::disable_torque).
     ///

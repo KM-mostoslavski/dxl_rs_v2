@@ -5,8 +5,9 @@
 //! A role is matched by exact e-Manual row name, like the common roles. Its
 //! scales come only from a table with `unit_source`, converted to SI here:
 //! rpm to rad/s, rev/min² and deg/s² to rad/s², mA to A, V, °C, % to a
-//! ratio, ms to s, deg to rad. A register whose table gives no unit, or a
-//! unit that is not the role's quantity, gets no scale: raw only (FR-9.2).
+//! ratio, ms and µs to s, deg to rad. A register whose table gives no unit,
+//! or a unit that is not the role's quantity, gets no scale: raw only
+//! (FR-9.2).
 //!
 //! A load whose full magnitude the e-Manual fixes is the one exception to
 //! `value × factor`: the e-Manual gives its step as "about 0.1%" and its
@@ -24,14 +25,23 @@
 //! raw range is the e-Manual range of its row, from the row's own range or
 //! else its `unit_info` entry. Check 22 refuses a verified table whose limit
 //! row gives no range, a range that does not contain the table's position
-//! range (`type_info`), a unit that is not an angle, or a step more than
+//! range (`type_info`), a unit that is neither an angle nor `pulse` (one
+//! `type_info` tick, as PRO, P and Y pages give it), or a step more than
 //! 5 % off the `type_info` step. A limit range may be wider than one turn
 //! (Y series: "within the servo's 32-bit range of motion").
+//!
+//! An angle offset (Homing Offset) is a `Position` added to the position,
+//! with no zero point: one raw step is one position tick of `type_info`,
+//! the tick Present Position counts in (XM430-W350: "Present Position(132)
+//! = Actual Position + Homing Offset(20)",
+//! <https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>, 2026-11-10).
+//! The table gives it as about that tick in `deg` ("about 0.088 [°]") or as
+//! `pulse`, one tick; check 22 refuses a step more than 5 % off the tick.
 
 use std::f64::consts::PI;
 
 use super::Diagnostic;
-use super::schema::{Access, Area, ControlTable, RawRange, Row, Source, UnitEntry};
+use super::schema::{Access, Area, ControlTable, RawRange, Row, Source, TypeInfo, UnitEntry};
 
 /// The `LimitMode` variants, in their `repr(u8)` order.
 pub(crate) const LIMIT_MODES: [&str; 7] = [
@@ -66,8 +76,9 @@ const P1_MODES: [(&str, Modes); 4] = [
 const STEP_TOLERANCE: f64 = 0.05;
 
 /// The units `unit_info` may give, as `control_tables/check_tables.py`
-/// spells them: the e-Manual's "Rev/min²" is `rev/min^2`.
-const UNITS: [&str; 9] = [
+/// spells them: the e-Manual's "Rev/min²" is `rev/min^2`, "2 [μsec]" is
+/// `µs` (the micro sign) and "1 [pulse]" is `pulse`.
+const UNITS: [&str; 11] = [
     "deg",
     "rpm",
     "mA",
@@ -77,6 +88,8 @@ const UNITS: [&str; 9] = [
     "ms",
     "deg/s^2",
     "rev/min^2",
+    "µs",
+    "pulse",
 ];
 
 /// What a role's typed value is.
@@ -99,8 +112,13 @@ pub(crate) enum Quantity {
     /// `Position`, rad through the model's `type_info` scale: no register
     /// scale of its own.
     Position,
+    /// `Position`, an angle offset: rad per raw step, one position tick of
+    /// the model's `type_info`, with no zero point.
+    Offset,
     /// `Tick`, s per raw step.
     Tick,
+    /// `core::time::Duration`, s per raw step.
+    Duration,
     /// `ComplianceMargin`, rad per raw step.
     Angle,
     /// A flag, bit set, gain or step: no scale.
@@ -116,9 +134,10 @@ impl Quantity {
             // DECISION: deg/s^2, the other angular acceleration UNITS allows, types the role too, so no allowed unit of the quantity fails check 22.
             (Self::Acceleration, "deg/s^2") => Some(PI / 180.0),
             (Self::Current, "mA") | (Self::Tick, "ms") => Some(1e-3),
+            (Self::Duration, "µs") => Some(1e-6),
             (Self::Voltage, "V") | (Self::Temperature, "°C") => Some(1.0),
             (Self::Load | Self::Pwm, "%") => Some(1e-2),
-            (Self::Angle | Self::Position, "deg") => Some(PI / 180.0),
+            (Self::Angle | Self::Position | Self::Offset, "deg") => Some(PI / 180.0),
             _ => None,
         }
     }
@@ -178,7 +197,7 @@ const fn role(
 
 /// Every role. Moving Speed serves two: in wheel mode it is the goal
 /// velocity, in every other mode a speed limit.
-pub(crate) const ROLES: [RoleDef; 32] = [
+pub(crate) const ROLES: [RoleDef; 35] = [
     role(
         "PresentTemperature",
         "present_temperature",
@@ -402,6 +421,27 @@ pub(crate) const ROLES: [RoleDef; 32] = [
         "HasAccelerationLimit",
         Quantity::Acceleration,
         &[("Acceleration Limit", ALL)],
+    ),
+    role(
+        "HomingOffset",
+        "homing_offset",
+        "HasHomingOffset",
+        Quantity::Offset,
+        &[("Homing Offset", ALL)],
+    ),
+    role(
+        "MovingThreshold",
+        "moving_threshold",
+        "HasMovingThreshold",
+        Quantity::Velocity,
+        &[("Moving Threshold", ALL)],
+    ),
+    role(
+        "ReturnDelayTime",
+        "return_delay_time",
+        "HasReturnDelayTime",
+        Quantity::Duration,
+        &[("Return Delay Time", ALL)],
     ),
 ];
 
@@ -848,6 +888,7 @@ fn role_of(
     if def.quantity == Quantity::Raw {
         return role;
     }
+    let tick = position_tick(&table.type_info);
     let mut first_fw: Option<u8> = None;
     for entry in table
         .unit_info
@@ -858,7 +899,11 @@ fn role_of(
         if modes == 0 {
             continue;
         }
-        let Some(factor) = def.quantity.factor(&entry.unit) else {
+        let factor = match (def.quantity, entry.unit.as_str()) {
+            (Quantity::Offset, "pulse") => Some(tick),
+            _ => def.quantity.factor(&entry.unit),
+        };
+        let Some(factor) = factor else {
             if def.quantity.not_typed(&entry.unit) {
                 role.untyped.push(Untyped {
                     modes,
@@ -910,6 +955,24 @@ fn role_of(
                     continue;
                 }
                 exact
+            }
+            (Quantity::Offset, _) => {
+                let table_step = entry.value * factor;
+                if (table_step / tick - 1.0).abs() > STEP_TOLERANCE {
+                    errors.push(Diagnostic::new(
+                        file,
+                        format!(
+                            "unit_info {:?}: step {} {} is not about the type_info step {:.4} deg",
+                            entry.data_name,
+                            entry.value,
+                            entry.unit,
+                            tick.to_degrees()
+                        ),
+                    ));
+                    continue;
+                }
+                // DECISION: an offset's step is the type_info tick, not the table's rounded "about 0.088 [°]": the firmware adds Homing Offset to Present Position in ticks, which Position converts through type_info, so an offset of N ticks reads back as exactly N ticks of position (as position limits and the "about" load step, check 22 bounds the table's step).
+                tick
             }
             _ => entry.value * factor,
         };
@@ -963,8 +1026,8 @@ pub(crate) fn load_full_magnitude(
 /// of its `unit_info` entry. Check 22: the table gives one; every range it
 /// gives for the row contains the table's position range (`type_info`),
 /// which its `Position` converts through, and agrees with the others; every
-/// `unit_info` entry of the row has a unit of angle and about the
-/// `type_info` step.
+/// `unit_info` entry of the row has a unit of angle or `pulse` and about
+/// the `type_info` step.
 fn position_range(
     file: &str,
     table: &ControlTable,
@@ -977,8 +1040,7 @@ fn position_range(
         i64::from(scale.value_of_min_radian_position),
         i64::from(scale.value_of_max_radian_position),
     );
-    let step =
-        (f64::from(scale.max_radian) - f64::from(scale.min_radian)) / (turn.1 - turn.0) as f64;
+    let step = position_tick(scale);
     // DECISION: a limit range must contain type_info's position range, not equal it: the e-Manual may allow limits beyond one turn (YM070-210-M001 Max/Min Position Limit(76, 84): -2,147,483,648 ~ 2,147,483,647, type_info one turn), while a narrower range would make positions the conversion covers unreachable as limits.
     let mut fail = |message: String| errors.push(Diagnostic::new(file, message));
     let mut ranges: Vec<(String, (i64, i64))> = Vec::new();
@@ -990,7 +1052,12 @@ fn position_range(
         .iter()
         .filter(|e| e.data_name == row.data_name)
     {
-        let Some(factor) = def.quantity.factor(&entry.unit) else {
+        // DECISION: "1 [pulse]" is one type_info tick, as for Homing Offset: PRO, P and Y pages give Min/Max Position Limit in pulses (PH42-020-S300-R, YM070-210-M001), the tick Goal Position counts in.
+        let factor = match entry.unit.as_str() {
+            "pulse" => Some(step),
+            unit => def.quantity.factor(unit),
+        };
+        let Some(factor) = factor else {
             fail(format!(
                 "unit_info {:?}: unit {:?} is not the {} role's quantity ({:?})",
                 entry.data_name, entry.unit, def.field, def.quantity
@@ -1035,6 +1102,14 @@ fn position_range(
         ));
     }
     found
+}
+
+/// One position tick of `scale`, in radians: the step Goal and Present
+/// Position convert through.
+pub(crate) fn position_tick(scale: &TypeInfo) -> f64 {
+    let ticks = i64::from(scale.value_of_max_radian_position)
+        - i64::from(scale.value_of_min_radian_position);
+    (f64::from(scale.max_radian) - f64::from(scale.min_radian)) / ticks as f64
 }
 
 /// The roles of `roles` by field.
@@ -1128,11 +1203,17 @@ mod tests {
         assert!(Quantity::Velocity.not_typed("%"));
         assert!(Quantity::Velocity.not_typed("ms"));
         assert!(!Quantity::Current.not_typed("%"));
+        assert!(close(Quantity::Duration.factor("µs").unwrap(), 1e-6));
+        assert_eq!(Quantity::Duration.factor("ms"), None);
+        assert_eq!(Quantity::Tick.factor("µs"), None);
+        assert!(close(Quantity::Offset.factor("deg").unwrap(), PI / 180.0));
+        assert_eq!(Quantity::Offset.factor("pulse"), None);
+        assert_eq!(Quantity::Angle.factor("pulse"), None);
     }
 
     #[test]
     fn role_list_matches_core() {
-        assert_eq!(ROLES.len(), 32);
+        assert_eq!(ROLES.len(), 35);
         let fields: Vec<&str> = ROLES.iter().map(|r| r.field).collect();
         let mut sorted = fields.clone();
         sorted.sort_unstable();
@@ -1365,6 +1446,116 @@ mod tests {
         let raw = by_field(&m.typed)["acceleration_limit"];
         assert!(raw.scales.is_empty() && raw.untyped.is_empty());
         assert!(!by_field(&model(Table::xm_fr9()).typed).contains_key("acceleration_limit"));
+    }
+
+    /// [`Table::xm_fr9`] with the setting rows of an XM430-W350 and their
+    /// units, Homing Offset in `homing` (the text after `data_name`), as the
+    /// XM430-W350 page gives them
+    /// (<https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>, 2026-11-10).
+    fn xm_settings(homing: &str) -> Table {
+        Table::xm_fr9()
+            .with_row(9, 1, "Return Delay Time", "RW", "EEPROM")
+            .with_row(20, 4, "Homing Offset", "RW", "EEPROM")
+            .with_row(24, 4, "Moving Threshold", "RW", "EEPROM")
+            .unit(r#"data_name: "Return Delay Time", value: 2.0, unit: "µs", sign_type: "unsigned", range: (min: 0, max: 254)"#)
+            .unit(&format!(r#"data_name: "Homing Offset", {homing}"#))
+            .unit(r#"data_name: "Moving Threshold", value: 0.229, unit: "rpm", sign_type: "unsigned", range: (min: 0, max: 1023)"#)
+    }
+
+    const HOMING_DEG: &str = r#"value: 0.088, unit: "deg", sign_type: "twos_complement", range: (min: -1044479, max: 1044479)"#;
+
+    /// One position tick of [`Table::xm`]'s `type_info`: 2π / 4095 rad.
+    fn xm_tick() -> f64 {
+        f64::from(std::f32::consts::PI) * 2.0 / 4095.0
+    }
+
+    #[test]
+    fn setting_roles_and_scales() {
+        let m = model(xm_settings(HOMING_DEG));
+        let roles = by_field(&m.typed);
+        let homing = roles["homing_offset"];
+        assert_eq!(homing.def.quantity, Quantity::Offset);
+        assert_eq!((homing.row.address, homing.row.size), (20, 4));
+        let [scale] = homing.scales.as_slice() else {
+            panic!("{:?}", homing.scales);
+        };
+        assert!(close(scale.si_per_raw, xm_tick()), "{}", scale.si_per_raw);
+        assert_eq!(
+            (scale.modes, scale.sign, scale.range, scale.unit.as_str()),
+            (
+                ALL,
+                SignKind::TwosComplement,
+                Some((-1_044_479, 1_044_479)),
+                "deg"
+            )
+        );
+        let moving = roles["moving_threshold"];
+        assert_eq!(moving.def.quantity, Quantity::Velocity);
+        assert_eq!((moving.row.address, moving.row.size), (24, 4));
+        assert!(close(moving.scales[0].si_per_raw, 0.229 * PI / 30.0));
+        assert_eq!(moving.scales[0].range, Some((0, 1023)));
+        let delay = roles["return_delay_time"];
+        assert_eq!(delay.def.quantity, Quantity::Duration);
+        assert_eq!((delay.row.address, delay.row.size), (9, 1));
+        let [scale] = delay.scales.as_slice() else {
+            panic!("{:?}", delay.scales);
+        };
+        assert!(close(scale.si_per_raw, 2e-6));
+        assert_eq!(
+            (scale.sign, scale.range, scale.unit.as_str()),
+            (SignKind::Unsigned, Some((0, 254)), "µs")
+        );
+
+        let m = model(xm_settings(
+            r#"value: 1.0, unit: "pulse", sign_type: "twos_complement", range: (min: -1044479, max: 1044479)"#,
+        ));
+        let pulse = &by_field(&m.typed)["homing_offset"].scales[0];
+        assert!(close(pulse.si_per_raw, xm_tick()));
+        assert_eq!(pulse.unit, "pulse");
+
+        let m = model(
+            Table::ax_fr9()
+                .with_row(5, 1, "Return Delay Time", "RW", "EEPROM")
+                .unit(r#"data_name: "Return Delay Time", value: 2.0, unit: "µs", sign_type: "unsigned", range: (min: 0, max: 254)"#),
+        );
+        let roles = by_field(&m.typed);
+        assert!(close(roles["return_delay_time"].scales[0].si_per_raw, 2e-6));
+        assert!(!roles.contains_key("homing_offset"));
+        assert!(!roles.contains_key("moving_threshold"));
+
+        let m = model(Table::xm().with_row(20, 4, "Homing Offset", "RW", "EEPROM"));
+        let raw = by_field(&m.typed)["homing_offset"];
+        assert!(raw.scales.is_empty() && raw.untyped.is_empty());
+    }
+
+    #[test]
+    fn check22_setting_units() {
+        assert_fails(
+            xm_settings(HOMING_DEG).without_unit("Return Delay Time").unit(
+                r#"data_name: "Return Delay Time", value: 2.0, unit: "ms", sign_type: "unsigned""#,
+            ),
+            &[
+                "unit_info \"Return Delay Time\": unit \"ms\" is not the return_delay_time role's quantity (Duration)",
+            ],
+        );
+        assert_fails(
+            xm_settings(r#"value: 0.229, unit: "rpm", sign_type: "twos_complement""#),
+            &[
+                "unit_info \"Homing Offset\": unit \"rpm\" is not the homing_offset role's quantity (Offset)",
+            ],
+        );
+        assert_fails(
+            xm_settings(r#"value: 0.29, unit: "deg", sign_type: "twos_complement""#),
+            &[
+                "unit_info \"Homing Offset\": step 0.29 deg is not about the type_info step 0.0879 deg",
+            ],
+        );
+        assert_fails(
+            xm_settings(r#"value: 2.0, unit: "pulse", sign_type: "twos_complement""#),
+            &[
+                "unit_info \"Homing Offset\": step 2 pulse is not about the type_info step 0.0879 deg",
+            ],
+        );
     }
 
     #[test]
@@ -1729,6 +1920,31 @@ mod tests {
         assert_eq!(
             by_field(&from_unit.typed)["min_position_limit"].row_range,
             Some((0, 1023))
+        );
+    }
+
+    /// PH42-020-S300-R Max/Min Position Limit(48, 52): "1 [pulse]",
+    /// -303,750 ~ 303,750
+    /// (<https://emanual.robotis.com/docs/en/dxl/p/ph42-020-s300-r/>,
+    /// 2026-11-10): a limit given in pulses has one `type_info` tick per
+    /// step, so its range is the role's range.
+    #[test]
+    fn check22_position_limit_in_pulse() {
+        let pulse = model(
+            Table::xm_fr9().without_range("Min Position Limit").unit(
+                r#"data_name: "Min Position Limit", value: 1.0, unit: "pulse", sign_type: "unsigned", range: (min: 0, max: 4095)"#,
+            ),
+        );
+        let limit = by_field(&pulse.typed)["min_position_limit"];
+        assert_eq!(limit.row_range, Some((0, 4095)));
+        assert!(limit.scales.is_empty() && limit.untyped.is_empty());
+        assert_fails(
+            Table::xm_fr9().unit(
+                r#"data_name: "Min Position Limit", value: 2.0, unit: "pulse", sign_type: "unsigned""#,
+            ),
+            &[
+                "unit_info \"Min Position Limit\": step 2 pulse is not about the type_info step 0.0879 deg",
+            ],
         );
     }
 

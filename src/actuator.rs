@@ -14,11 +14,12 @@ mod roles;
 pub use roles::{
     HasAccelerationLimit, HasCcwComplianceMargin, HasCcwComplianceSlope, HasCurrentLimit,
     HasCwComplianceMargin, HasCwComplianceSlope, HasDGain, HasGoalCurrent, HasGoalVelocity,
-    HasHardwareErrorStatus, HasLed, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-    HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-    HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-    HasTorqueCtrlModeEnable, HasVelocityLimit, RoleRegister,
+    HasHardwareErrorStatus, HasHomingOffset, HasLed, HasLedBlue, HasLedGreen, HasLedRed,
+    HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+    HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentLoad,
+    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+    HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasTorqueCtrlModeEnable,
+    HasVelocityLimit, RoleRegister,
 };
 #[allow(
     unused_imports,
@@ -126,7 +127,7 @@ pub trait Actuator: sealed::Describe {
     /// The position limits read from the actuator's EEPROM at Setup, in raw
     /// ticks: Min/Max Position Limit, or CW/CCW Angle Limit. A limit
     /// written since with
-    /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) or
+    /// [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting) or
     /// [`set_position_limits`](crate::ActuatorRef::set_position_limits)
     /// replaces them once acknowledged. `None` until Setup read them, and
     /// after a limit write that failed, until the next Setup or an
@@ -147,16 +148,19 @@ pub trait Actuator: sealed::Describe {
     /// goal positions, [`LimitMode::Velocity`] and [`LimitMode::Wheel`]
     /// goal velocities, [`LimitMode::Current`] and
     /// [`LimitMode::UnboundedCurrent`] goal currents. A mode changed after
-    /// Setup is not seen until the next Setup, except the one an angle-limit
-    /// write through
-    /// [`ActuatorRef::write_limit`](crate::ActuatorRef::write_limit) sets on
+    /// Setup is not seen until the next Setup, except the one
+    /// [`ActuatorRef::set_operating_mode`](crate::ActuatorRef::set_operating_mode)
+    /// sets, and the one an angle-limit write through
+    /// [`ActuatorRef::write_setting`](crate::ActuatorRef::write_setting) sets on
     /// AX, RX and MX on Protocol 1.
     ///
-    /// On those models an angle-limit write that failed leaves the mode
-    /// unknown: this returns the last mode known, which the actuator may no
-    /// longer be in, and every goal is refused with
+    /// A mode write that failed, or on those models an angle-limit write
+    /// that failed, leaves the mode unknown: this returns the last mode
+    /// known, which the actuator may no longer be in, and every goal is
+    /// refused with
     /// [`LimitsUnknown`](crate::ValidationError::LimitsUnknown) until the
-    /// next Setup or an acknowledged write of both angle limits.
+    /// next Setup or an acknowledged `set_operating_mode`, or write of both
+    /// angle limits.
     fn limit_mode(&self) -> LimitMode {
         self.cache().mode()
     }
@@ -625,6 +629,48 @@ impl ModeValues {
             None
         }
     }
+
+    /// The value of named mode `mode` in these lists, with the limit mode
+    /// Setup records for that value (plan 2026-11-10 S3): `Position` is
+    /// the one value of `bounded`, `ExtendedPosition` the one value of
+    /// `unbounded` not in `current_position`, `CurrentBasedPosition` the
+    /// one of `current_position`, and `Current`, `Velocity` and `Pwm` the
+    /// one of their own list.
+    ///
+    /// `None` when that list holds no value or more than one: the table
+    /// does not single the mode out, and no value is guessed.
+    pub(crate) fn value_of(self, mode: OperatingMode) -> Option<(u8, LimitMode)> {
+        // DECISION: a value is named by the list holding it (plan S3 as written), not by its page's label: the RH-P12-RN's "Current based Position" 5 is Position, documented on OperatingMode, rather than letting current_position overlap bounded, which the tables check, codegen and plan S3 all refuse.
+        let value = match mode {
+            OperatingMode::Position => only(self.bounded.iter()),
+            OperatingMode::ExtendedPosition => only(
+                self.unbounded
+                    .iter()
+                    .filter(|value| !holds(self.current_position, **value)),
+            ),
+            OperatingMode::CurrentBasedPosition => only(self.current_position.iter()),
+            OperatingMode::Current => only(self.current.iter()),
+            OperatingMode::Velocity => only(self.velocity.iter()),
+            OperatingMode::Pwm => only(self.pwm.iter()),
+        }?;
+        Some((value, self.limit_mode(value)?))
+    }
+
+    /// The named mode whose value, by [`value_of`](Self::value_of), is
+    /// `value`: the inverse of writing it. `None` when no named mode takes
+    /// that value.
+    pub(crate) fn mode_of(self, value: u8) -> Option<OperatingMode> {
+        // DECISION: reading back is the strict inverse of value_of, so operating_mode() names a value only if set_operating_mode() of that name writes it; a value only a coarse list holds (MX-106 velocity 1) is UnlistedMode, no mode guessed.
+        OperatingMode::ALL
+            .into_iter()
+            .find(|&mode| self.value_of(mode).is_some_and(|(named, _)| named == value))
+    }
+}
+
+/// The one value `values` yields, or `None` when it yields none or more.
+fn only<'v>(mut values: impl Iterator<Item = &'v u8>) -> Option<u8> {
+    let first = values.next()?;
+    values.next().is_none().then_some(*first)
 }
 
 /// Whether `list` holds `value`.
@@ -716,6 +762,79 @@ impl LimitMode {
     }
 }
 
+/// An operating mode, named as the X-series e-Manual names it: what
+/// [`ActuatorRef::set_operating_mode`](crate::ActuatorRef::set_operating_mode)
+/// writes and
+/// [`ActuatorRef::operating_mode`](crate::ActuatorRef::operating_mode)
+/// reads (plan 2026-11-10 S3).
+///
+/// The register value of each mode comes from the model's control table,
+/// whose `operating_modes` lists are copied from its e-Manual page, never
+/// from a list of the crate's own. XM430-W350 Operating Mode(11): 0 Current
+/// Control Mode, 1 Velocity Control Mode, 3 Position Control Mode, 4
+/// Extended Position Control Mode, 5 Current-based Position Control Mode,
+/// 16 PWM Control Mode
+/// (<https://emanual.robotis.com/docs/en/dxl/x/xm430-w350/>). A mode is
+/// available on a model only where its table lists exactly one value for
+/// it.
+///
+/// Each mode gives the [`LimitMode`] Setup would record for it, which
+/// decides the goals the bus accepts afterwards: `Position` gives
+/// [`LimitMode::Bounded`], `ExtendedPosition` [`LimitMode::Unbounded`],
+/// `CurrentBasedPosition` [`LimitMode::UnboundedCurrent`], `Current`,
+/// `Velocity` and `Pwm` the limit mode of the same name.
+///
+/// A value is named by the list its table puts it in, so by the limit mode
+/// Setup records for it, not by the label of the model's own page. The
+/// two differ on the RH-P12-RN: its page names Operating Mode(11) value 5
+/// "Current based Position Control Mode"
+/// (<https://emanual.robotis.com/docs/en/platform/rh_p12_rn/>), and its
+/// table lists 5 as bounded, so there `Position` writes 5,
+/// [`operating_mode`](crate::ActuatorRef::operating_mode) reads 5 as
+/// `Position`, and `CurrentBasedPosition` is refused with
+/// [`UnsupportedMode`](crate::ValidationError::UnsupportedMode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OperatingMode {
+    /// Current Control Mode: "DYNAMIXEL only controls current(torque)
+    /// regardless of speed and position" (XM430-W350). Goal Current is the
+    /// goal, within Current Limit.
+    Current,
+    /// Velocity Control Mode: velocity control, for wheels. Goal Velocity
+    /// is the goal, within Velocity Limit.
+    Velocity,
+    /// Position Control Mode: position control within one turn, for joints
+    /// (joint mode on the XL-320). The firmware applies the EEPROM position
+    /// limits to Goal Position: the mode the table lists as bounded, on the
+    /// RH-P12-RN its Current based Position Control Mode (see above).
+    Position,
+    /// Extended Position Control Mode (multi-turn): position control over
+    /// several turns, 512 on the XM430-W350; the EEPROM position limits do
+    /// not apply.
+    ExtendedPosition,
+    /// Current-based Position Control Mode: position control over several
+    /// turns with Goal Current as the torque limit; the EEPROM position
+    /// limits do not apply. Not the RH-P12-RN mode of that name, which its
+    /// table lists as bounded: that one is [`Position`](Self::Position).
+    CurrentBasedPosition,
+    /// PWM Control Mode (Voltage Control Mode): the PWM output directly,
+    /// through Goal PWM. The bus refuses every goal position, velocity and
+    /// current in it.
+    Pwm,
+}
+
+impl OperatingMode {
+    /// Every named mode.
+    const ALL: [Self; 6] = [
+        Self::Current,
+        Self::Velocity,
+        Self::Position,
+        Self::ExtendedPosition,
+        Self::CurrentBasedPosition,
+        Self::Pwm,
+    ];
+}
+
 /// What core keeps per actuator: its ID, its limit mode, the position
 /// limits read from its EEPROM at Setup and, where its table depends on it,
 /// its firmware version.
@@ -728,15 +847,17 @@ impl LimitMode {
 /// only `Register::encode` stops a value that does not fit the register. No
 /// constructor fills limits from a control table.
 ///
-/// A limit write the bus cannot confirm leaves part of it unknown: the
-/// limits ([`forget_limits`](Cache::forget_limits)), the mode
+/// A limit or mode write the bus cannot confirm leaves part of it unknown:
+/// the limits ([`forget_limits`](Cache::forget_limits)), the mode
 /// ([`forget_mode`](Cache::forget_mode)) or the goal bound
 /// ([`forget_bound`](Cache::forget_bound)). Every goal that depends on it
 /// is then refused with [`ValidationError::LimitsUnknown`], until the next
 /// Setup builds a new cache or an acknowledged write determines it again
-/// (plan 2026-11-09 D5): both limits ([`record_limits`](Cache::record_limits),
-/// and [`know_mode`](Cache::know_mode) where the mode follows them), or the
-/// goal bound ([`know_bound`](Cache::know_bound)).
+/// (plan 2026-11-09 D5, plan 2026-11-10 S3): both limits
+/// ([`record_limits`](Cache::record_limits), and
+/// [`know_mode`](Cache::know_mode) where the mode follows them), the mode
+/// ([`know_mode`](Cache::know_mode)), or the goal bound
+/// ([`know_bound`](Cache::know_bound)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cache {
     /// The actuator's ID. Never changes.
@@ -840,17 +961,17 @@ impl Cache {
         self.limits = None;
     }
 
-    /// Forgets the limit mode after a failed write of an angle limit it
-    /// follows: every goal is refused with `LimitsUnknown` until the next
-    /// Setup or an acknowledged write of both angle limits
-    /// ([`know_mode`](Self::know_mode)).
+    /// Forgets the limit mode after a failed write of the mode register, or
+    /// of an angle limit it follows: every goal is refused with
+    /// `LimitsUnknown` until the next Setup or an acknowledged write that
+    /// determines it ([`know_mode`](Self::know_mode)).
     pub(crate) fn forget_mode(&mut self) {
         self.unknown = Unknown::Mode;
     }
 
-    /// Records limit mode `mode`, which an acknowledged write of the angle
-    /// limits it follows determines: known again if it was forgotten. The
-    /// limits do not change.
+    /// Records limit mode `mode`, which an acknowledged write of the mode
+    /// register, or of the angle limits it follows, determines: known again
+    /// if it was forgotten. The limits do not change.
     pub(crate) fn know_mode(&mut self, mode: LimitMode) {
         self.mode = mode;
         if matches!(self.unknown, Unknown::Mode) {
@@ -1464,6 +1585,84 @@ mod tests {
             assert_eq!(X_MODES.limit_mode(2), None);
             assert_eq!(X_MODES.limit_mode(255), None);
             assert_eq!(XL320_MODES.limit_mode(0), None);
+        }
+
+        /// Plan 2026-11-10 S3: each named mode is the one value of its
+        /// list, with the limit mode Setup records for that value.
+        #[test]
+        fn named_modes_take_the_one_value_of_their_list() {
+            use OperatingMode as O;
+            let expected = [
+                (O::Current, (0, LimitMode::Current)),
+                (O::Velocity, (1, LimitMode::Velocity)),
+                (O::Position, (3, LimitMode::Bounded)),
+                (O::ExtendedPosition, (4, LimitMode::Unbounded)),
+                (O::CurrentBasedPosition, (5, LimitMode::UnboundedCurrent)),
+                (O::Pwm, (16, LimitMode::Pwm)),
+            ];
+            for (mode, value) in expected {
+                assert_eq!(X_MODES.value_of(mode), Some(value), "{mode:?}");
+                assert_eq!(X_MODES.limit_mode(value.0), Some(value.1));
+                assert_eq!(X_MODES.mode_of(value.0), Some(mode));
+            }
+        }
+
+        /// Plan 2026-11-10 S3: no value, or more than one, is no mode;
+        /// coarse lists name only what they single out.
+        #[test]
+        fn a_list_without_exactly_one_value_names_no_mode() {
+            use OperatingMode as O;
+            assert_eq!(
+                X_COARSE.value_of(O::Position),
+                Some((3, LimitMode::Bounded))
+            );
+            for mode in [O::ExtendedPosition, O::Current, O::Velocity, O::Pwm] {
+                assert_eq!(X_COARSE.value_of(mode), None, "{mode:?}");
+            }
+            assert_eq!(X_COARSE.value_of(O::CurrentBasedPosition), None);
+            let mx28 = coarse(&[3], &[4], &[1, 16]);
+            assert_eq!(
+                mx28.value_of(O::ExtendedPosition),
+                Some((4, LimitMode::Unbounded))
+            );
+            assert_eq!(
+                XL320_MODES.value_of(O::Position),
+                Some((2, LimitMode::Bounded))
+            );
+            assert_eq!(
+                RH_P12_RN_MODES.value_of(O::Position),
+                Some((5, LimitMode::Bounded))
+            );
+            assert_eq!(RH_P12_RN_MODES.value_of(O::CurrentBasedPosition), None);
+            assert_eq!(RH_P12_RN_MODES.mode_of(5), Some(O::Position));
+            for mode in OperatingMode::ALL {
+                assert_eq!(NO_MODES.value_of(mode), None, "{mode:?}");
+            }
+            let twice = ModeValues {
+                bounded: &[2, 3],
+                velocity: &[1, 7],
+                ..NO_MODES
+            };
+            assert_eq!(twice.value_of(O::Position), None);
+            assert_eq!(twice.value_of(O::Velocity), None);
+        }
+
+        /// Plan 2026-11-10 S3: reading back is the inverse of writing; a
+        /// value no named mode takes maps to none.
+        #[test]
+        fn values_map_back_to_the_mode_that_takes_them() {
+            for values in [X_MODES, X_COARSE, RH_P12_RN_MODES, XL320_MODES, NO_MODES] {
+                for value in 0..=255 {
+                    let named = OperatingMode::ALL
+                        .into_iter()
+                        .find(|&mode| values.value_of(mode).map(|(v, _)| v) == Some(value));
+                    assert_eq!(values.mode_of(value), named, "{value}");
+                }
+            }
+            assert_eq!(X_COARSE.mode_of(1), None);
+            assert_eq!(X_COARSE.mode_of(4), None);
+            assert_eq!(X_MODES.mode_of(2), None);
+            assert_eq!(XL320_MODES.mode_of(1), None);
         }
     }
 
@@ -2082,7 +2281,15 @@ mod tests {
             #[cfg(feature = "pro")]
             {
                 use crate::models::{H54200S500Ra, RhP12Rn};
-                let h54 = mode_register(11, &[3], &[4], &[0, 1, 16]);
+                let h54 = ModeSource::Register {
+                    register: reg(11, 1, Access::RW, Area::Eeprom),
+                    values: ModeValues {
+                        current: &[0],
+                        velocity: &[1],
+                        pwm: &[16],
+                        ..coarse(&[3], &[4], &[0, 1, 16])
+                    },
+                };
                 assert_eq!(mode_of(&H54200S500Ra::new(id(1))), h54);
                 assert_eq!(
                     mode_of(&RhP12Rn::new(id(1))),
@@ -2091,7 +2298,14 @@ mod tests {
             }
             #[cfg(feature = "y-series")]
             {
-                let ym = mode_register(33, &[3], &[], &[0, 1]);
+                let ym = ModeSource::Register {
+                    register: reg(33, 1, Access::RW, Area::Eeprom),
+                    values: ModeValues {
+                        current: &[0],
+                        velocity: &[1],
+                        ..coarse(&[3], &[], &[0, 1])
+                    },
+                };
                 assert_eq!(mode_of(&crate::models::Ym070210M001::new(id(1))), ym);
             }
             #[cfg(feature = "ax")]

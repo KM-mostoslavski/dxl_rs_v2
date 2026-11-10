@@ -312,11 +312,12 @@ pub use h54_200_s500_ra::H54200S500Ra;
 pub use crate::actuator::{
     HasAccelerationLimit, HasCcwComplianceMargin, HasCcwComplianceSlope, HasCurrentLimit,
     HasCwComplianceMargin, HasCwComplianceSlope, HasDGain, HasGoalCurrent, HasGoalVelocity,
-    HasHardwareErrorStatus, HasLed, HasLedBlue, HasLedGreen, HasLedRed, HasMaxPositionLimit,
-    HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit, HasMoving, HasPGain,
-    HasPresentCurrent, HasPresentLoad, HasPresentTemperature, HasPresentVelocity,
-    HasPresentVoltage, HasPwmLimit, HasRealtimeTick, HasSpeedLimit, HasTemperatureLimit,
-    HasTorqueCtrlModeEnable, HasVelocityLimit, RoleRegister,
+    HasHardwareErrorStatus, HasHomingOffset, HasLed, HasLedBlue, HasLedGreen, HasLedRed,
+    HasMaxPositionLimit, HasMaxTorque, HasMaxVoltageLimit, HasMinPositionLimit, HasMinVoltageLimit,
+    HasMoving, HasMovingThreshold, HasPGain, HasPresentCurrent, HasPresentLoad,
+    HasPresentTemperature, HasPresentVelocity, HasPresentVoltage, HasPwmLimit, HasRealtimeTick,
+    HasReturnDelayTime, HasSpeedLimit, HasTemperatureLimit, HasTorqueCtrlModeEnable,
+    HasVelocityLimit, RoleRegister,
 };
 
 /// The model types, for the typed handle of
@@ -1488,7 +1489,11 @@ impl ActuatorKind {
     ) -> Option<Register> {
         match (protocol, model_number.get()) {
             #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 29) => Some(Mx28P1::FIRMWARE_VERSION),
+            #[cfg(feature = "mx")]
             (ProtocolVersion::P1, 310) => Some(Mx64P1::FIRMWARE_VERSION),
+            #[cfg(feature = "mx")]
+            (ProtocolVersion::P1, 320) => Some(Mx106P1::FIRMWARE_VERSION),
             #[cfg(feature = "x-series")]
             (ProtocolVersion::P2, 1190) => Some(Xl330M077Fw52::FIRMWARE_VERSION),
             #[cfg(feature = "x-series")]

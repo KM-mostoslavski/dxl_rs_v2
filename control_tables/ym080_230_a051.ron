@@ -1,7 +1,8 @@
 (
   source: Unverified,
+  unit_source: Verified(url: "https://emanual.robotis.com/docs/en/dxl/y/ym080-230-a051-rh/", verified: "2026-11-10"),
   protocols: [P2],
-  operating_modes: (bounded: [3], unbounded: [], no_position: [0, 1]),
+  operating_modes: (bounded: [3], unbounded: [], no_position: [0, 1], current: [0], velocity: [1], pwm: [], current_position: []),
   type_info: {
     value_of_zero_radian_position: 0,
     value_of_max_radian_position: 13369344,
@@ -11,28 +12,137 @@
   },
   unit_info: [
     {
-      data_name: "Present Velocity",
-      value: 0.0010471976,
-      unit: "rad/s",
-      sign_type: "signed",
+      data_name: "Return Delay Time",
+      value: 2.0,
+      unit: "µs",
+      sign_type: "unsigned",
+      range: (min: 0, max: 254),
     },
     {
-      data_name: "Goal Velocity",
-      value: 0.0010471976,
-      unit: "rad/s",
-      sign_type: "signed",
-    },
-    {
-      data_name: "Present Current",
+      data_name: "Homing Offset",
       value: 1.0,
-      unit: "raw",
-      sign_type: "signed",
+      unit: "pulse",
+      sign_type: "twos_complement",
+      range: (min: -2147483648, max: 2147483647),
+    },
+    // DECISION: Y splits Temperature Limit and Present Temperature into inverter and motor registers; the page gives each in 1 [°C] and the two limits 0 ~ 100, so each gets the entry shape of its X counterpart.
+    {
+      data_name: "Inverter Temperature Limit",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
+      range: (min: 0, max: 100),
+    },
+    {
+      data_name: "Motor Temperature Limit",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
+      range: (min: 0, max: 100),
+    },
+    {
+      data_name: "Max Voltage Limit",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+      range: (min: 240, max: 400),
+    },
+    {
+      data_name: "Min Voltage Limit",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+      range: (min: 160, max: 400),
+    },
+    {
+      data_name: "PWM Limit",
+      value: 0.1,
+      unit: "%",
+      sign_type: "unsigned",
+      range: (min: 0, max: 1000),
+    },
+    // DECISION: the page gives current in 0.01 [A] steps; one step is written as 10.0 mA, since A is not in the unit list.
+    {
+      data_name: "Current Limit",
+      value: 10.0,
+      unit: "mA",
+      sign_type: "unsigned",
+      range: (min: 0, max: 2240),
+    },
+    {
+      data_name: "Acceleration Limit",
+      value: 10.0,
+      unit: "rev/min^2",
+      sign_type: "unsigned",
+      range: (min: 0, max: 418352),
+    },
+    {
+      data_name: "Velocity Limit",
+      value: 0.01,
+      unit: "rpm",
+      sign_type: "unsigned",
+      range: (min: 0, max: 6972),
     },
     {
       data_name: "Goal Current",
+      value: 10.0,
+      unit: "mA",
+      sign_type: "twos_complement",
+      bounded_by: "Current Limit",
+    },
+    {
+      data_name: "Goal Velocity",
+      value: 0.01,
+      unit: "rpm",
+      sign_type: "twos_complement",
+      bounded_by: "Velocity Limit",
+    },
+    // DECISION: Profile Velocity is used only by the velocity-based profile (Drive Mode bit 2), its range is 0 ~ Velocity Limit(72), and 0 deactivates the profile (no profile velocity bound), read as unlimited.
+    {
+      data_name: "Profile Velocity",
+      value: 0.01,
+      unit: "rpm",
+      sign_type: "unsigned",
+      profile: "velocity_based",
+      zero_is_unlimited: true,
+      bounded_by: "Velocity Limit",
+    },
+    {
+      data_name: "Realtime Tick",
       value: 1.0,
-      unit: "raw",
-      sign_type: "signed",
+      unit: "ms",
+      sign_type: "unsigned",
+      range: (min: 0, max: 32767),
+    },
+    {
+      data_name: "Present Current",
+      value: 10.0,
+      unit: "mA",
+      sign_type: "twos_complement",
+    },
+    {
+      data_name: "Present Velocity",
+      value: 0.01,
+      unit: "rpm",
+      sign_type: "twos_complement",
+    },
+    {
+      data_name: "Present Input Voltage",
+      value: 0.1,
+      unit: "V",
+      sign_type: "unsigned",
+    },
+    {
+      data_name: "Present Inverter Temperature",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
+    },
+    {
+      data_name: "Present Motor Temperature",
+      value: 1.0,
+      unit: "°C",
+      sign_type: "unsigned",
     },
   ],
   control_table: [
@@ -155,12 +265,14 @@
       access: RW,
       area: EEPROM,
     },
+    // DECISION: Moving Threshold(48) carries the page range on the row and no unit_info entry: the control table gives 5 [pulse/ms] and the register description 1 [Pulse], two scales for one register that is compared with Present Velocity(548) in 0.01 [rev/min], so neither is taken; both give 0 ~ 2,147,483,647.
     {
       address: 48,
       size: 4,
       data_name: "Moving Threshold",
       access: RW,
       area: EEPROM,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 52,
@@ -225,12 +337,14 @@
       access: RW,
       area: EEPROM,
     },
+    // DECISION: Max/Min Position Limit(76, 84) carry the page range on the row and no unit_info entry: the page gives 1 [pulse], one type_info tick, which xtask check 22 converts a limit through, so the row range is all the role needs.
     {
       address: 76,
       size: 4,
       data_name: "Max Position Limit",
       access: RW,
       area: EEPROM,
+      range: (min: -2147483648, max: 2147483647),
     },
     {
       address: 84,
@@ -238,6 +352,7 @@
       data_name: "Min Position Limit",
       access: RW,
       area: EEPROM,
+      range: (min: -2147483648, max: 2147483647),
     },
     {
       address: 96,
@@ -462,6 +577,7 @@
       data_name: "Velocity I Gain",
       access: RW,
       area: Hybrid,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 216,
@@ -469,6 +585,7 @@
       data_name: "Velocity P Gain",
       access: RW,
       area: Hybrid,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 220,
@@ -476,6 +593,7 @@
       data_name: "Velocity FF Gain",
       access: RW,
       area: Hybrid,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 224,
@@ -483,6 +601,7 @@
       data_name: "Position D Gain",
       access: RW,
       area: Hybrid,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 228,
@@ -490,6 +609,7 @@
       data_name: "Position I Gain",
       access: RW,
       area: Hybrid,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 232,
@@ -497,6 +617,7 @@
       data_name: "Position P Gain",
       access: RW,
       area: Hybrid,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 236,
@@ -504,6 +625,7 @@
       data_name: "Position FF Gain",
       access: RW,
       area: Hybrid,
+      range: (min: 0, max: 2147483647),
     },
     {
       address: 240,

@@ -692,7 +692,11 @@ mod tests {
             role("rx_28", "ccw_compliance_margin").scales[0].si_per_raw,
             0.29 * std::f64::consts::PI / 180.0
         ));
-        assert!(role("xl430_w250", "present_velocity").scales.is_empty());
+        assert!(close(
+            role("xl430_w250", "present_velocity").scales[0].si_per_raw,
+            0.229 * rpm
+        ));
+        assert!(role("rh_p12_rn", "present_velocity").scales.is_empty());
         assert_eq!(role("ph54_200_s500", "led_red").row.data_name, "LED Red");
 
         for (file, field, name, address, top) in [
@@ -723,7 +727,11 @@ mod tests {
             assert!(limit.scales.is_empty(), "{file}: {field}");
             assert_eq!(limit.row_range, Some((0, top)), "{file}: {field}");
         }
-        assert_eq!(role("xl430_w250", "min_position_limit").row_range, None);
+        assert_eq!(
+            role("xl430_w250", "min_position_limit").row_range,
+            Some((0, 4095))
+        );
+        assert_eq!(role("rh_p12_rn", "min_position_limit").row_range, None);
         let torque = role("ax_12a", "max_torque");
         assert_eq!(torque.row.address, 14);
         assert!(close(torque.scales[0].si_per_raw, 1.0 / 1023.0));
@@ -744,7 +752,48 @@ mod tests {
             214.577 * std::f64::consts::PI / 1800.0
         ));
         assert_eq!(acceleration.scales[0].range, Some((0, 32767)));
-        assert!(role("mx_28", "acceleration_limit").scales.is_empty());
+        assert!(close(
+            role("mx_28", "acceleration_limit").scales[0].si_per_raw,
+            214.577 * std::f64::consts::PI / 1800.0
+        ));
+        assert!(role("rh_p12_rn", "acceleration_limit").scales.is_empty());
+
+        let tick = std::f64::consts::TAU / 4096.0;
+        // DECISION: the tick is compared to 2π / 4096 within 1e-6, the precision of the f32 type_info radians it comes from.
+        for file in ["xm430_w350", "mx_64"] {
+            let homing = role(file, "homing_offset");
+            assert_eq!((homing.row.address, homing.row.size), (20, 4), "{file}");
+            assert!(
+                (homing.scales[0].si_per_raw / tick - 1.0).abs() < 1e-6,
+                "{file}: {}",
+                homing.scales[0].si_per_raw
+            );
+            assert_eq!(
+                (homing.scales[0].sign, homing.scales[0].range),
+                (fr9::SignKind::TwosComplement, Some((-1_044_479, 1_044_479))),
+                "{file}"
+            );
+            let moving = role(file, "moving_threshold");
+            assert_eq!((moving.row.address, moving.row.size), (24, 4), "{file}");
+            assert!(close(moving.scales[0].si_per_raw, 0.229 * rpm), "{file}");
+            assert_eq!(moving.scales[0].range, Some((0, 1023)), "{file}");
+        }
+        for (file, address) in [
+            ("ax_12a", 5),
+            ("rx_28", 5),
+            ("mx_64_p1", 5),
+            ("mx_64", 9),
+            ("xm430_w350", 9),
+        ] {
+            let delay = role(file, "return_delay_time");
+            assert_eq!((delay.row.address, delay.row.size), (address, 1), "{file}");
+            assert!(close(delay.scales[0].si_per_raw, 2e-6), "{file}");
+            assert_eq!(delay.scales[0].range, Some((0, 254)), "{file}");
+        }
+        let delay = role("xl430_w250", "return_delay_time");
+        assert!(close(delay.scales[0].si_per_raw, 2e-6));
+        assert_eq!(delay.scales[0].range, Some((0, 254)));
+        assert!(role("rh_p12_rn", "return_delay_time").scales.is_empty());
     }
 
     #[test]
@@ -784,7 +833,7 @@ mod tests {
                     assert!(module.contains(&arm), "{arm}");
                 }
                 let dependent = format!("(ProtocolVersion::{variant}, {number}) => Some(");
-                let from_fw_role = (variant, number) == ("P1", 310);
+                let from_fw_role = matches!((variant, number), ("P1", 29 | 310 | 320));
                 assert_eq!(
                     module.contains(&dependent),
                     list.len() > 1 || from_fw_role,

@@ -12,7 +12,7 @@
 //!
 //! Wheel mode is CW Angle Limit = CCW Angle Limit = 0 in EEPROM. It can be set through the
 //! crate, `a.set_position_limits(zero, zero)` with `zero = a.position_scale().to_position(0)`
-//! (or `a.write_limit(Raw(MinPositionLimit), 0)` then `a.write_limit(Raw(MaxPositionLimit), 0)`):
+//! (or `a.write_setting(Raw(MinPositionLimit), 0)` then `a.write_setting(Raw(MaxPositionLimit), 0)`):
 //! the bus switches the actuator to wheel mode on the acknowledged write, with no power cycle
 //! and no new Setup. It takes the write only after `a.disable_torque()` confirmed torque off
 //! and `a.set_speed_limit(SpeedLimit::Unlimited)` wrote Moving Speed = 0: in wheel mode Moving
