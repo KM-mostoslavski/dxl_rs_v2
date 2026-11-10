@@ -66,8 +66,9 @@ const P1_MODES: [(&str, Modes); 4] = [
 const STEP_TOLERANCE: f64 = 0.05;
 
 /// The units `unit_info` may give, as `control_tables/check_tables.py`
-/// spells them: the e-Manual's "Rev/min²" is `rev/min^2`.
-const UNITS: [&str; 9] = [
+/// spells them: the e-Manual's "Rev/min²" is `rev/min^2`, "2 [μsec]" is
+/// `µs` (the micro sign) and "1 [pulse]" is `pulse`.
+const UNITS: [&str; 11] = [
     "deg",
     "rpm",
     "mA",
@@ -77,6 +78,8 @@ const UNITS: [&str; 9] = [
     "ms",
     "deg/s^2",
     "rev/min^2",
+    "µs",
+    "pulse",
 ];
 
 /// What a role's typed value is.
