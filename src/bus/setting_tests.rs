@@ -11,7 +11,7 @@
 extern crate std;
 
 /// `instruction` of `register` at `addr` (`len` bytes) on actuator `n`.
-#[cfg(any(feature = "ax", feature = "x-series"))]
+#[cfg(feature = "x-series")]
 fn on(
     instruction: crate::error::Instruction,
     n: u8,
