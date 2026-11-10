@@ -35,6 +35,7 @@ Oct 26, 2026 · @David
 - `std` (default: `alloc` + `serialport`) and `no_std` heap-free builds from one crate.
 - `cargo xtask` codegen producing committed `.rs` files.
 - Opt-in features `partial-reads`, `raw-registers` and `mock`; model-family features (all on by default).
+- Typed EEPROM settings that most models share (limits, ID, baud rate, operating mode, ...), FR-10; raw register access for the rest.
 
 2.2 Out of scope:
 
@@ -58,7 +59,7 @@ Oct 26, 2026 · @David
 | --- | --- |
 | Codegen time | The maintainer runs `cargo xtask`; RON tables become committed `.rs` files. Happens before any build. Never at build time. |
 | Compile time | `cargo build` of the user's crate. Protocol `P`, transport `T`, capacity `N` and enabled model families are fixed here. |
-| Init | The user constructs a `Bus` and runs Setup (autoscan or declared). Actuator list, EEPROM limits and limit modes are established; every torque state starts off. One-off, boot cost. |
+| Init | The user constructs a `Bus` and runs Setup (autoscan or declared). Actuator list, EEPROM limits and limit modes are established; every torque state starts off. One-off, boot cost. Afterwards only a confirmed typed setting write changes them (FR-10.4). |
 | Cycle | Any read/write after Init, typically a control loop iteration. No allocation, no discovery, no limit re-read. |
 
 3.3 Types and roles:
@@ -73,10 +74,12 @@ Oct 26, 2026 · @David
 | Model type | A generated struct per control table, e.g. `Xm430W350`, `Mx64`. Registers are associated `const`s. Holds the per-actuator cache. Tier 2 of the API. |  |
 | Table variant | A model whose control table differs by firmware version gets one model type per table (e.g. XL330 before/after fw 53). `dynamixel.ron` maps model number + `from_fw` to the table. |  |
 | `ActuatorRef` | Short-lived handle from `bus.actuator(id)`, borrowing `&mut Bus`. Tier 1 of the API. Retired names: handle, actuator handle. **\[decision\]** name proposed from the C4 model. |  |
-| Cache | Per actuator, inside its model type: `Id` and limits read from EEPROM at Init. The torque/fault state is not in the model type (no padding): the bus holds it in a one-byte-per-slot array beside the actuator list. |  |
+| Cache | Per actuator, inside its model type: `Id` and limits read from EEPROM at Init, kept true by typed setting writes (FR-10.4). The torque/fault state is not in the model type (no padding): the bus holds it in a one-byte-per-slot array beside the actuator list. |  |
 | Torque state | One-byte runtime enum per actuator: off, on, or faulted (faulted always means off). Off at Init. Not a typestate. |  |
 | Fault state | The faulted value of the torque state, set when a status packet reports a hardware fault; it means torque off. No fault report is stored: the call that saw it returns it, and Hardware Error Status can be read again. |  |
 | Limits | Position (and other) min/max read from the actuator's EEPROM at Init. Never the control-table defaults. |  |
+| Setting | An EEPROM register, or min/max pair, listed in FR-10.1: typed read and write on every model whose table has it, `Unsupported` on the others. |  |
+| Link setting | ID, baud rate or protocol type: a setting whose write changes how the bus reaches the actuator (FR-10.6). |  |
 | Protocol (`P`) | `P1` or `P2`, a compile-time type parameter of `Bus`. Packet layout, checksum/CRC, instruction set. |  |
 | Transport (`T`) | Any `embedded_io::{Read, Write, ReadReady}`: blocking read and write, plus a non-blocking check for pending input. Default under `std`: `SerialTransport` over `serialport`. Mockable in tests with `MockTransport` (feature `mock`). |  |
 | `Clock` | Monotonic microsecond time source. The bus polls `ReadReady` against it to bound every wait for a reply. Any `FnMut() -> u64` closure is a `Clock`; `StdClock` under `std`. |  |
@@ -168,7 +171,7 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 - FR-2.4 A model number with no compiled-in model type on the bus protocol fails Setup with `SetupError::UnsupportedModel { id, model_number, protocol, feature }`; `feature` names the Cargo feature that would enable it when its family is off, and is `None` otherwise. Decided; under `Setup` 2026-10-27, `id` and `protocol` added 2026-10-28.
 - FR-2.5 Declared setup takes `impl IntoIterator<Item = (Id, ModelNumber)>`, pings only those IDs, and fails Init if one is missing or answers with another model. No ID sweep. Decided. **\[decision\]** the declared model is a `ModelNumber` newtype, not the model type, so the list stays data.
 - FR-2.6 At Init, Setup reads every instantiated actuator's limits from EEPROM into its cache, then its operating mode: one 1-byte read of Operating Mode (XL-320: Control Mode), or, for AX and MX on P1, derived from the CW/CCW Angle Limits just read. The meaning of each mode value comes from the model's control table. It never falls back to control-table defaults or to a default mode; a failed read fails Init, and a mode value the table does not list fails Init with `UnknownOperatingMode`. Decided; operating mode added 2026-10-28.
-- FR-2.7 At Init, every actuator's torque state (one byte per slot, held by the bus) starts off, whatever the hardware reports; an actuator that reports a hardware fault during Setup fails Init with that error. Decided (torque off by default). **\[decision\]** the hardware's actual Torque Enable is not read at Init; a user who needs it reads it explicitly.
+- FR-2.7 At Init, every actuator's torque state (one byte per slot, held by the bus) starts off, whatever the hardware reports. Decided (torque off by default). **\[decision\]** the hardware's actual Torque Enable is not read at Init; a user who needs it reads it explicitly. An actuator whose Setup replies carry only hardware fault flags (P1: Input Voltage, Overheating, Overload; P2: the alert bit with no error code) is held `Faulted` and listed in `SetupReport::faulted` instead of failing Init, so the setting that causes the fault can be fixed (FR-10.2); any other status error still fails Init. Decided 2026-11-10 (D1 to D3 of `docs/plans/2026-11-05-setup-holds-faults.md`, built 2026-11-05, bus T092 to T095).
 
 ### FR-3 Single-actuator API (Tier 1 and Tier 2)
 
@@ -204,9 +207,9 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 ### FR-6 Fault detection and errors
 
 - FR-6.1 Every received status packet's error byte is checked: P2 alert bit 7 and error code; P1 per-bit error flags. Decided.
-- FR-6.2 A reported hardware fault in any status packet, `raw-registers` replies included, sets the actuator's torque state to faulted (which means off) in the bus's state byte, and returns a typed hardware error from the call that received it. Decided; raw replies included 2026-10-28.
+- FR-6.2 A reported hardware fault in any status packet, `raw-registers` replies included, sets the actuator's torque state to faulted (which means off) in the bus's state byte, and returns a typed hardware error from the call that received it; at Setup the actuator is held instead (FR-2.7). Decided; raw replies included 2026-10-28.
 - FR-6.3 Sync writes get no reply, so a write-only loop sees faults only on its next read. Documented limitation, not fixed. Decided.
-- FR-6.4 Errors are one `thiserror` enum (no\_std) split into `Transport`, `Protocol`, `Status` (the status packet's error byte), `Fault` (a hardware fault measured against its limits, FR-6.13), `Validation` (`ActuatorIsOff`, `ActuatorFaulted`, out-of-range, not in a position mode, bad buffer, repeated `Id`) and `Setup` (`UnsupportedModel`, too many actuators, declared actuator missing or of another model, `Id` not on the bus, unknown operating mode). Decided; `Setup` added 2026-10-27, mode errors 2026-10-28, `Fault` 2026-11-04.
+- FR-6.4 Errors are one `thiserror` enum (no\_std) split into `Transport`, `Protocol`, `Status` (the status packet's error byte), `Fault` (a hardware fault measured against its limits, FR-6.13), `Validation` (`ActuatorIsOff`, `ActuatorFaulted`, out-of-range, not in a position mode, bad buffer, repeated `Id`, and for settings `ActuatorIsOn`, `TorqueUnconfirmed`, `UnsupportedMode`, `WheelSpeedUnknown`, FR-10) and `Setup` (`UnsupportedModel`, too many actuators, declared actuator missing or of another model, `Id` not on the bus, unknown operating mode). Decided; `Setup` added 2026-10-27, mode errors 2026-10-28, `Fault` 2026-11-04.
 - FR-6.5 Clearing a fault state is an explicit user call. **\[decision\]** `clear_fault()` asks the actuator: it re-reads Hardware Error Status, or pings on models without it (AX, MX on P1, whose status error flags carry the fault), and clears only if the hardware reports none. Enabling torque while faulted is refused with a typed error and sends nothing.
 - FR-6.6 Every failure returns an explicit error. One variant per distinct cause, where a cause is distinct when a caller would check or fix something different. No catch-all variant (`Malformed`, `Other`, "communication error") merges causes. Decided 2026-11-03.
 - FR-6.7 An error carries, as fields, everything a caller needs to act without a second run to probe: the actuator `Id` (absent only when no single actuator is addressed, e.g. a broadcast, whose instruction is still named); what was being done, as one `Request { instruction, id, register, addr, len, step }` carried by every transport, protocol, status, fault and request-shaped validation error (the instruction, the register by table name and address, the data length, and the step: during Init the Setup step, i.e. scan, ping, model number, firmware, position limits, operating mode or goal bound, and fault diagnosis while FR-6.13 measures a fault); and the values that decided the failure (expected and received, value and allowed range, timeout, bytes received before the failure, value measured and limit crossed). A value the hardware reports outside the known set is kept raw, never dropped. One exception: a transport I/O error keeps only its `embedded_io::ErrorKind` and its direction (write, flush, read-ready, read), because `embedded_io` does not expose the OS error code; end of stream is its own variant. Decided 2026-11-03; `Request` and the I/O exception 2026-11-04.
@@ -230,7 +233,7 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 ### FR-8 Raw register access
 
 - FR-8.1 Behind `raw-registers` (off by default): read/write any address and size on an actuator. What it sends bypasses limits, torque guard and cache; its replies are checked like every status packet, so a hardware fault sets the faulted state (FR-6.2). Decided; fault check on raw replies 2026-10-28.
-- FR-8.2 Raw access is documented as an escape hatch that can desync the cache: a raw write to Operating Mode leaves the recorded mode stale until the next Setup, and a raw write to Torque Enable leaves the torque state as it was until the next typed torque call; the crate does not try to repair the cache after a raw write. Decided.
+- FR-8.2 Raw access is documented as an escape hatch that can desync the cache: a raw write to Operating Mode leaves the recorded mode stale until the next Setup, and a raw write to Torque Enable leaves the torque state as it was until the next typed torque call; the crate does not try to repair the cache after a raw write. Decided. A setting of FR-10.1 is written through its typed setter, which keeps the cache true; raw is for the registers FR-10 leaves out.
 
 ### FR-9 Typed registers beyond position
 
@@ -270,8 +273,9 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
   through the same Easy and Explicit tiers as position, grouped by (addr, size). One register per call;
   several registers in one transaction is Bulk Read/Write (roadmap). **\[decision\]** decided 2026-11-02;
 - FR-9.6 Reads are never implicit: no register is polled or cached after Init except the limits
-  and mode already cached by FR-2. Every typed read is one unicast or one sync read. The one exception is
-  the fault measurement of FR-6.13, after a reported fault only.
+  and mode already cached by FR-2, kept true by FR-10.4. Every typed read is one unicast or one sync
+  read. Two reads are part of another call: the fault measurement of FR-6.13, after a reported fault
+  only, and the goal-bound read of the operating-mode setter (FR-10.7).
 - FR-9.7 Newtypes: `Temperature`, `Voltage`, `Velocity`, `Current`, `Load`, in the core module, same
   shape as `Position` (`from_si`, `to_si`, raw conversion through a per-model scale). **\[decision\]** decided 2026-11-02;
   `f32` everywhere (consistent with `Position`; Y-series precision question stays open in §8).
@@ -279,11 +283,137 @@ Side channel: the maintainer edits `control_tables/*.ron` and `dynamixel.ron`, r
 Out of scope for FR-9:
 
 - Several registers in one packet (Bulk Read/Write, indirect addressing).
-- Writing EEPROM registers (limits, ID, baud) through typed calls: still `write_raw`, because EEPROM
-  writes need torque off and wear the flash. **\[decision\]** Revisit requested 2026-11-03: typed
-  EEPROM writes under their own validation, and a way to reach an actuator whose EEPROM causes a
-  fault (`specs/ideas/eeprom-writes.md`, open question in section 8).
-- Changing the operating mode at runtime (would invalidate the FR-2.6 cache). Possible later FR.
+- EEPROM registers and changing the operating mode at runtime: FR-10.
+
+### FR-10 Typed EEPROM settings
+
+- FR-10.1 A setting is an EEPROM register, or a min/max pair of them, that most models share.
+  Every setting in the table below gets a typed read and a typed write on `ActuatorRef`, and the
+  model's `Has*` trait at Tier 2, as in FR-9.1. Raw access (FR-8) is for the registers only a
+  minority of models have. The rule behind the list: a setting is typed when its registers, under
+  any name in its row, exist on more than half of the models `dynamixel.ron` maps (one count per
+  model number, its newest table), or on several series (Acceleration Limit). A model whose table
+  lacks the register returns `ValidationError::Unsupported { id, register }` at Tier 1 and sends
+  nothing; at Tier 2 the method does not compile. One setting spans several table names only where
+  the e-Manual describes the same quantity: CW/CCW Angle Limit are the position limits of the
+  angle-limit models (FR-7.6). Decided 2026-11-10.
+
+  Counted 2026-11-10 over the 67 mapped models:
+
+  | Setting | Registers (table names) | Value | Models | Unsupported on |
+  |---|---|---|---|---|
+  | Position limits | Min/Max Position Limit; CW/CCW Angle Limit (AX, RX, MX on P1, XL-320) | `Position`, each or as a pair | 67 | none |
+  | Voltage limits | Min/Max Voltage Limit | `Voltage`, each or as a pair | 67 | none |
+  | Return Delay Time | Return Delay Time | `core::time::Duration` | 67 | none |
+  | Operating mode | Operating Mode; Control Mode (XL-320) | `OperatingMode` | 60 | AX ×3, RX-28, MX-28/64/106 on P1: FR-10.7 |
+  | PWM Limit | PWM Limit | `Pwm`, a share of full output | 59 | AX ×3, RX-28, MX on P1 ×3, XL-320: they have Max Torque |
+  | Velocity Limit | Velocity Limit | `Velocity` | 59 | AX ×3, RX-28, MX on P1 ×3, XL-320 |
+  | Homing Offset | Homing Offset | `Position`, an angle offset | 59 | same 8 |
+  | Moving Threshold | Moving Threshold | `Velocity` | 59 | same 8 |
+  | Temperature Limit | Temperature Limit | `Temperature` | 55 | Y ×12: open question in § 8 |
+  | Current Limit | Current Limit | `Current` | 53 | AX ×3, RX-28, MX on P1 ×3, MX-28(2.0), XL-320, XL430-W250, 2XL430-W250, XC430-W150, XC430-W240, 2XC430-W250 |
+  | Acceleration Limit | Acceleration Limit | `Acceleration` | 28 | the models of the X, AX, RX and MX on P1 series |
+  | Max Torque | Max Torque (AX, RX, MX on P1, XL-320) | `Load`, a share of the maximum torque | 8 | every model with PWM Limit |
+  | ID, baud rate, protocol type | ID; Baud Rate, Baud Rate (Bus); Protocol Type | later: FR-10.6 | 67, 67, 53 | raw until built |
+  | Drive Mode, Shutdown | Drive Mode; Shutdown | later: FR-10.8 | 59, 55 | raw until built |
+
+  PWM Limit and Max Torque stay two settings: the e-Manual calls one the maximum PWM output and
+  the other the maximum torque output, so each keeps its own name and newtype; a model has one or
+  the other. Decided 2026-11-10.
+- FR-10.2 A setting write is checked before any byte, and each refusal is its own validation error
+  (FR-6.6), carrying the value and what decided it. Decided 2026-11-10.
+  - Torque confirmed off. Torque state `On` returns `ActuatorIsOn`. Otherwise the bus needs its
+    private "torque confirmed off" mark, set only by a Torque Enable = 0 write whose reply shows it
+    ran (no error, or hardware fault flags only: P1 Input Voltage, Overheating, Overload; P2 the
+    alert bit with no error code), so a `Faulted` actuator held by Setup (FR-2.7) can be confirmed
+    off and fixed. The mark is clear after Setup and cleared by every `enable_torque` that sent
+    bytes, by `reboot()`, and by every raw write that reaches the actuator; without it the write
+    returns `TorqueUnconfirmed`. The X (XL-320 included), MX(2.0), PRO and Y pages allow EEPROM
+    writes only with Torque Enable 0 (checked 2026-11-10 on XM430-W350, XL-320, MX-64(2.0),
+    H54-200-S500-R(A), PH54-200-S500-R, YM070-210-M001-RH); the rule applies to every model, so one
+    rule holds on every bus. The bus never writes Torque Enable on its own.
+  - The value: it converts through the register's `unit_info` (FR-9.2; without one the typed form
+    returns `NoUnit` and the raw form still works, with the torque and size checks), and lies in the
+    e-Manual range the table records (`OutOfLimits`); a value not in the model's list (operating
+    mode) returns `UnsupportedMode`. A pair setter checks min ≤ max (`InvertedLimits`); a single
+    position-limit write checks against the other cached limit; a single voltage-limit write cannot
+    (the other limit is not cached and a read would be hidden) and its docs say so.
+  - Every table the typed settings need is verified against its e-Manual page for its unit data
+    (`unit_source`, FR-7.2), except RH-P12-RN while D-24 is open.
+- FR-10.3 On the wire a setting write is one acknowledged unicast Write per actuator; a pair is one
+  Write when its two registers are contiguous, otherwise two, each acknowledged (Y position limits).
+  Never a sync or broadcast write: a broadcast gets no reply, so a Range Error or a fault would never
+  surface (`docs/deferred.md` D-03) and the cache could not follow. Settings implement `ReadField`
+  but not FR-9's `WriteField`, so `sync_write`, `bulk_write` and the Easy tier reject them at
+  compile time, as FR-4.3 does for `sync_read`; `read_field`, `sync_read` and `bulk_read` read them,
+  so a caller can save them before a run (NFR-11). There is no bus-level setting write: a caller
+  writes several actuators through their handles, one confirmed write each. Decided 2026-11-10.
+- FR-10.4 The cache follows a write acknowledged without error, from the written value, with no
+  read-back (FR-3.8): position limits, on the angle-limit models also the limit mode
+  (`LimitMode::from_angle_limits`), the operating mode (FR-10.7), and the goal bound when the
+  recorded mode uses Velocity or Current Limit. A write that fails after bytes went out leaves that
+  item unknown: every goal that depends on it is refused (`LimitsUnknown`) until a confirmed write
+  that fully determines it (a pair write, a Velocity or Current Limit write, an operating-mode write)
+  or the next Setup. Voltage and temperature limits, PWM Limit, Max Torque, Acceleration Limit,
+  Homing Offset, Moving Threshold and Return Delay Time are not cached. Decided 2026-11-10.
+- FR-10.5 Each setter documents the side effects the model's e-Manual page gives for its register,
+  e.g. an X-series mode change resets the gains, Profile Velocity and Profile Acceleration, and AX Max
+  Torque takes effect at the next power-up, through Torque Limit; Homing Offset shifts Present
+  Position, and the cached position limits still apply in the shifted frame; Return Delay Time adds
+  to every reply's latency, so the bus timeout must exceed it. No effect is assumed beyond the page.
+  EEPROM wear is documented, not guarded: every call writes, even an unchanged value. Decided
+  2026-11-10.
+- FR-10.6 Link settings (ID, baud rate, protocol type), when built: single-actuator only, consuming
+  the handle. An ID write is refused when the new `Id` is already on the bus, and moves the slot to the
+  new `Id` once confirmed. After a confirmed baud rate or protocol type write the actuator has left
+  this bus (FR-1.6): its slot is removed, and the caller reaches it with a bus on the new rate or
+  protocol. Not built until the open question in § 8 on the reply's ID and rate is answered; raw until
+  then. **\[decision\]**
+- FR-10.7 Operating mode. `OperatingMode` names the e-Manual modes: current, velocity, position,
+  extended position, current-based position, PWM. The value written is the one the table's
+  `operating_modes` lists give that mode (FR-7.6); none, or more than one, returns `UnsupportedMode`
+  and sends nothing. After a confirmed write the bus records the new limit mode; if the new mode
+  bounds its goal (velocity mode: Velocity Limit; current and current-based position: Current Limit)
+  and the model has that register, the same call then reads it once, so goals stay checked: this read
+  is part of the setter's contract. A failed read leaves the bound unknown and the call returns that
+  error, the mode already written; a write that fails after bytes went out leaves the mode unknown,
+  so every goal is refused until a confirmed mode write or the next Setup. The getter reads the
+  register (never cached); a value outside the named modes is an error that carries the raw value.
+  On the angle-limit models (AX, RX, MX on P1) the mode is the CW/CCW Angle Limit pair: the
+  operating-mode setter returns `Unsupported { register: "Operating Mode" }`, and a position-limit
+  write switches wheel, joint and multi-turn mode exactly as Setup would record it; switching into
+  wheel mode is refused (`WheelSpeedUnknown`) unless the bus knows Moving Speed is 0, from an
+  acknowledged unicast write of 0 since Setup, so the wheel cannot start at a stale speed. Decided
+  2026-11-10.
+- FR-10.8 Drive Mode and Shutdown, when built: bit sets built from the bits each model's table lists
+  from the e-Manual, never a hard-coded layout (`docs/deferred.md` D-11). A Drive Mode value with
+  Torque On by Goal Update set (bit 3 on the X and PRO pages that list it) is refused: it switches
+  torque on when a goal arrives, and only `enable_torque()` turns torque on (FR-3.3). A value
+  selecting the time-based profile is refused too while the typed speed limit assumes the
+  velocity-based profile (open question in § 8). Clearing a Shutdown bit is allowed: the actuator then
+  keeps torque through that fault, which is the caller's call (NFR-11). **\[decision\]**
+- FR-10.9 The API: one sealed trait `SettingField` for the setting fields and their `Raw` forms;
+  `ActuatorRef::write_setting(field, value)` writes any of them; named setters and getters for each
+  setting (`set_voltage_limits`, `set_position_limits`, `set_temperature_limit`,
+  `set_velocity_limit`, `set_current_limit`, `set_pwm_limit`, `set_max_torque`,
+  `set_acceleration_limit`, `set_homing_offset`, `set_moving_threshold`, `set_return_delay_time`,
+  `set_operating_mode`, and their getters, each one unicast read). Position limits read from the
+  cache through `Actuator::position_limits`, or from the wire with `read`. Decided 2026-11-10.
+- FR-10.10 Settings are default API, behind no Cargo feature. Decided 2026-11-10.
+
+Out of scope for FR-10, raw only (FR-8):
+
+- Secondary (Shadow) ID / Secondary ID (59 models): common, but an actuator executes RAM writes sent
+  to its Secondary ID without replying, so a Secondary ID equal to another actuator's ID makes a typed
+  write to that ID move both, and the bus has no Secondary-ID addressing to use it. Revisit with
+  group addressing. Decided 2026-11-10.
+- Status Return Level: never written (FR-5.4).
+- Startup Configuration (PRO, Y; X from firmware 45): bit 0 turns torque on at power-up (FR-3.3).
+- Registers a minority of models have: Indirect Address (25), External Port Mode 1 to 4 (21), Alarm
+  LED (7), PWM Slope (6), Multi Turn Offset and Resolution Divider (MX on P1), and the Y-only
+  settings (Motor and Inverter Temperature Limit, Position Limit, In-Position and Following Error
+  Thresholds, Electronic Gear Ratio, Safe Stop Time, Brake Delay, Goal Update Delay, excitation
+  voltages and times, filter frequencies and times).
 
 ## 6. Non-functional requirements
 
@@ -300,7 +430,7 @@ Out of scope for FR-9:
 - NFR-9 Table correctness: FR-7.2 applies to every table and capability claim; a PR that verifies or changes a table carries the e-Manual URL and verification date in the `.ron` metadata, and every other table states that it is unverified. Decided 2026-10-26, amended 2026-10-27.
 - NFR-10 Testability: `Transport` is mockable, and the protocol layer is tested against the e-Manual packet examples without hardware. Decided.
 - NFR-11 Responsibility split for safety:
-  - Ours: torque off by default, limit checks against EEPROM in position mode (FR-3.7), fault detection on every status packet, typed errors.
+  - Ours: torque off by default, limit checks against EEPROM in position mode (FR-3.7), setting writes checked against the e-Manual range with torque confirmed off (FR-10.2), fault detection on every status packet, typed errors.
   - User's: physical limits beyond the actuator's EEPROM, joint-level and robot-level safety, deciding when to enable torque, reacting to a returned fault, and restoring any register it changes for a run (e.g. voltage or temperature limits widened for a test), after an error too. The crate never saves or restores a value on its own. Restore decided 2026-11-09.
   - Tooling we owe: explicit `enable_torque`/`disable_torque`, fault state readable per actuator, read-back calls for verification, raw access for debugging.
 - NFR-12 Error precision is tested: every error variant has a test that builds it with distinct field values and checks that its `Display` line contains the `Id` and each deciding value (FR-6.9); every place that returns an error has a test that checks the variant and the context fields of FR-6.7; every hint of FR-6.12 and every measured outcome of FR-6.13 has a test. Decided 2026-11-03, amended 2026-11-04.
@@ -310,11 +440,11 @@ Out of scope for FR-9:
 | Interface | Where | Direction | Contract |
 | --- | --- | --- | --- |
 | Rust API, bus level | `Bus<P, T, C, N>` | app → crate | `new(transport, clock, config)`, `autoscan()`, `declare(iter)`, `actuator(id)`, Easy tier `read_*`/`write_*`, Explicit tier `sync_write`/`sync_read`. |
-| Rust API, actuator level | `ActuatorRef`, `Actuator` trait, model types | app → crate | Typed get/set, `enable_torque`, `disable_torque`, `torque_state()` (off / on / faulted), `clear_fault()`, raw forms. |
+| Rust API, actuator level | `ActuatorRef`, `Actuator` trait, model types | app → crate | Typed get/set, typed settings (FR-10), `enable_torque`, `disable_torque`, `torque_state()` (off / on / faulted), `clear_fault()`, raw forms. |
 | `Protocol` trait | `P1`, `P2` (sealed) | internal | Encode instruction, decode status, checksum/CRC, broadcast ID, ping format. |
 | Transport | `T: Transport` = `embedded_io::Read + Write + ReadReady` | crate → serial | Blocking byte I/O plus a non-blocking pending-input check; errors mapped to `Error::Transport`; timeout enforced by `Bus` with its `Clock`. |
 | Serial adapter | `serialport` std adapter (default) or user UART | crate → hardware | Half-duplex TTL / RS-485 at the bus's single baud. |
-| Control tables | `control_tables/*.ron`, `dynamixel.ron` | maintainer → xtask | Register rows (address, size, name, access, area) + table metadata: `source` (unverified, or e-Manual URL and verification date), protocols, `operating_modes`, position scale; the map: model number, per-protocol `from_fw` lists, default protocol, `not_mapped` (FR-7.1, FR-7.2, FR-7.6). |
+| Control tables | `control_tables/*.ron`, `dynamixel.ron` | maintainer → xtask | Register rows (address, size, name, access, area) + table metadata: `source` (unverified, or e-Manual URL and verification date), protocols, `operating_modes`, position scale; `unit_source` and `unit_info` (step, unit, sign, e-Manual range) for every setting register (FR-10.1); the map: model number, per-protocol `from_fw` lists, default protocol, `not_mapped` (FR-7.1, FR-7.2, FR-7.6, FR-10.2). |
 | Codegen | `cargo xtask` | xtask → crate source | Writes model types and `ActuatorKind` as committed `.rs`; CI diff check (FR-7.3). |
 | Cargo features | `Cargo.toml` | user → crate | `std` (default: `alloc` + `serialport`), family features (default on), `partial-reads` (off), `raw-registers` (off), `mock` (off: `MockTransport` for tests without hardware). |
 
@@ -355,6 +485,14 @@ Out of scope for FR-9:
 - [x] A register changed for a run (e.g. widened voltage or temperature limits) is the caller's to save and restore, after an error too; the crate never restores a value on its own (NFR-11). 2026-11-09.
 - [x] `cargo xtask` and `check_tables.py` errors follow the error rules, without FR-6.10's fixed size: one variant (Python: cause code) per cause with fields, foreign errors kept typed, advice only in a separate hint, no panic and no silent skip on any input (FR-6.14). 2026-11-09.
 - [x] Error precision cases E1 to E13 decided and built (audit Decisions table): `Request` context with the Setup step on every error (FR-6.7); `Timeout` split into no, partial, late and skipped reply, port timeout and end of stream, with the late-reply listen (FR-1.4); `Malformed` split by cause; `Missing` only for a silent ping; a `Fault` category measured on the fault path (FR-6.13); advice in `Error::hint()` (FR-6.12). 2026-11-04.
+- [x] Typed EEPROM settings: every setting that more than half of the mapped models have (and Acceleration Limit, on several series) gets a typed read and write, `Unsupported` on the models without it, raw only for the rest; the FR-10.1 list. 2026-11-10.
+- [x] Setting writes need torque confirmed off on every model; acknowledged unicast only, never sync, no bus-level form; the cache follows a confirmed write and turns unknown after a failed one; `NoUnit` where a table has no unit data, and every table the settings need verified for it (FR-10.2 to FR-10.4). 2026-11-10 (built from `docs/plans/2026-11-09-typed-limits.md` D1 to D10 and `2026-11-10-settings.md` S1 to S4).
+- [x] PWM Limit and Max Torque are two settings; `SettingField` and `write_setting` name the trait and the generic writer (FR-10.1, FR-10.9). 2026-11-10.
+- [x] Operating mode: `OperatingMode`, values from the table's lists, a goal-bound read inside the setter, `Unsupported` on angle-limit models where the position limits switch the mode, no switch into wheel mode with a live speed (FR-10.7, FR-9.6). 2026-11-10.
+- [x] Setter docs carry the e-Manual's side effects; EEPROM wear documented, not guarded; settings behind no feature; Secondary ID stays raw (FR-10.5, FR-10.10). 2026-11-10.
+- [x] Setup holds a hardware-faulted actuator `Faulted` (FR-2.7, D1 to D3 of the 2026-11-05 plan). 2026-11-10.
+- [ ] Link settings consume the handle; ID refused when in use; baud rate and protocol type remove the slot (FR-10.6). Proposed, not built.
+- [ ] Drive Mode and Shutdown bit sets from the table; Torque On by Goal Update refused (FR-10.8). Proposed, not built.
 
 **Open questions** (each says what an agent does meanwhile)
 
@@ -363,7 +501,10 @@ Out of scope for FR-9:
 - [ ] Does `Position` carry radians or degrees as its SI form? Meanwhile: radians (`f32`); raw ticks always available.
 - [ ] What does a `partial-reads` result look like on P1 (sequential)? Meanwhile: per-slot `Result`, since each read is independent.
 - [x] How is the e-Manual verification recorded in RON (field names)? `source: Unverified` or `source: Verified(url: "...", verified: "YYYY-MM-DD")` at table top level. 2026-10-27.
-- [ ] Typed EEPROM writes (`specs/ideas/eeprom-writes.md`), added 2026-11-03: which registers (voltage and temperature limits, angle limits, Max Torque, Return Delay Time, Status Return Level, ID, baud); their own validation, apart from FR-3.7 and FR-9.3 (torque off, range from the e-Manual per FR-7.2, min ≤ max, ID free on the bus, baud the bus can reach); the Setup cache after a write (FR-2.6); behind a feature or not; EEPROM wear guarded or only documented; and how an actuator whose EEPROM causes a fault is reached (Setup holds it `Faulted` instead of failing the bus, or a recovery handle). Meanwhile: no typed EEPROM write, `write_raw` only, and Setup keeps failing on a fault (FR-6.2).
+- [x] Typed EEPROM writes (`specs/ideas/eeprom-writes.md`), added 2026-11-03: answered by FR-10 and the FR-2.7 hold. 2026-11-10.
+- [ ] Y series has Motor and Inverter Temperature Limit, no single Temperature Limit: does the Temperature Limit setting map to Motor Temperature Limit there? Meanwhile: `Unsupported` on Y, as Present Temperature already is; both registers raw.
+- [ ] Should Setup read Drive Mode, so the typed speed limit follows the profile (velocity- or time-based) and a typed Drive Mode write may select the time-based profile? Meanwhile: not read; the time-based profile is set through raw only (FR-10.8).
+- [ ] After an ID or baud rate write, which ID does the status reply carry, and at which rate is it sent? Meanwhile: what the model's e-Manual page states; where it is silent, a hardware check (XM430-W350 and AX-12A) before the bus step ends, and `unimplemented!("SRS FR-10.6: ...")` until then.
 
 **Delivery order** (MoSCoW)
 
@@ -378,6 +519,7 @@ Out of scope for FR-9:
 9. Could: `partial-reads`, `raw-registers`.
 10. Could: `alloc` storage alias.
 11. Should: FR-9 typed registers, split core (newtypes) → xtask (scales, register roles) → bus (methods, sync ops).
+12. Should: FR-10 typed settings, split tables (unit data of every table the settings need, from the e-Manual) → core (value types, errors) → xtask (setting roles) → bus (setters, cache). Built 2026-11-10: the limits, Return Delay Time, Homing Offset, Moving Threshold and the operating mode. Later: the link settings (FR-10.6), then Drive Mode and Shutdown (FR-10.8, D-11).
 
 **Roadmap** (not in this version; design must not block it)
 
@@ -393,7 +535,7 @@ One section per deliverable unit. Paths are proposals **\[decision\]** until the
 
 Paths: src/lib.rs src/id.rs src/error.rs src/actuator.rs src/register.rs src/units.rs src/units/**
 
-Covers: FR-3.2 (the `Actuator` trait and `Register` type), FR-3.6, FR-3.7, FR-6.4, FR-6.6 to FR-6.12 (error types, hints), NFR-3, NFR-4, NFR-12. Delivery steps 1, 5. No-go files: `src/models.rs`, `src/models/**` unless a task names them.
+Covers: FR-3.2 (the `Actuator` trait and `Register` type), FR-3.6, FR-3.7, FR-6.4, FR-6.6 to FR-6.12 (error types, hints), FR-10 (setting value types and validation errors), NFR-3, NFR-4, NFR-12. Delivery steps 1, 5, 12. No-go files: `src/models.rs`, `src/models/**` unless a task names them.
 
 ## Module: protocol
 
@@ -413,19 +555,19 @@ Paths: src/bus.rs src/bus/**
 
 (Bus, ActuatorRef, setup, multi-actuator ops, fault handling)
 
-Covers: FR-1, FR-2, FR-3.1 to FR-3.5, FR-3.8, FR-4, FR-6.2, FR-6.3, FR-6.5, FR-6.6 to FR-6.11 (errors it returns, call and Setup step context), FR-6.13 (fault measurement), FR-8, NFR-1, NFR-2, NFR-12. Delivery steps 4, 5, 6, 9, 10. No-go files: `src/models.rs`, `src/models/**`, `control_tables/**`.
+Covers: FR-1, FR-2, FR-3.1 to FR-3.5, FR-3.8, FR-4, FR-6.2, FR-6.3, FR-6.5, FR-6.6 to FR-6.11 (errors it returns, call and Setup step context), FR-6.13 (fault measurement), FR-8, FR-10 (setters, cache, link settings), NFR-1, NFR-2, NFR-12. Delivery steps 4, 5, 6, 9, 10, 12. No-go files: `src/models.rs`, `src/models/**`, `control_tables/**`.
 
 ## Module: tables
 
 Paths: control_tables/**
 
-Covers: FR-6.14 (the table check's diagnostics), FR-7.1, FR-7.2, FR-7.4, FR-7.6, NFR-9, NFR-12 (its diagnostics). Delivery steps 3, 7. Rule: no row without an online e-Manual lookup (FR-7.2). No-go files: `src/**`.
+Covers: FR-6.14 (the table check's diagnostics), FR-7.1, FR-7.2, FR-7.4, FR-7.6, FR-10.2 (unit data of every setting register, from the e-Manual), NFR-9, NFR-12 (its diagnostics). Delivery steps 3, 7, 12. Rule: no row without an online e-Manual lookup (FR-7.2). No-go files: `src/**`.
 
 ## Module: xtask
 
 Paths: xtask/** src/models.rs src/models/**
 
-Covers: FR-6.14 (xtask errors), FR-7.3, FR-7.4 (skip warning), FR-7.5, NFR-7, NFR-8, NFR-12 (its diagnostics), and the generated side of FR-2.3, FR-2.4, FR-2.6 (mode source per model), FR-3.2. Delivery step 3. No-go files: any hand-written file under `src/` other than the `pub mod models;` declaration in `src/lib.rs`.
+Covers: FR-6.14 (xtask errors), FR-7.3, FR-7.4 (skip warning), FR-7.5, NFR-7, NFR-8, NFR-12 (its diagnostics), and the generated side of FR-2.3, FR-2.4, FR-2.6 (mode source per model), FR-3.2, FR-10 (setting roles and `Has*` traits). Delivery steps 3, 12. No-go files: any hand-written file under `src/` other than the `pub mod models;` declaration in `src/lib.rs`.
 
 ## Module: ci
 
